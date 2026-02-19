@@ -8,14 +8,20 @@ import { visit, getStringLiteralValue } from '../parser/ast-utils';
  * Extracts all import/re-export relations from the AST.
  * Two passes: top-level statements + dynamic import() expressions.
  *
- * @param ast             - The parsed Program AST.
- * @param filePath        - File path of the source file (used as srcFilePath).
- * @param tsconfigPaths   - Optional tsconfig paths for alias resolution.
+ * @param ast              - The parsed Program AST.
+ * @param filePath         - File path of the source file (used as srcFilePath).
+ * @param tsconfigPaths    - Optional tsconfig paths for alias resolution.
+ * @param resolveImportFn  - Resolver function (DI seam, defaults to resolveImport).
  */
 export function extractImports(
   ast: Program,
   filePath: string,
   tsconfigPaths?: TsconfigPaths,
+  resolveImportFn: (
+    currentFilePath: string,
+    importPath: string,
+    tsconfigPaths?: TsconfigPaths,
+  ) => string | null = resolveImport,
 ): CodeRelation[] {
   const relations: CodeRelation[] = [];
 
@@ -23,7 +29,7 @@ export function extractImports(
   for (const node of (ast as any).body ?? []) {
     if (node.type === 'ImportDeclaration') {
       const sourcePath: string = node.source?.value ?? '';
-      const resolved = resolveImport(filePath, sourcePath, tsconfigPaths);
+      const resolved = resolveImportFn(filePath, sourcePath, tsconfigPaths);
       if (resolved === null) continue;
 
       const isType = node.importKind === 'type';
@@ -40,7 +46,7 @@ export function extractImports(
 
     if (node.type === 'ExportAllDeclaration' && node.source) {
       const sourcePath: string = node.source?.value ?? '';
-      const resolved = resolveImport(filePath, sourcePath, tsconfigPaths);
+      const resolved = resolveImportFn(filePath, sourcePath, tsconfigPaths);
       if (resolved === null) continue;
 
       const isType = node.exportKind === 'type';
@@ -59,7 +65,7 @@ export function extractImports(
 
     if (node.type === 'ExportNamedDeclaration' && node.source) {
       const sourcePath: string = node.source?.value ?? '';
-      const resolved = resolveImport(filePath, sourcePath, tsconfigPaths);
+      const resolved = resolveImportFn(filePath, sourcePath, tsconfigPaths);
       if (resolved === null) continue;
 
       relations.push({
@@ -78,7 +84,7 @@ export function extractImports(
     if (node.type !== 'ImportExpression') return;
     const sourceValue = getStringLiteralValue(node.source);
     if (!sourceValue) return;
-    const resolved = resolveImport(filePath, sourceValue, tsconfigPaths);
+    const resolved = resolveImportFn(filePath, sourceValue, tsconfigPaths);
     if (resolved === null) return;
 
     relations.push({

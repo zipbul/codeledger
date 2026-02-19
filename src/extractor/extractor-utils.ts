@@ -76,6 +76,11 @@ export function buildImportMap(
   ast: Program,
   currentFilePath: string,
   tsconfigPaths?: TsconfigPaths,
+  resolveImportFn: (
+    currentFilePath: string,
+    importPath: string,
+    tsconfigPaths?: TsconfigPaths,
+  ) => string | null = resolveImport,
 ): Map<string, ImportReference> {
   const map = new Map<string, ImportReference>();
 
@@ -83,7 +88,7 @@ export function buildImportMap(
     if (node.type !== 'ImportDeclaration') continue;
 
     const sourcePath: string = node.source?.value ?? '';
-    const resolved = resolveImport(currentFilePath, sourcePath, tsconfigPaths);
+    const resolved = resolveImportFn(currentFilePath, sourcePath, tsconfigPaths);
     if (resolved === null) continue;
 
     for (const spec of node.specifiers ?? []) {

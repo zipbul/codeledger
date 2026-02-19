@@ -1,7 +1,24 @@
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, mock, beforeEach } from 'bun:test';
 import { parseSync } from 'oxc-parser';
-import { extractSymbols } from './symbol-extractor';
 import type { ParsedFile } from '../parser/types';
+
+// ── Mock ../parser/source-position ──
+const mockBuildLineOffsets = mock((_sourceText: string) => [0]);
+const mockGetLineColumn = mock((_offsets: number[], _offset: number) => ({ line: 1, column: 0 }));
+
+mock.module('../parser/source-position', () => ({
+  buildLineOffsets: mockBuildLineOffsets,
+  getLineColumn: mockGetLineColumn,
+}));
+
+// ── Mock ../parser/jsdoc-parser ──
+const mockParseJsDoc = mock((_commentText: string) => ({ description: '', tags: [] }));
+
+mock.module('../parser/jsdoc-parser', () => ({
+  parseJsDoc: mockParseJsDoc,
+}));
+
+import { extractSymbols } from './symbol-extractor';
 
 function makeFixture(source: string, filePath = '/project/src/index.ts'): ParsedFile {
   const { program, errors, comments } = parseSync(filePath, source);
@@ -9,6 +26,14 @@ function makeFixture(source: string, filePath = '/project/src/index.ts'): Parsed
 }
 
 describe('extractSymbols', () => {
+  beforeEach(() => {
+    mockBuildLineOffsets.mockClear();
+    mockGetLineColumn.mockClear();
+    mockParseJsDoc.mockClear();
+    mockBuildLineOffsets.mockReturnValue([0]);
+    mockGetLineColumn.mockReturnValue({ line: 1, column: 0 });
+    mockParseJsDoc.mockReturnValue({ description: '', tags: [] });
+  });
   // HP — function
   it('should extract a function symbol when source has a top-level function declaration', () => {
     const parsed = makeFixture(`function greet(name: string): string { return name; }`);
@@ -223,6 +248,7 @@ describe('extractSymbols', () => {
 
   // JSDoc comment — G3/G4/G5/G6
   it('should populate jsDoc.description when a JSDoc block comment precedes the function', () => {
+    mockParseJsDoc.mockReturnValue({ description: 'Greets the user.', tags: [] });
     const parsed = makeFixture(`/** Greets the user. */\nfunction greet() {}`);
     const symbols = extractSymbols(parsed);
     const fn = symbols.find((s) => s.name === 'greet');
@@ -231,6 +257,10 @@ describe('extractSymbols', () => {
   });
 
   it('should populate jsDoc.tags with param tag when a JSDoc @param tag precedes the function', () => {
+    mockParseJsDoc.mockReturnValue({
+      description: '',
+      tags: [{ tag: 'param', name: 'x', type: '', description: 'the value', optional: false }],
+    });
     const parsed = makeFixture(`/** @param x - the value */\nfunction fn(x: number) {}`);
     const symbols = extractSymbols(parsed);
     const fn = symbols.find((s) => s.name === 'fn');
