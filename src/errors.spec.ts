@@ -1,170 +1,109 @@
 import { describe, expect, it } from "bun:test";
-import {
-  GildashError,
-  ExtractError,
-  IndexError,
-  ParseError,
-  SearchError,
-  StoreError,
-  WatcherError,
-} from "./errors";
+import { gildashError } from "./errors";
 
-describe("GildashError", () => {
-  it("should set name and message when created", () => {
-    const sut = new GildashError("failed");
+describe("gildashError", () => {
+  it("should return object with type and message and no cause property when cause is undefined", () => {
+    const result = gildashError("parse", "parse failed");
 
-    expect(sut.name).toBe("GildashError");
-    expect(sut.message).toBe("failed");
+    expect(result.type).toBe("parse");
+    expect(result.message).toBe("parse failed");
+    expect("cause" in result).toBe(false);
   });
 
-  it("should preserve cause when cause option is provided", () => {
+  it("should include cause in result when cause is an Error instance", () => {
     const cause = new Error("root");
-    const sut = new GildashError("failed", { cause });
+    const result = gildashError("watcher", "watcher failed", cause);
 
-    expect(sut.cause).toBe(cause);
+    expect(result.cause).toBe(cause);
   });
 
-  it("should set empty string message when empty string is provided", () => {
-    const sut = new GildashError("");
+  it("should set cause to exact string value when cause is a string", () => {
+    const result = gildashError("store", "store failed", "string cause");
 
-    expect(sut.message).toBe("");
+    expect(result.cause).toBe("string cause");
   });
 
-  it("should be instance of Error when instantiated", () => {
-    const sut = new GildashError("failed");
+  it("should set cause to null when cause is null", () => {
+    const result = gildashError("index", "index failed", null);
 
-    expect(sut).toBeInstanceOf(Error);
-  });
-});
-
-describe("WatcherError", () => {
-  it("should have subclass name when instantiated", () => {
-    const sut = new WatcherError("watcher failed");
-
-    expect(sut).toBeInstanceOf(GildashError);
-    expect(sut.name).toBe("WatcherError");
+    expect(result.cause).toBeNull();
   });
 
-  it("should preserve message when instantiated", () => {
-    const sut = new WatcherError("watcher failed");
+  it("should set cause to 0 when cause is numeric zero", () => {
+    const result = gildashError("search", "search failed", 0);
 
-    expect(sut.message).toBe("watcher failed");
+    expect(result.cause).toBe(0);
   });
 
-  it("should preserve cause when cause option is provided", () => {
-    const cause = new Error("root");
-    const sut = new WatcherError("watcher failed", { cause });
+  it("should set cause to false when cause is boolean false", () => {
+    const result = gildashError("closed", "closed", false);
 
-    expect(sut.cause).toBe(cause);
-  });
-});
-
-describe("ParseError", () => {
-  it("should have subclass name when instantiated", () => {
-    const sut = new ParseError("parse failed");
-
-    expect(sut).toBeInstanceOf(GildashError);
-    expect(sut.name).toBe("ParseError");
+    expect(result.cause).toBe(false);
   });
 
-  it("should preserve message when instantiated", () => {
-    const sut = new ParseError("parse failed");
+  it("should set cause to empty string when cause is empty string", () => {
+    const result = gildashError("validation", "validation failed", "");
 
-    expect(sut.message).toBe("parse failed");
+    expect(result.cause).toBe("");
   });
 
-  it("should preserve cause when cause option is provided", () => {
-    const cause = new Error("root");
-    const sut = new ParseError("parse failed", { cause });
+  it("should reflect exact type value in returned object when any type variant is used", () => {
+    const allTypes = ["watcher", "parse", "extract", "index", "store", "search", "closed", "validation", "close"] as const;
 
-    expect(sut.cause).toBe(cause);
-  });
-});
-
-describe("ExtractError", () => {
-  it("should have subclass name when instantiated", () => {
-    const sut = new ExtractError("extract failed");
-
-    expect(sut).toBeInstanceOf(GildashError);
-    expect(sut.name).toBe("ExtractError");
+    for (const type of allTypes) {
+      const result = gildashError(type, "msg");
+      expect(result.type).toBe(type);
+    }
   });
 
-  it("should preserve message when instantiated", () => {
-    const sut = new ExtractError("extract failed");
+  it("should reflect exact message value in returned object when message is provided", () => {
+    const result = gildashError("extract", "exact message content");
 
-    expect(sut.message).toBe("extract failed");
+    expect(result.message).toBe("exact message content");
   });
 
-  it("should preserve cause when cause option is provided", () => {
-    const cause = new Error("root");
-    const sut = new ExtractError("extract failed", { cause });
+  it("should handle empty string message and return object with empty message when message is empty string", () => {
+    const result = gildashError("index", "");
 
-    expect(sut.cause).toBe(cause);
-  });
-});
-
-describe("IndexError", () => {
-  it("should have subclass name when instantiated", () => {
-    const sut = new IndexError("index failed");
-
-    expect(sut).toBeInstanceOf(GildashError);
-    expect(sut.name).toBe("IndexError");
+    expect(result.message).toBe("");
+    expect(result.type).toBe("index");
   });
 
-  it("should preserve message when instantiated", () => {
-    const sut = new IndexError("index failed");
+  it("should include empty object as cause when cause is an empty object", () => {
+    const cause = {};
+    const result = gildashError("store", "failed", cause);
 
-    expect(sut.message).toBe("index failed");
+    expect(result.cause).toBe(cause);
   });
 
-  it("should preserve cause when cause option is provided", () => {
-    const cause = new Error("root");
-    const sut = new IndexError("index failed", { cause });
+  it("should include empty array as cause when cause is an empty array", () => {
+    const cause: unknown[] = [];
+    const result = gildashError("search", "failed", cause);
 
-    expect(sut.cause).toBe(cause);
-  });
-});
-
-describe("StoreError", () => {
-  it("should have subclass name when instantiated", () => {
-    const sut = new StoreError("store failed");
-
-    expect(sut).toBeInstanceOf(GildashError);
-    expect(sut.name).toBe("StoreError");
+    expect(result.cause).toBe(cause);
   });
 
-  it("should preserve message when instantiated", () => {
-    const sut = new StoreError("store failed");
+  it("should return object with no cause property when message is empty and cause is undefined", () => {
+    const result = gildashError("close", "");
 
-    expect(sut.message).toBe("store failed");
+    expect(result.message).toBe("");
+    expect("cause" in result).toBe(false);
   });
 
-  it("should preserve cause when cause option is provided", () => {
-    const cause = new Error("root");
-    const sut = new StoreError("store failed", { cause });
+  it("should return separate object instances with same shape when called twice with identical arguments", () => {
+    const result1 = gildashError("parse", "failed", new Error("root"));
+    const result2 = gildashError("parse", "failed", new Error("root"));
 
-    expect(sut.cause).toBe(cause);
-  });
-});
-
-describe("SearchError", () => {
-  it("should have subclass name when instantiated", () => {
-    const sut = new SearchError("search failed");
-
-    expect(sut).toBeInstanceOf(GildashError);
-    expect(sut.name).toBe("SearchError");
+    expect(result1).not.toBe(result2);
+    expect(result1.type).toBe(result2.type);
+    expect(result1.message).toBe(result2.message);
   });
 
-  it("should preserve message when instantiated", () => {
-    const sut = new SearchError("search failed");
+  it("should produce no cause property on both results when called twice with cause undefined", () => {
+    const result1 = gildashError("watcher", "w");
+    const result2 = gildashError("watcher", "w");
 
-    expect(sut.message).toBe("search failed");
-  });
-
-  it("should preserve cause when cause option is provided", () => {
-    const cause = new Error("root");
-    const sut = new SearchError("search failed", { cause });
-
-    expect(sut.cause).toBe(cause);
+    expect("cause" in result1).toBe(false);
+    expect("cause" in result2).toBe(false);
   });
 });

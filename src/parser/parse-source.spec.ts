@@ -1,6 +1,6 @@
 import { describe, it, expect, mock } from 'bun:test';
+import { isErr } from '@zipbul/result';
 import { parseSource } from './parse-source';
-import { ParseError } from '../errors';
 
 const mockParseSync = mock(() => ({
   program: { type: 'Program', body: [], sourceType: 'module' },
@@ -45,26 +45,24 @@ describe('parseSource', () => {
     expect(mockParseSync).toHaveBeenCalledWith(filePath, sourceText);
   });
 
-  it('should throw ParseError when oxc-parser parseSync throws', () => {
+  it('should return Err with parse type when oxc-parser parseSync throws', () => {
     const cause = new Error('internal parser crash');
     mockParseSync.mockImplementationOnce(() => { throw cause; });
-    expect(() => parseSource('/project/crash.ts', 'bad source', mockParseSync)).toThrow(ParseError);
+    const result = parseSource('/project/crash.ts', 'bad source', mockParseSync);
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) expect(result.data.type).toBe('parse');
   });
 
-  it('should preserve original error as cause when ParseError is thrown', () => {
+  it('should preserve original error as cause when parse Err is returned', () => {
     const cause = new Error('crash');
     mockParseSync.mockImplementationOnce(() => { throw cause; });
-    let thrown: unknown;
-    try {
-      parseSource('/project/crash.ts', '', mockParseSync);
-    } catch (e) {
-      thrown = e;
-    }
-    expect((thrown as ParseError).cause).toBe(cause);
+    const result = parseSource('/project/crash.ts', '', mockParseSync);
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) expect(result.data.cause).toBe(cause);
   });
 
   it('should handle empty sourceText when parseSource is called', () => {
-    expect(() => parseSource('/project/empty.ts', '', mockParseSync)).not.toThrow();
+    expect(isErr(parseSource('/project/empty.ts', '', mockParseSync))).toBe(false);
   });
 
   it('should return identical program reference when called twice with the same input', () => {

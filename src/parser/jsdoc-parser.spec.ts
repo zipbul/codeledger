@@ -1,9 +1,9 @@
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { isErr } from '@zipbul/result';
 
 const mockParse = mock(() => [{ description: 'A description.', tags: [] as any[] }]);
 
 import { parseJsDoc } from './jsdoc-parser';
-import { ParseError } from '../errors';
 
 describe('parseJsDoc', () => {
   beforeEach(() => {
@@ -62,22 +62,24 @@ describe('parseJsDoc', () => {
     expect(result.tags[0]!.default).toBe('42');
   });
 
-  it('should throw ParseError when comment-parser throws', () => {
+  it('should return Err with parse type when comment-parser throws', () => {
     mockParse.mockImplementationOnce(() => { throw new Error('parse failure'); });
-    expect(() => parseJsDoc('/** broken */')).toThrow(ParseError);
+    const result = parseJsDoc('/** broken */');
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) expect(result.data.type).toBe('parse');
   });
 
-  it('should preserve original error as cause when ParseError is thrown', () => {
+  it('should preserve original error as cause when parse Err is returned', () => {
     const cause = new Error('inner');
     mockParse.mockImplementationOnce(() => { throw cause; });
-    let thrown: unknown;
-    try { parseJsDoc('/** broken */'); } catch (e) { thrown = e; }
-    expect((thrown as ParseError).cause).toBe(cause);
+    const result = parseJsDoc('/** broken */');
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) expect(result.data.cause).toBe(cause);
   });
 
   it('should handle empty comment text when parser returns empty description', () => {
     mockParse.mockImplementationOnce(() => ([{ description: '', tags: [] }]));
-    expect(() => parseJsDoc('')).not.toThrow();
+    expect(isErr(parseJsDoc(''))).toBe(false);
   });
 
   it('should handle undefined default gracefully when tag has no default field', () => {

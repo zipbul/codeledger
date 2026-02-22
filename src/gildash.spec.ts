@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock, spyOn } from 'bun:test';
+import { isErr } from '@zipbul/result';
 import { Gildash } from './gildash';
 import type { ExtractedSymbol, CodeRelation } from './extractor/types';
 import type { RelationRecord } from './store/repositories/relation.repository';
@@ -480,16 +481,20 @@ describe('Gildash', () => {
     spyClearInterval.mockRestore();
   });
 
-  it('should throw when projectRoot is a relative path', async () => {
+  it('should return Err with validation type when projectRoot is a relative path', async () => {
     const opts: any = { projectRoot: 'relative/path' };
 
-    await expect(Gildash.open(opts)).rejects.toThrow();
+    const result = await Gildash.open(opts);
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) expect(result.data.type).toBe('validation');
   });
 
-  it('should throw when projectRoot does not exist on disk', async () => {
+  it('should return Err with validation type when projectRoot does not exist on disk', async () => {
     const opts = makeOptions({ existsSync: () => false });
 
-    await expect(Gildash.open(opts)).rejects.toThrow();
+    const result = await Gildash.open(opts);
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) expect(result.data.type).toBe('validation');
   });
 
   it('should not throw when close() is called a second time', async () => {
@@ -554,11 +559,12 @@ describe('Gildash', () => {
     expect(order.indexOf('releaseRole')).toBeLessThan(order.indexOf('db.close'));
   });
 
-  it('should throw an error when reindex() is called on a reader instance', async () => {
+  it('should return Err when reindex() is called on a reader instance', async () => {
     const opts = makeOptions({ role: 'reader' });
     const ledger = await Gildash.open(opts);
 
-    await expect((ledger as any).reindex()).rejects.toThrow();
+    const result = await (ledger as any).reindex();
+    expect(isErr(result)).toBe(true);
     await ledger.close();
   });
 
@@ -652,7 +658,8 @@ describe('Gildash', () => {
     const opts = makeOptions({ db });
     opts.discoverProjectsFn = mock(async () => { throw new Error('discover failed'); }) as any;
 
-    await expect(Gildash.open(opts)).rejects.toThrow('discover failed');
+    const result = await Gildash.open(opts);
+    expect(isErr(result)).toBe(true);
     expect(db.close).toHaveBeenCalled();
   });
 
@@ -662,7 +669,8 @@ describe('Gildash', () => {
     watcher.start.mockRejectedValue(new Error('watcher start failed'));
     const opts = makeOptions({ role: 'owner', db, watcher });
 
-    await expect(Gildash.open(opts)).rejects.toThrow('watcher start failed');
+    const result = await Gildash.open(opts);
+    expect(isErr(result)).toBe(true);
     expect(db.close).toHaveBeenCalled();
   });
 
@@ -807,44 +815,44 @@ describe('Gildash', () => {
     await ledger.close();
   });
 
-  it('should throw when searchSymbols() is called after close()', async () => {
+  it('should return Err when searchSymbols() is called after close()', async () => {
     const opts = makeOptions();
     const ledger = await Gildash.open(opts);
     await ledger.close();
 
-    expect(() => ledger.searchSymbols({ text: 'foo' })).toThrow();
+    expect(isErr(ledger.searchSymbols({ text: 'foo' }))).toBe(true);
   });
 
-  it('should throw when searchRelations() is called after close()', async () => {
+  it('should return Err when searchRelations() is called after close()', async () => {
     const opts = makeOptions();
     const ledger = await Gildash.open(opts);
     await ledger.close();
 
-    expect(() => ledger.searchRelations({ srcFilePath: 'a.ts' })).toThrow();
+    expect(isErr(ledger.searchRelations({ srcFilePath: 'a.ts' }))).toBe(true);
   });
 
-  it('should throw when stateless APIs are called after close()', async () => {
+  it('should return Err when stateless APIs are called after close()', async () => {
     const opts = makeOptions();
     const ledger = await Gildash.open(opts);
     const parsed = { filePath: '/project/src/a.ts', program: { body: [] }, errors: [], comments: [], sourceText: 'x' } as any;
     await ledger.close();
 
-    expect(() => ledger.parseSource('/project/src/a.ts', 'x')).toThrow();
-    expect(() => ledger.extractSymbols(parsed)).toThrow();
-    expect(() => ledger.extractRelations(parsed)).toThrow();
-    expect(() => ledger.getStats()).toThrow();
-    expect(() => ledger.getDependencies('src/a.ts')).toThrow();
-    expect(() => ledger.getDependents('src/a.ts')).toThrow();
+    expect(isErr(ledger.parseSource('/project/src/a.ts', 'x'))).toBe(true);
+    expect(isErr(ledger.extractSymbols(parsed))).toBe(true);
+    expect(isErr(ledger.extractRelations(parsed))).toBe(true);
+    expect(isErr(ledger.getStats())).toBe(true);
+    expect(isErr(ledger.getDependencies('src/a.ts'))).toBe(true);
+    expect(isErr(ledger.getDependents('src/a.ts'))).toBe(true);
   });
 
-  it('should throw when async APIs are called after close()', async () => {
+  it('should return Err when async APIs are called after close()', async () => {
     const opts = makeOptions();
     const ledger = await Gildash.open(opts);
     await ledger.close();
 
-    await expect(ledger.reindex()).rejects.toThrow();
-    await expect(ledger.getAffected(['src/a.ts'])).rejects.toThrow();
-    await expect(ledger.hasCycle()).rejects.toThrow();
+    expect(isErr(await ledger.reindex())).toBe(true);
+    expect(isErr(await ledger.getAffected(['src/a.ts']))).toBe(true);
+    expect(isErr(await ledger.hasCycle())).toBe(true);
   });
 
   it('should use projectRoot basename as defaultProject when discoverProjects returns empty', async () => {
@@ -884,16 +892,18 @@ describe('Gildash', () => {
     await ledger.close();
   });
 
-  it('should throw AggregateError when one component throws during close()', async () => {
+  it('should return Err with close type when one component throws during close()', async () => {
     const coordinator = makeCoordinatorMock();
     coordinator.shutdown = mock(async () => { throw new Error('coordinator shutdown failed'); });
     const opts = makeOptions({ role: 'owner', coordinator });
     const ledger = await Gildash.open(opts);
 
-    await expect(ledger.close()).rejects.toThrow(AggregateError);
+    const result = await ledger.close();
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) expect(result.data.type).toBe('close');
   });
 
-  it('should accumulate multiple errors in AggregateError when both coordinator and db.close() throw', async () => {
+  it('should accumulate multiple errors in Err when both coordinator and db.close() throw', async () => {
     const coordinator = makeCoordinatorMock();
     coordinator.shutdown = mock(async () => { throw new Error('coordinator fail'); });
     const db = makeDbMock();
@@ -901,15 +911,13 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'owner', coordinator, db });
     const ledger = await Gildash.open(opts);
 
-    let caughtError: unknown;
-    try {
-      await ledger.close();
-    } catch (e) {
-      caughtError = e;
+    const result = await ledger.close();
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) {
+      expect(result.data.type).toBe('close');
+      expect(Array.isArray(result.data.cause)).toBe(true);
+      expect((result.data.cause as unknown[]).length).toBeGreaterThanOrEqual(2);
     }
-
-    expect(caughtError).toBeInstanceOf(AggregateError);
-    expect((caughtError as AggregateError).errors.length).toBeGreaterThanOrEqual(2);
   });
 
   it('should call process.off with SIGTERM when close() is invoked', async () => {
@@ -1137,5 +1145,129 @@ describe('Gildash', () => {
 
     expect((ledger as any).closed).toBe(true);
     spyOn_.mockRestore();
+  });
+
+  it('should return Err with store type when symbolRepo.getStats() throws inside getStats()', async () => {
+    const symbolRepo = makeSymbolRepoMock();
+    symbolRepo.getStats.mockImplementation(() => { throw new Error('db error'); });
+    const opts = makeOptions({ symbolRepo });
+    const ledger = await Gildash.open(opts);
+
+    const result = (ledger as any).getStats();
+
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) {
+      expect(result.data.type).toBe('store');
+      expect(result.data.cause).toBeInstanceOf(Error);
+    }
+    await ledger.close();
+  });
+
+  it('should return Err with search type when symbolSearchFn throws inside searchSymbols()', async () => {
+    const opts = makeOptions();
+    opts.symbolSearchFn.mockImplementation(() => { throw new Error('db error'); });
+    const ledger = await Gildash.open(opts);
+
+    const result = ledger.searchSymbols({ text: 'foo' });
+
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) {
+      expect(result.data.type).toBe('search');
+      expect(result.data.cause).toBeInstanceOf(Error);
+    }
+    await ledger.close();
+  });
+
+  it('should return Err with search type when relationSearchFn throws inside searchRelations()', async () => {
+    const opts = makeOptions();
+    opts.relationSearchFn.mockImplementation(() => { throw new Error('db error'); });
+    const ledger = await Gildash.open(opts);
+
+    const result = ledger.searchRelations({ srcFilePath: 'a.ts' });
+
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) {
+      expect(result.data.type).toBe('search');
+      expect(result.data.cause).toBeInstanceOf(Error);
+    }
+    await ledger.close();
+  });
+
+  it('should return Err with search type when relationSearchFn throws inside getDependencies()', async () => {
+    const opts = makeOptions();
+    opts.relationSearchFn.mockImplementation(() => { throw new Error('db error'); });
+    const ledger = await Gildash.open(opts);
+
+    const result = ledger.getDependencies('src/a.ts');
+
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) {
+      expect(result.data.type).toBe('search');
+      expect(result.data.cause).toBeInstanceOf(Error);
+    }
+    await ledger.close();
+  });
+
+  it('should return Err with search type when relationSearchFn throws inside getDependents()', async () => {
+    const opts = makeOptions();
+    opts.relationSearchFn.mockImplementation(() => { throw new Error('db error'); });
+    const ledger = await Gildash.open(opts);
+
+    const result = ledger.getDependents('src/a.ts');
+
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) {
+      expect(result.data.type).toBe('search');
+      expect(result.data.cause).toBeInstanceOf(Error);
+    }
+    await ledger.close();
+  });
+
+  it('should return Err with search type when DependencyGraph.build throws inside getAffected()', async () => {
+    const relationRepo = makeRelationRepoMock();
+    relationRepo.getByType.mockImplementation(() => { throw new Error('db error'); });
+    const opts = makeOptions({ relationRepo });
+    const ledger = await Gildash.open(opts);
+
+    const result = await ledger.getAffected(['src/a.ts']);
+
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) {
+      expect(result.data.type).toBe('search');
+      expect(result.data.cause).toBeInstanceOf(Error);
+    }
+    await ledger.close();
+  });
+
+  it('should return Err with search type when DependencyGraph.build throws inside hasCycle()', async () => {
+    const relationRepo = makeRelationRepoMock();
+    relationRepo.getByType.mockImplementation(() => { throw new Error('db error'); });
+    const opts = makeOptions({ relationRepo });
+    const ledger = await Gildash.open(opts);
+
+    const result = await ledger.hasCycle();
+
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) {
+      expect(result.data.type).toBe('search');
+      expect(result.data.cause).toBeInstanceOf(Error);
+    }
+    await ledger.close();
+  });
+
+  it('should return Err with index type when coordinator.fullIndex() throws inside reindex()', async () => {
+    const coordinator = makeCoordinatorMock();
+    const opts = makeOptions({ role: 'owner', coordinator });
+    const ledger = await Gildash.open(opts);
+    coordinator.fullIndex.mockRejectedValue(new Error('db error'));
+
+    const result = await (ledger as any).reindex();
+
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) {
+      expect(result.data.type).toBe('index');
+      expect(result.data.cause).toBeInstanceOf(Error);
+    }
+    await ledger.close();
   });
 });
