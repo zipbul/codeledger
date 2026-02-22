@@ -1,5 +1,14 @@
 # @zipbul/gildash
 
+## 0.2.0
+
+### Minor Changes
+
+- [#12](https://github.com/zipbul/gildash/pull/12) [`57e961b`](https://github.com/zipbul/gildash/commit/57e961bdb719d5d30542418ed2494531e6251021) Thanks [@parkrevil](https://github.com/parkrevil)! - Export missing public API types and expose `role` getter
+
+  - Re-export `IndexResult`, `ProjectBoundary`, `CodeRelation`, `SymbolStats`, `SymbolKind`, `WatcherRole` from the package entry point
+  - Make `Gildash.role` property public (was `private readonly`, now `readonly`)
+
 ## 0.1.2
 
 ### Patch Changes
