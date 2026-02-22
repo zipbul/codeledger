@@ -1,5 +1,11 @@
 # @zipbul/gildash
 
+## 0.1.2
+
+### Patch Changes
+
+- [#10](https://github.com/zipbul/gildash/pull/10) [`b6c93c0`](https://github.com/zipbul/gildash/commit/b6c93c062f88e4c562eb110dba5ef8afade99f59) Thanks [@parkrevil](https://github.com/parkrevil)! - Re-publish as 0.1.2: versions 0.1.0 and 0.1.1 permanently blocked by npm after unpublish
+
 ## 0.1.1
 
 ### Patch Changes
