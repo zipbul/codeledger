@@ -1305,4 +1305,22 @@ describe('Gildash', () => {
 
     expect((ledger as any).closed).toBe(true);
   });
+
+  it('should return "owner" from role getter when opened as owner', async () => {
+    const opts = makeOptions({ role: 'owner' });
+
+    const ledger = await openOrThrow(opts);
+
+    expect(ledger.role).toBe('owner');
+    await ledger.close();
+  });
+
+  it('should return "reader" from role getter when opened as reader', async () => {
+    const opts = makeOptions({ role: 'reader' });
+
+    const ledger = await openOrThrow(opts);
+
+    expect(ledger.role).toBe('reader');
+    await ledger.close();
+  });
 });

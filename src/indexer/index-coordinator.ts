@@ -18,14 +18,27 @@ import type { Logger } from '../gildash';
 
 export const WATCHER_DEBOUNCE_MS = 100;
 
+/**
+ * Summary returned after an indexing run completes.
+ *
+ * Received via {@link Gildash.reindex} and the {@link Gildash.onIndexed} callback.
+ */
 export interface IndexResult {
+  /** Number of files that were (re-)indexed. */
   indexedFiles: number;
+  /** Number of files removed from the index. */
   removedFiles: number;
+  /** Total symbol count after indexing. */
   totalSymbols: number;
+  /** Total relation count after indexing. */
   totalRelations: number;
+  /** Wall-clock duration of the indexing run in milliseconds. */
   durationMs: number;
+  /** Absolute paths of files that changed and were re-indexed. */
   changedFiles: string[];
+  /** Absolute paths of files that were deleted from the index. */
   deletedFiles: string[];
+  /** Absolute paths of files that failed to index. */
   failedFiles: string[];
 }
 
