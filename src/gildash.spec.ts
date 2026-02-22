@@ -970,4 +970,171 @@ describe('Gildash', () => {
     expect(list1).not.toBe(list2);
     await ledger.close();
   });
+
+  it('should invoke updateHeartbeatFn when the owner heartbeat timer fires', async () => {
+    const opts = makeOptions({ role: 'owner' });
+    const ledger = await Gildash.open(opts);
+
+    jest.advanceTimersByTime(30_000);
+
+    expect(opts.updateHeartbeatFn).toHaveBeenCalled();
+    await ledger.close();
+  });
+
+  it('should invoke updateHeartbeatFn when the promotion heartbeat timer fires', async () => {
+    let callCount = 0;
+    const acquireMock = mock(async () => {
+      callCount++;
+      if (callCount === 1) return 'reader' as const;
+      return 'owner' as const;
+    });
+    const opts = makeOptions({ role: 'reader' });
+    opts.acquireWatcherRoleFn = acquireMock as any;
+
+    const ledger = await Gildash.open(opts);
+
+    jest.advanceTimersByTime(60_000);
+    for (let j = 0; j < 10; j++) await Promise.resolve();
+
+    opts.updateHeartbeatFn.mockClear();
+    jest.advanceTimersByTime(30_000);
+
+    expect(opts.updateHeartbeatFn).toHaveBeenCalled();
+    await ledger.close();
+  });
+
+  it('should log error and not throw when promotedWatcher.close rejects during promotion rollback', async () => {
+    let callCount = 0;
+    const acquireMock = mock(async () => {
+      callCount++;
+      if (callCount === 1) return 'reader' as const;
+      return 'owner' as const;
+    });
+    const watcher = makeWatcherMock();
+    watcher.start.mockRejectedValue(new Error('start failed'));
+    watcher.close.mockRejectedValue(new Error('close also failed'));
+    const opts = makeOptions({ role: 'reader', watcher });
+    opts.acquireWatcherRoleFn = acquireMock as any;
+
+    const ledger = await Gildash.open(opts);
+
+    jest.advanceTimersByTime(60_000);
+    for (let j = 0; j < 10; j++) await Promise.resolve();
+
+    expect(opts.db.close).not.toHaveBeenCalled();
+    await ledger.close();
+  });
+
+  it('should log error and not throw when promotedCoordinator.shutdown rejects during promotion rollback', async () => {
+    let callCount = 0;
+    const acquireMock = mock(async () => {
+      callCount++;
+      if (callCount === 1) return 'reader' as const;
+      return 'owner' as const;
+    });
+    const coordinator = makeCoordinatorMock();
+    coordinator.fullIndex.mockRejectedValue(new Error('fullIndex failed'));
+    coordinator.shutdown.mockRejectedValue(new Error('shutdown also failed'));
+    const watcher = makeWatcherMock();
+    const opts = makeOptions({ role: 'reader', watcher, coordinator });
+    opts.acquireWatcherRoleFn = acquireMock as any;
+
+    const ledger = await Gildash.open(opts);
+
+    jest.advanceTimersByTime(60_000);
+    for (let j = 0; j < 10; j++) await Promise.resolve();
+
+    expect(opts.db.close).not.toHaveBeenCalled();
+    await ledger.close();
+  });
+
+  it('should forward watcher event to coordinator.handleWatcherEvent when owner watcher start callback fires', async () => {
+    const watcher = makeWatcherMock();
+    let capturedCb: ((event: any) => void) | null = null;
+    watcher.start = mock(async (cb: any) => { capturedCb = cb; });
+    const coordinator = makeCoordinatorMock();
+    coordinator.handleWatcherEvent = mock(() => {});
+    const opts = makeOptions({ role: 'owner', watcher, coordinator });
+
+    const ledger = await Gildash.open(opts);
+
+    capturedCb!({ filePath: 'src/a.ts', type: 'update' });
+
+    expect(coordinator.handleWatcherEvent).toHaveBeenCalledWith({ filePath: 'src/a.ts', type: 'update' });
+    await ledger.close();
+  });
+
+  it('should forward watcher event to promotedCoordinator.handleWatcherEvent when promotion watcher start callback fires', async () => {
+    let callCount = 0;
+    const acquireMock = mock(async () => {
+      callCount++;
+      if (callCount === 1) return 'reader' as const;
+      return 'owner' as const;
+    });
+    const watcher = makeWatcherMock();
+    let capturedCb: ((event: any) => void) | null = null;
+    watcher.start = mock(async (cb: any) => { capturedCb = cb; });
+    const coordinator = makeCoordinatorMock();
+    coordinator.handleWatcherEvent = mock(() => {});
+    const opts = makeOptions({ role: 'reader', watcher, coordinator });
+    opts.acquireWatcherRoleFn = acquireMock as any;
+
+    const ledger = await Gildash.open(opts);
+
+    jest.advanceTimersByTime(60_000);
+    for (let j = 0; j < 10; j++) await Promise.resolve();
+
+    capturedCb!({ filePath: 'src/b.ts', type: 'create' });
+
+    expect(coordinator.handleWatcherEvent).toHaveBeenCalledWith({ filePath: 'src/b.ts', type: 'create' });
+    await ledger.close();
+  });
+
+  it('should catch and log when close() rejects inside healthcheck max-retries shutdown', async () => {
+    let callCount = 0;
+    const acquireMock = mock(async () => {
+      callCount++;
+      if (callCount === 1) return 'reader' as const;
+      throw new Error('db unavailable');
+    });
+    const opts = makeOptions({ role: 'reader' });
+    opts.acquireWatcherRoleFn = acquireMock as any;
+
+    const ledger = await Gildash.open(opts);
+
+    const coordinator = (ledger as any).coordinator;
+    if (coordinator) coordinator.shutdown = mock(async () => { throw new Error('shutdown fail'); });
+    (ledger as any).db.close = mock(() => { throw new Error('db close fail'); });
+
+    for (let i = 0; i < 10; i++) {
+      jest.advanceTimersByTime(60_000);
+      for (let j = 0; j < 10; j++) await Promise.resolve();
+    }
+
+    for (let j = 0; j < 20; j++) await Promise.resolve();
+
+    expect((ledger as any).closed).toBe(true);
+  });
+
+  it('should catch and log when close() rejects inside signal handler', async () => {
+    const spyOn_ = spyOn(process, 'on');
+    const opts = makeOptions({ role: 'owner' });
+
+    const ledger = await Gildash.open(opts);
+
+    const sigintCall = spyOn_.mock.calls.find((c: any) => c[0] === 'SIGINT');
+    const handler = sigintCall?.[1] as (() => void) | undefined;
+    expect(handler).toBeDefined();
+
+    const coordinator = (ledger as any).coordinator;
+    if (coordinator) coordinator.shutdown = mock(async () => { throw new Error('shutdown fail'); });
+    (ledger as any).db.close = mock(() => { throw new Error('db close fail'); });
+
+    handler!();
+
+    for (let j = 0; j < 20; j++) await Promise.resolve();
+
+    expect((ledger as any).closed).toBe(true);
+    spyOn_.mockRestore();
+  });
 });

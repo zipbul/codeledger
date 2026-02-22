@@ -520,4 +520,58 @@ describe('extractSymbols', () => {
     expect(symbols.some((s) => s.name === 'a')).toBe(true);
     expect(symbols.some((s) => s.name === 'b')).toBe(true);
   });
+
+  it('should extract decorator name via Identifier expression when parameter has a bare decorator', () => {
+    const parsed = makeFixture(`
+      class Svc {
+        constructor(@Log name: string) {}
+      }
+    `);
+    const symbols = extractSymbols(parsed);
+    const cls = symbols.find((s) => s.name === 'Svc');
+    const ctor = cls?.members?.find((m) => m.name === 'constructor');
+    const param = ctor?.parameters?.find((p) => p.name === 'name');
+    expect(param?.decorators?.some((d) => d.name === 'Log')).toBe(true);
+  });
+
+  it('should use sourceText slice as decorator name when expression is a MemberExpression', () => {
+    const parsed = makeFixture(`
+      @ns.Inject
+      class X {}
+    `);
+    const symbols = extractSymbols(parsed);
+    const cls = symbols.find((s) => s.name === 'X');
+    expect(cls?.decorators?.some((d) => d.name === 'ns.Inject')).toBe(true);
+  });
+
+  it('should populate decorator arguments when CallExpression decorator has arguments', () => {
+    const parsed = makeFixture(`
+      @Inject('token')
+      class Svc {}
+    `);
+    const symbols = extractSymbols(parsed);
+    const cls = symbols.find((s) => s.name === 'Svc');
+    const dec = cls?.decorators?.find((d) => d.name === 'Inject');
+    expect(dec).toBeDefined();
+    expect(dec!.arguments).toBeDefined();
+    expect(dec!.arguments!.length).toBeGreaterThan(0);
+  });
+
+  it('should set decorator arguments to undefined when CallExpression decorator has no arguments', () => {
+    const parsed = makeFixture(`
+      @Injectable()
+      class Svc {}
+    `);
+    const symbols = extractSymbols(parsed);
+    const cls = symbols.find((s) => s.name === 'Svc');
+    const dec = cls?.decorators?.find((d) => d.name === 'Injectable');
+    expect(dec).toBeDefined();
+    expect(dec!.arguments).toBeUndefined();
+  });
+
+  it('should skip unknown AST node types and not include them in the result', () => {
+    const parsed = makeFixture(`console.log('hello');`);
+    const symbols = extractSymbols(parsed);
+    expect(symbols).toHaveLength(0);
+  });
 });
