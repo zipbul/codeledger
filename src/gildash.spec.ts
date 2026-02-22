@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock, spyOn } from 'bun:test';
 import { isErr } from '@zipbul/result';
 import { Gildash } from './gildash';
+import type { GildashError } from './errors';
 import type { ExtractedSymbol, CodeRelation } from './extractor/types';
 import type { RelationRecord } from './store/repositories/relation.repository';
 
@@ -136,6 +137,12 @@ function makeOptions(opts: {
   } as any;
 }
 
+async function openOrThrow(opts: Parameters<typeof Gildash.open>[0]): Promise<Gildash> {
+  const result = await Gildash.open(opts);
+  if (isErr(result)) throw result.data;
+  return result;
+}
+
 beforeEach(() => {
   jest.useFakeTimers();
 });
@@ -148,7 +155,7 @@ describe('Gildash', () => {
   it('should return a Gildash instance when open() succeeds as owner', async () => {
     const opts = makeOptions({ role: 'owner' });
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     expect(ledger).toBeInstanceOf(Gildash);
     await ledger.close();
@@ -158,7 +165,7 @@ describe('Gildash', () => {
     const watcher = makeWatcherMock();
     const opts = makeOptions({ role: 'reader', watcher });
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     expect(ledger).toBeInstanceOf(Gildash);
     expect(watcher.start).not.toHaveBeenCalled();
@@ -169,7 +176,7 @@ describe('Gildash', () => {
     const coordinator = makeCoordinatorMock();
     const opts = makeOptions({ role: 'owner', coordinator });
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     expect(coordinator.fullIndex).toHaveBeenCalled();
     await ledger.close();
@@ -179,7 +186,7 @@ describe('Gildash', () => {
     const spySetInterval = spyOn(globalThis, 'setInterval');
     const opts = makeOptions({ role: 'owner' });
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const intervals = (spySetInterval.mock.calls as any[]).map((c) => c[1]);
     expect(intervals).toContain(30_000);
@@ -192,7 +199,7 @@ describe('Gildash', () => {
     const spySetInterval = spyOn(globalThis, 'setInterval');
     const opts = makeOptions({ role: 'reader' });
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const intervals = (spySetInterval.mock.calls as any[]).map((c) => c[1]);
     expect(intervals).toContain(60_000);
@@ -205,7 +212,7 @@ describe('Gildash', () => {
     const spyProcessOn = spyOn(process, 'on');
     const opts = makeOptions();
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const signals = (spyProcessOn.mock.calls as any[]).map((c) => c[0]);
     expect(signals).toContain('SIGTERM');
@@ -218,7 +225,7 @@ describe('Gildash', () => {
     const spyProcessOn = spyOn(process, 'on');
     const opts = makeOptions();
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const signals = (spyProcessOn.mock.calls as any[]).map((c) => c[0]);
     expect(signals).toContain('SIGINT');
@@ -231,7 +238,7 @@ describe('Gildash', () => {
     const spyProcessOn = spyOn(process, 'on');
     const opts = makeOptions();
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const signals = (spyProcessOn.mock.calls as any[]).map((c) => c[0]);
     expect(signals).toContain('beforeExit');
@@ -242,7 +249,7 @@ describe('Gildash', () => {
 
   it('should delegate searchSymbols(query) when symbolSearch is injected', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const query = { text: 'myFunc' };
 
     ledger.searchSymbols(query);
@@ -255,7 +262,7 @@ describe('Gildash', () => {
 
   it('should delegate searchRelations(query) when relationSearch is injected', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const query = { srcFilePath: 'src/a.ts' };
 
     ledger.searchRelations(query);
@@ -272,7 +279,7 @@ describe('Gildash', () => {
       { type: 'imports', srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts', srcSymbolName: null, dstSymbolName: null },
       { type: 'imports', srcFilePath: 'src/a.ts', dstFilePath: 'src/c.ts', srcSymbolName: null, dstSymbolName: null },
     ]);
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = ledger.getDependencies('src/a.ts');
 
@@ -285,7 +292,7 @@ describe('Gildash', () => {
 
   it('should use the given project when getDependencies is called with a project argument', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     ledger.getDependencies('src/a.ts', 'my-project');
 
@@ -297,7 +304,7 @@ describe('Gildash', () => {
 
   it('should fall back to defaultProject when getDependencies is called without a project argument', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     ledger.getDependencies('src/a.ts');
 
@@ -312,7 +319,7 @@ describe('Gildash', () => {
     opts.relationSearchFn.mockReturnValue([
       { type: 'imports', srcFilePath: 'src/x.ts', dstFilePath: 'src/a.ts', srcSymbolName: null, dstSymbolName: null },
     ]);
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = ledger.getDependents('src/a.ts');
 
@@ -325,7 +332,7 @@ describe('Gildash', () => {
 
   it('should fall back to defaultProject when getDependents is called without a project argument', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     ledger.getDependents('src/a.ts');
 
@@ -341,7 +348,7 @@ describe('Gildash', () => {
       { srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts', type: 'imports', project: 'test-project' },
     ]);
     const opts = makeOptions({ relationRepo });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = await ledger.getAffected(['src/b.ts']);
 
@@ -352,7 +359,7 @@ describe('Gildash', () => {
   it('should pass defaultProject to DependencyGraph when getAffected is called without a project argument', async () => {
     const relationRepo = makeRelationRepoMock();
     const opts = makeOptions({ relationRepo });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     await ledger.getAffected([]);
 
@@ -367,7 +374,7 @@ describe('Gildash', () => {
       { srcFilePath: 'src/b.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project' },
     ]);
     const opts = makeOptions({ relationRepo });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = await ledger.hasCycle();
 
@@ -377,7 +384,7 @@ describe('Gildash', () => {
 
   it('should return false when hasCycle finds no circular dependency in the graph', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = await ledger.hasCycle();
 
@@ -387,7 +394,7 @@ describe('Gildash', () => {
 
   it('should return a ParsedFile and store it in parseCache when parseSource is called', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = ledger.parseSource('/project/src/a.ts', 'const x = 1;');
 
@@ -406,7 +413,7 @@ describe('Gildash', () => {
     }];
     const opts = makeOptions();
     (opts.extractSymbolsFn as any).mockReturnValue(fakeSymbols);
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const parsed = { filePath: '/project/src/a.ts', program: { body: [] }, errors: [], comments: [], sourceText: 'x' };
 
     const result = ledger.extractSymbols(parsed as any);
@@ -419,7 +426,7 @@ describe('Gildash', () => {
     const fakeRelations: CodeRelation[] = [{ type: 'imports', srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts', srcSymbolName: null, dstSymbolName: null }];
     const opts = makeOptions();
     (opts.extractRelationsFn as any).mockReturnValue(fakeRelations);
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const parsed = { filePath: '/project/src/a.ts', program: { body: [] }, errors: [], comments: [], sourceText: 'x' };
 
     const result = ledger.extractRelations(parsed as any);
@@ -431,7 +438,7 @@ describe('Gildash', () => {
   it('should pass onIndexed callback through when coordinator.onIndexed is used', async () => {
     const coordinator = makeCoordinatorMock();
     const opts = makeOptions({ coordinator });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const cb = mock((r: any) => {});
 
     ledger.onIndexed(cb);
@@ -443,7 +450,7 @@ describe('Gildash', () => {
   it('should return unsubscribe function when onIndexed registers callback', async () => {
     const coordinator = makeCoordinatorMock();
     const opts = makeOptions({ coordinator });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const cb = mock((r: any) => {});
 
     const unsubscribe = ledger.onIndexed(cb);
@@ -459,7 +466,7 @@ describe('Gildash', () => {
     const db = makeDbMock();
     const opts = makeOptions({ role: 'owner', coordinator, watcher, db });
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     await ledger.close();
 
     expect(coordinator.shutdown).toHaveBeenCalled();
@@ -473,7 +480,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader', db });
     const spyClearInterval = spyOn(globalThis, 'clearInterval');
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     await ledger.close();
 
     expect(spyClearInterval).toHaveBeenCalled();
@@ -499,7 +506,7 @@ describe('Gildash', () => {
 
   it('should not throw when close() is called a second time', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     await ledger.close();
 
     await expect(ledger.close()).resolves.toBeUndefined();
@@ -516,7 +523,7 @@ describe('Gildash', () => {
   it('should invoke registered onIndexed callback when coordinator fires it', async () => {
     const coordinator = makeCoordinatorMock();
     const opts = makeOptions({ coordinator });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const cb = mock((r: any) => {});
     ledger.onIndexed(cb);
 
@@ -531,7 +538,7 @@ describe('Gildash', () => {
 
   it('should support open → searchSymbols → close lifecycle when called sequentially', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const results = ledger.searchSymbols({ text: 'handler' });
 
@@ -551,7 +558,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'owner', coordinator, watcher, db });
     opts.releaseWatcherRoleFn = releaseWatcherRoleFn;
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     await ledger.close();
 
     expect(order.indexOf('shutdown')).toBeLessThan(order.indexOf('watcher.close'));
@@ -561,7 +568,7 @@ describe('Gildash', () => {
 
   it('should return Err when reindex() is called on a reader instance', async () => {
     const opts = makeOptions({ role: 'reader' });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = await (ledger as any).reindex();
     expect(isErr(result)).toBe(true);
@@ -571,7 +578,7 @@ describe('Gildash', () => {
   it('should delegate reindex() to coordinator.fullIndex() when role is owner', async () => {
     const coordinator = makeCoordinatorMock();
     const opts = makeOptions({ role: 'owner', coordinator });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     coordinator.fullIndex.mockClear();
 
     await (ledger as any).reindex();
@@ -584,7 +591,7 @@ describe('Gildash', () => {
     const tsconfigPaths = { '@/': ['src/'] };
     const opts = makeOptions({ role: 'reader' });
     (opts as any).loadTsconfigPathsFn = mock(() => tsconfigPaths);
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const parsed = { filePath: '/project/src/a.ts', program: { body: [] }, errors: [], comments: [], sourceText: 'x' };
 
     ledger.extractRelations(parsed as any);
@@ -604,7 +611,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader', coordinator });
     opts.acquireWatcherRoleFn = acquireMock as any;
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const cb = mock((r: any) => {});
     ledger.onIndexed(cb);
 
@@ -617,7 +624,7 @@ describe('Gildash', () => {
 
   it('should return an array when projects getter is accessed', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const projects = (ledger as any).projects;
 
@@ -628,7 +635,7 @@ describe('Gildash', () => {
   it('should delegate getStats() when symbolRepo is available', async () => {
     const symbolRepo = makeSymbolRepoMock();
     const opts = makeOptions({ symbolRepo });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     (ledger as any).getStats();
 
@@ -640,7 +647,7 @@ describe('Gildash', () => {
     const tsconfigPaths = { '@/': ['src/'] };
     const opts = makeOptions({ role: 'reader' });
     (opts as any).loadTsconfigPathsFn = mock(() => Promise.resolve(tsconfigPaths));
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const parsed = { filePath: '/project/src/a.ts', program: { body: [] }, errors: [], comments: [], sourceText: 'x' };
 
     ledger.extractRelations(parsed as any);
@@ -682,7 +689,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader', watcher });
     opts.acquireWatcherRoleFn = acquireMock as any;
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     jest.advanceTimersByTime(60_000);
     for (let i = 0; i < 10; i++) await Promise.resolve();
@@ -700,7 +707,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader' });
     opts.acquireWatcherRoleFn = acquireMock as any;
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     for (let i = 0; i < 10; i++) {
       jest.advanceTimersByTime(60_000);
@@ -720,7 +727,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader' });
     opts.acquireWatcherRoleFn = acquireMock as any;
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     for (let i = 0; i < 9; i++) {
       jest.advanceTimersByTime(60_000);
@@ -748,7 +755,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader', watcher });
     opts.acquireWatcherRoleFn = acquireMock as any;
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     jest.advanceTimersByTime(60_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
@@ -772,7 +779,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader', coordinator });
     opts.acquireWatcherRoleFn = acquireMock as any;
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     jest.advanceTimersByTime(60_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
@@ -796,7 +803,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader', watcher });
     opts.acquireWatcherRoleFn = acquireMock as any;
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     for (let i = 0; i < 5; i++) {
       jest.advanceTimersByTime(60_000);
@@ -817,7 +824,7 @@ describe('Gildash', () => {
 
   it('should return Err when searchSymbols() is called after close()', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     await ledger.close();
 
     expect(isErr(ledger.searchSymbols({ text: 'foo' }))).toBe(true);
@@ -825,7 +832,7 @@ describe('Gildash', () => {
 
   it('should return Err when searchRelations() is called after close()', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     await ledger.close();
 
     expect(isErr(ledger.searchRelations({ srcFilePath: 'a.ts' }))).toBe(true);
@@ -833,7 +840,7 @@ describe('Gildash', () => {
 
   it('should return Err when stateless APIs are called after close()', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const parsed = { filePath: '/project/src/a.ts', program: { body: [] }, errors: [], comments: [], sourceText: 'x' } as any;
     await ledger.close();
 
@@ -847,7 +854,7 @@ describe('Gildash', () => {
 
   it('should return Err when async APIs are called after close()', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     await ledger.close();
 
     expect(isErr(await ledger.reindex())).toBe(true);
@@ -858,7 +865,7 @@ describe('Gildash', () => {
   it('should use projectRoot basename as defaultProject when discoverProjects returns empty', async () => {
     const opts = makeOptions({ projectRoot: '/project/my-root' });
     opts.discoverProjectsFn = mock(async () => []) as any;
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     ledger.searchSymbols({ text: 'foo' });
 
@@ -870,7 +877,7 @@ describe('Gildash', () => {
 
   it('should pass defaultProject to symbolSearchFn when searchSymbols is called without a project in the query', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     ledger.searchSymbols({ text: 'foo' });
 
@@ -882,7 +889,7 @@ describe('Gildash', () => {
 
   it('should pass defaultProject to relationSearchFn when searchRelations is called without a project in the query', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     ledger.searchRelations({ srcFilePath: 'a.ts' });
 
@@ -896,7 +903,7 @@ describe('Gildash', () => {
     const coordinator = makeCoordinatorMock();
     coordinator.shutdown = mock(async () => { throw new Error('coordinator shutdown failed'); });
     const opts = makeOptions({ role: 'owner', coordinator });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = await ledger.close();
     expect(isErr(result)).toBe(true);
@@ -909,7 +916,7 @@ describe('Gildash', () => {
     const db = makeDbMock();
     db.close = mock(() => { throw new Error('db close fail'); });
     const opts = makeOptions({ role: 'owner', coordinator, db });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = await ledger.close();
     expect(isErr(result)).toBe(true);
@@ -922,7 +929,7 @@ describe('Gildash', () => {
 
   it('should call process.off with SIGTERM when close() is invoked', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const spyOff = spyOn(process, 'off');
 
     await ledger.close();
@@ -934,7 +941,7 @@ describe('Gildash', () => {
 
   it('should call process.off with SIGINT when close() is invoked', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const spyOff = spyOn(process, 'off');
 
     await ledger.close();
@@ -946,7 +953,7 @@ describe('Gildash', () => {
 
   it('should call process.off with beforeExit when close() is invoked', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     const spyOff = spyOn(process, 'off');
 
     await ledger.close();
@@ -958,7 +965,7 @@ describe('Gildash', () => {
 
   it('should not affect internal boundaries when elements are pushed into the projects() array', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const snapshot = ledger.projects;
     const sizeBefore = snapshot.length;
@@ -971,7 +978,7 @@ describe('Gildash', () => {
 
   it('should return a different array instance on each call to the projects getter', async () => {
     const opts = makeOptions();
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const list1 = ledger.projects;
     const list2 = ledger.projects;
@@ -982,7 +989,7 @@ describe('Gildash', () => {
 
   it('should invoke updateHeartbeatFn when the owner heartbeat timer fires', async () => {
     const opts = makeOptions({ role: 'owner' });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     jest.advanceTimersByTime(30_000);
 
@@ -1000,7 +1007,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader' });
     opts.acquireWatcherRoleFn = acquireMock as any;
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     jest.advanceTimersByTime(60_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
@@ -1025,7 +1032,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader', watcher });
     opts.acquireWatcherRoleFn = acquireMock as any;
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     jest.advanceTimersByTime(60_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
@@ -1048,7 +1055,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader', watcher, coordinator });
     opts.acquireWatcherRoleFn = acquireMock as any;
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     jest.advanceTimersByTime(60_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
@@ -1065,7 +1072,7 @@ describe('Gildash', () => {
     coordinator.handleWatcherEvent = mock(() => {});
     const opts = makeOptions({ role: 'owner', watcher, coordinator });
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     capturedCb!({ filePath: 'src/a.ts', type: 'update' });
 
@@ -1088,7 +1095,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader', watcher, coordinator });
     opts.acquireWatcherRoleFn = acquireMock as any;
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     jest.advanceTimersByTime(60_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
@@ -1109,7 +1116,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader' });
     opts.acquireWatcherRoleFn = acquireMock as any;
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const coordinator = (ledger as any).coordinator;
     if (coordinator) coordinator.shutdown = mock(async () => { throw new Error('shutdown fail'); });
@@ -1129,7 +1136,7 @@ describe('Gildash', () => {
     const spyOn_ = spyOn(process, 'on');
     const opts = makeOptions({ role: 'owner' });
 
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const sigintCall = spyOn_.mock.calls.find((c: any) => c[0] === 'SIGINT');
     const handler = sigintCall?.[1] as (() => void) | undefined;
@@ -1151,14 +1158,14 @@ describe('Gildash', () => {
     const symbolRepo = makeSymbolRepoMock();
     symbolRepo.getStats.mockImplementation(() => { throw new Error('db error'); });
     const opts = makeOptions({ symbolRepo });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = (ledger as any).getStats();
 
     expect(isErr(result)).toBe(true);
     if (isErr(result)) {
-      expect(result.data.type).toBe('store');
-      expect(result.data.cause).toBeInstanceOf(Error);
+      expect((result.data as GildashError).type).toBe('store');
+      expect((result.data as GildashError).cause).toBeInstanceOf(Error);
     }
     await ledger.close();
   });
@@ -1166,7 +1173,7 @@ describe('Gildash', () => {
   it('should return Err with search type when symbolSearchFn throws inside searchSymbols()', async () => {
     const opts = makeOptions();
     opts.symbolSearchFn.mockImplementation(() => { throw new Error('db error'); });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = ledger.searchSymbols({ text: 'foo' });
 
@@ -1181,7 +1188,7 @@ describe('Gildash', () => {
   it('should return Err with search type when relationSearchFn throws inside searchRelations()', async () => {
     const opts = makeOptions();
     opts.relationSearchFn.mockImplementation(() => { throw new Error('db error'); });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = ledger.searchRelations({ srcFilePath: 'a.ts' });
 
@@ -1196,7 +1203,7 @@ describe('Gildash', () => {
   it('should return Err with search type when relationSearchFn throws inside getDependencies()', async () => {
     const opts = makeOptions();
     opts.relationSearchFn.mockImplementation(() => { throw new Error('db error'); });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = ledger.getDependencies('src/a.ts');
 
@@ -1211,7 +1218,7 @@ describe('Gildash', () => {
   it('should return Err with search type when relationSearchFn throws inside getDependents()', async () => {
     const opts = makeOptions();
     opts.relationSearchFn.mockImplementation(() => { throw new Error('db error'); });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = ledger.getDependents('src/a.ts');
 
@@ -1227,7 +1234,7 @@ describe('Gildash', () => {
     const relationRepo = makeRelationRepoMock();
     relationRepo.getByType.mockImplementation(() => { throw new Error('db error'); });
     const opts = makeOptions({ relationRepo });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = await ledger.getAffected(['src/a.ts']);
 
@@ -1243,7 +1250,7 @@ describe('Gildash', () => {
     const relationRepo = makeRelationRepoMock();
     relationRepo.getByType.mockImplementation(() => { throw new Error('db error'); });
     const opts = makeOptions({ relationRepo });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
 
     const result = await ledger.hasCycle();
 
@@ -1258,15 +1265,15 @@ describe('Gildash', () => {
   it('should return Err with index type when coordinator.fullIndex() throws inside reindex()', async () => {
     const coordinator = makeCoordinatorMock();
     const opts = makeOptions({ role: 'owner', coordinator });
-    const ledger = await Gildash.open(opts);
+    const ledger = await openOrThrow(opts);
     coordinator.fullIndex.mockRejectedValue(new Error('db error'));
 
     const result = await (ledger as any).reindex();
 
     expect(isErr(result)).toBe(true);
     if (isErr(result)) {
-      expect(result.data.type).toBe('index');
-      expect(result.data.cause).toBeInstanceOf(Error);
+      expect((result.data as GildashError).type).toBe('index');
+      expect((result.data as GildashError).cause).toBeInstanceOf(Error);
     }
     await ledger.close();
   });

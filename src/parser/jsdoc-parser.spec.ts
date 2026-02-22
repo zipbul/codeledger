@@ -15,6 +15,7 @@ describe('parseJsDoc', () => {
   });
   it('should return description and empty tags when comment is simple', () => {
     const result = parseJsDoc('/** A description. */');
+    if (isErr(result)) throw result.data;
     expect(result.description).toBe('A description.');
     expect(result.tags).toEqual([]);
   });
@@ -29,6 +30,7 @@ describe('parseJsDoc', () => {
       },
     ]));
     const result = parseJsDoc('/** Handles auth. @param {string} userId The user ID. */');
+    if (isErr(result)) throw result.data;
     expect(result.description).toBe('Handles auth.');
     expect(result.tags).toHaveLength(1);
     expect(result.tags[0]!.tag).toBe('param');
@@ -46,6 +48,7 @@ describe('parseJsDoc', () => {
       },
     ]));
     const result = parseJsDoc('/** @param {number} [x] */');
+    if (isErr(result)) throw result.data;
     expect(result.tags[0]!.optional).toBe(true);
   });
 
@@ -59,6 +62,7 @@ describe('parseJsDoc', () => {
       },
     ]));
     const result = parseJsDoc('/** @param {number} [x=42] */');
+    if (isErr(result)) throw result.data;
     expect(result.tags[0]!.default).toBe('42');
   });
 
@@ -92,6 +96,7 @@ describe('parseJsDoc', () => {
       },
     ]));
     const result = parseJsDoc('/** @param {string} x */');
+    if (isErr(result)) throw result.data;
     expect(result.tags[0]!.default).toBeUndefined();
   });
 
@@ -99,12 +104,15 @@ describe('parseJsDoc', () => {
     mockParse.mockImplementation(() => ([{ description: 'Same.', tags: [] }]));
     const r1 = parseJsDoc('/** Same. */');
     const r2 = parseJsDoc('/** Same. */');
+    if (isErr(r1)) throw r1.data;
+    if (isErr(r2)) throw r2.data;
     expect(r1).toEqual(r2);
   });
 
   it('should parse input as description when /** wrapper is not present', () => {
     mockParse.mockImplementationOnce(() => ([{ description: 'plain text', tags: [] }]));
     const result = parseJsDoc('plain text');
+    if (isErr(result)) throw result.data;
     expect(result.description).toBe('plain text');
     expect(result.tags).toHaveLength(0);
   });

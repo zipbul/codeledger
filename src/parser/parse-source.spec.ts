@@ -14,6 +14,7 @@ describe('parseSource', () => {
     const filePath = '/project/src/index.ts';
     const sourceText = 'const x = 1;';
     const result = parseSource(filePath, sourceText, mockParseSync);
+    if (isErr(result)) throw result.data;
     expect(result.filePath).toBe(filePath);
     expect(result.sourceText).toBe(sourceText);
   });
@@ -22,17 +23,20 @@ describe('parseSource', () => {
     const filePath = '/project/src/foo.ts';
     const sourceText = 'export const y = 2;';
     const result = parseSource(filePath, sourceText, mockParseSync);
+    if (isErr(result)) throw result.data;
     expect(result.program).toBeDefined();
     expect(result.program.type).toBe('Program');
   });
 
   it('should return errors array when parseSync provides errors', () => {
     const result = parseSource('/project/a.ts', '', mockParseSync);
+    if (isErr(result)) throw result.data;
     expect(Array.isArray(result.errors)).toBe(true);
   });
 
   it('should return comments array when parseSync provides comments', () => {
     const result = parseSource('/project/a.ts', '', mockParseSync);
+    if (isErr(result)) throw result.data;
     expect(Array.isArray(result.comments)).toBe(true);
   });
 
@@ -70,6 +74,8 @@ describe('parseSource', () => {
     mockParseSync.mockImplementation(() => ({ program, errors: [], comments: [], module: {} }));
     const r1 = parseSource('/project/x.ts', 'const a = 1;', mockParseSync);
     const r2 = parseSource('/project/x.ts', 'const a = 1;', mockParseSync);
+    if (isErr(r1)) throw r1.data;
+    if (isErr(r2)) throw r2.data;
     expect(r1).not.toBe(r2);
     expect(r1.program).toBe(r2.program);
   });
