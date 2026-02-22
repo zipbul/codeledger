@@ -339,3 +339,21 @@ describe('getQualifiedName', () => {
     expect(result).toEqual({ root: 'super', parts: ['connect'], full: 'super.connect' });
   });
 });
+
+describe('getNodeHeader (additional coverage)', () => {
+  it('should return key.value when key is a StringLiteral', () => {
+    const node = { type: 'PropertyDefinition', key: { type: 'StringLiteral', value: 'myProp' } };
+    expect(getNodeHeader(node)).toBe('myProp');
+  });
+
+  it('should return key.value when key is a Literal with string value', () => {
+    const node = { type: 'Property', key: { type: 'Literal', value: 'literalKey' } };
+    expect(getNodeHeader(node)).toBe('literalKey');
+  });
+
+  it('should return parent key.value when parent is PropertyDefinition with string-valued key', () => {
+    const node = { type: 'FunctionExpression' };
+    const parent = { type: 'PropertyDefinition', key: { value: 'computed' } };
+    expect(getNodeHeader(node, parent)).toBe('computed');
+  });
+});

@@ -834,4 +834,71 @@ describe('IndexCoordinator', () => {
 
     expect((result as any).failedFiles).toEqual(['src/a.ts', 'src/b.ts']);
   });
+
+  it('should expose tsconfigPaths getter that returns a promise', async () => {
+    const coordinator = makeCoordinator();
+
+    const result = await coordinator.tsconfigPaths;
+
+    expect(result).toBeNull();
+  });
+
+  it('should catch and log when fullIndex fails after tsconfig.json change', async () => {
+    mockDetectChanges.mockRejectedValue(new Error('index error'));
+    const coordinator = makeCoordinator();
+
+    coordinator.handleWatcherEvent({ filePath: '/project/tsconfig.json', type: 'update' } as any);
+
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(mockClearTsconfigPathsCache).toHaveBeenCalledWith(PROJECT_ROOT);
+  });
+
+  it('should refresh boundaries when package.json change is detected', async () => {
+    mockDetectChanges.mockResolvedValue({ changed: [], unchanged: [], deleted: [] });
+    const coordinator = makeCoordinator();
+
+    coordinator.handleWatcherEvent({ filePath: '/project/package.json', type: 'update' } as any);
+
+    jest.runAllTimers();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(mockDiscoverProjects).toHaveBeenCalledWith(PROJECT_ROOT);
+  });
+
+  it('should reject all waiters when a queued fullIndex fails', async () => {
+    let resolveFirst!: () => void;
+    const blockFirst = new Promise<any>((res) => {
+      resolveFirst = () => res({ changed: [], unchanged: [], deleted: [] });
+    });
+    mockDetectChanges
+      .mockReturnValueOnce(blockFirst)
+      .mockRejectedValueOnce(new Error('second index failed'));
+
+    const coordinator = makeCoordinator();
+    const first = coordinator.fullIndex();
+    const second = coordinator.fullIndex();
+
+    resolveFirst();
+    await first;
+
+    await expect(second).rejects.toThrow('second index failed');
+  });
+
+  it('should catch and log when incremental drain fails after current indexing completes', async () => {
+    let resolveFirst!: () => void;
+    const blockFirst = new Promise<any>((res) => {
+      resolveFirst = () => res({ changed: [], unchanged: [], deleted: [] });
+    });
+    mockDetectChanges.mockReturnValueOnce(blockFirst);
+
+    const coordinator = makeCoordinator();
+    const first = coordinator.fullIndex();
+
+    coordinator.handleWatcherEvent({ filePath: '/project/src/a.ts', type: 'update' } as any);
+
+    mockDetectChanges.mockRejectedValueOnce(new Error('drain error'));
+    resolveFirst();
+    await first;
+
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+  });
 });
