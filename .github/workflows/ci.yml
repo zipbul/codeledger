@@ -25,7 +25,10 @@ jobs:
         run: bun run build
 
       - name: Run tests
-        run: bun test
+        run: bun run test
+
+      - name: Run coverage
+        run: bun run test:coverage
 
       - name: Extract coverage
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'

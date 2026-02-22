@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, mock, spyOn, type Mock } from "bun:tes
 import type { AsyncSubscription, SubscribeCallback } from "@parcel/watcher";
 import { subscribe as parcelSubscribe } from "@parcel/watcher";
 import { ProjectWatcher } from "./project-watcher";
-import { WatcherError } from "../errors";
+import { isErr } from '@zipbul/result';
 
 type SubscribeOptions = NonNullable<Parameters<typeof parcelSubscribe>[2]>;
 
@@ -169,14 +169,16 @@ describe("ProjectWatcher", () => {
     expect(events).toEqual([]);
   });
 
-  it("should wrap watcher subscribe error when subscribe throws during start", async () => {
+  it("should return Err with watcher type when subscribe throws during start", async () => {
     const subscribe = async (): Promise<AsyncSubscription> => {
       throw new Error("subscription failed");
     };
 
     const watcher = new ProjectWatcher({ projectRoot: "/repo" }, subscribe);
+    const result = await watcher.start(() => {});
 
-    await expect(watcher.start(() => {})).rejects.toBeInstanceOf(WatcherError);
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) expect(result.data.type).toBe('watcher');
   });
 
   it("should log watcher callback error when callback receives error as first argument", async () => {
@@ -195,7 +197,7 @@ describe("ProjectWatcher", () => {
 
     expect(errorSpy).toHaveBeenCalledTimes(1);
     const firstArg = errorSpy.mock.calls[0]?.[0];
-    expect(firstArg).toBeInstanceOf(WatcherError);
+    expect(firstArg?.type).toBe('watcher');
   });
 
   it("should log watcher callback error when onChange throws", async () => {
@@ -216,7 +218,7 @@ describe("ProjectWatcher", () => {
 
     expect(errorSpy).toHaveBeenCalledTimes(1);
     const firstArg = errorSpy.mock.calls[0]?.[0];
-    expect(firstArg).toBeInstanceOf(WatcherError);
+    expect(firstArg?.type).toBe('watcher');
   });
 
   it("should treat extension match as case-insensitive when configured extension is lowercase", async () => {
@@ -244,7 +246,7 @@ describe("ProjectWatcher", () => {
     await expect(watcher.close()).resolves.toBeUndefined();
   });
 
-  it("should throw WatcherError when unsubscribe throws during close", async () => {
+  it("should return Err with watcher type when unsubscribe throws during close", async () => {
     const subscribe = async (): Promise<AsyncSubscription> => ({
       unsubscribe: async () => {
         throw new Error("unsubscribe failed");
@@ -253,8 +255,10 @@ describe("ProjectWatcher", () => {
 
     const watcher = new ProjectWatcher({ projectRoot: "/repo" }, subscribe);
     await watcher.start(() => {});
+    const result = await watcher.close();
 
-    await expect(watcher.close()).rejects.toBeInstanceOf(WatcherError);
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) expect(result.data.type).toBe('watcher');
   });
 
   it("should pass tsconfig json as config file when callback receives tsconfig path", async () => {

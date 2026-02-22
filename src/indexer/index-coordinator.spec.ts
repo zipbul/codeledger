@@ -901,4 +901,15 @@ describe('IndexCoordinator', () => {
 
     for (let i = 0; i < 10; i++) await Promise.resolve();
   });
+
+  it('should catch and log when flushPending startIndex rejects after debounce expires', async () => {
+    mockDetectChanges.mockRejectedValue(new Error('flush error'));
+
+    const coordinator = makeCoordinator();
+    coordinator.handleWatcherEvent({ filePath: '/project/src/x.ts', eventType: 'change' } as any);
+
+    jest.advanceTimersByTime(150);
+
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  });
 });

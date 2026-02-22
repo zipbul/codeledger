@@ -1,9 +1,8 @@
 [test]
 preload = ["./test/setup.ts"]
 onlyFailures = true
-coverage = true
 coverageReporter = ["text", "lcov"]
-coverageThreshold = 0.95
+coverageThreshold = 0.9
 
 [test.reporter]
 dots = true

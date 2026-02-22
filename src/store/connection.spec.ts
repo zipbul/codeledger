@@ -59,8 +59,8 @@ class MockDatabase {
 
 mock.module('bun:sqlite', () => ({ Database: MockDatabase }));
 
+import { isErr } from '@zipbul/result';
 import { DbConnection } from './connection';
-import { StoreError } from '../errors';
 
 beforeEach(() => {
   dbCallIdx = 0;
@@ -183,11 +183,11 @@ describe('DbConnection', () => {
     expect(mockUnlinkSync).toHaveBeenCalled();
   });
 
-  it('should propagate as StoreError without retry when Database throws a non-corruption error', () => {
+  it('should return Err with store type without retry when Database throws a non-corruption error', () => {
     dbErrors = [new Error('ENOMEM: out of memory')];
 
     const db = new DbConnection({ projectRoot: '/fake' });
-    expect(() => db.open()).toThrow(StoreError);
+    expect(isErr(db.open())).toBe(true);
 
     expect(mockMkdirSync).toHaveBeenCalledTimes(1);
     expect(mockUnlinkSync).not.toHaveBeenCalled();
@@ -204,12 +204,12 @@ describe('DbConnection', () => {
     expect(runs.some((sql) => sql?.includes('ROLLBACK'))).toBe(true);
   });
 
-  it('should throw StoreError without retry when db file does not exist during corruption recovery', () => {
+  it('should return Err with store type without retry when db file does not exist during corruption recovery', () => {
     dbErrors = [new Error('malformed database schema')];
     mockExistsSync.mockImplementation((_: string) => false);
 
     const db = new DbConnection({ projectRoot: '/fake' });
-    expect(() => db.open()).toThrow(StoreError);
+    expect(isErr(db.open())).toBe(true);
 
     expect(mockUnlinkSync).not.toHaveBeenCalled();
     expect(mockMkdirSync).toHaveBeenCalledTimes(1);

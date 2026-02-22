@@ -1,4 +1,5 @@
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
+import { isErr } from '@zipbul/result';
 import { parseSource } from '../parser/parse-source';
 import type { ParsedFile } from '../parser/types';
 import type { JsDocTag } from '../extractor/types';
@@ -19,7 +20,9 @@ mock.module('../parser/jsdoc-parser', () => ({
 import { extractSymbols } from './symbol-extractor';
 
 function makeFixture(source: string, filePath = '/project/src/index.ts'): ParsedFile {
-  return parseSource(filePath, source);
+  const result = parseSource(filePath, source);
+  if (isErr(result)) throw new Error(result.data.message);
+  return result;
 }
 
 describe('extractSymbols', () => {

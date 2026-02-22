@@ -35,7 +35,7 @@
     "build": "bun build index.ts --outdir dist --target bun --format esm --packages external --sourcemap=linked --production && tsc -p tsconfig.build.json && cp -r src/store/migrations dist/migrations",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "coverage": "bun test --coverage",
+    "test:coverage": "bun test --coverage",
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "changeset publish"
@@ -54,5 +54,8 @@
     "@types/bun": "latest",
     "drizzle-kit": "^0.31.9",
     "husky": "^9.1.7"
+  },
+  "peerDependencies": {
+    "@zipbul/result": "^0.0.3"
   }
 }

@@ -356,4 +356,22 @@ describe('getNodeHeader (additional coverage)', () => {
     const parent = { type: 'PropertyDefinition', key: { value: 'computed' } };
     expect(getNodeHeader(node, parent)).toBe('computed');
   });
+
+  it('should return anonymous when parent is MethodDefinition and pkey has no string name or value', () => {
+    const node = { type: 'FunctionExpression' };
+    const parent = { type: 'MethodDefinition', key: { name: 42, value: true } };
+    expect(getNodeHeader(node, parent)).toBe('anonymous');
+  });
+});
+
+describe('getQualifiedName (additional coverage)', () => {
+  it('should return null when MemberExpression root object is a CallExpression', () => {
+    const node = {
+      type: 'MemberExpression',
+      object: { type: 'CallExpression', callee: { type: 'Identifier', name: 'fn' } },
+      property: { type: 'Identifier', name: 'result' },
+      computed: false,
+    };
+    expect(getQualifiedName(node)).toBeNull();
+  });
 });
