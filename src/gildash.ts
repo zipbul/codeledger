@@ -1,3 +1,4 @@
+import { err, isErr, type Result } from '@zipbul/result';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import type { ParsedFile } from './parser/types';
@@ -28,6 +29,7 @@ import { relationSearch as defaultRelationSearch } from './search/relation-searc
 import type { RelationSearchQuery } from './search/relation-search';
 import type { SymbolStats } from './store/repositories/symbol.repository';
 import { DependencyGraph } from './search/dependency-graph';
+import { gildashError, type GildashError } from './errors';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEALTHCHECK_INTERVAL_MS = 60_000;
@@ -48,11 +50,18 @@ export interface Logger {
  *
  * @example
  * ```ts
- * const ledger = await Gildash.open({
+ * import { isErr } from '@zipbul/result';
+ *
+ * const result = await Gildash.open({
  *   projectRoot: '/absolute/path/to/project',
  *   extensions: ['.ts', '.tsx'],
  *   ignorePatterns: ['vendor'],
  * });
+ * if (isErr(result)) {
+ *   console.error(result.data.message);
+ *   process.exit(1);
+ * }
+ * const ledger = result;
  * ```
  */
 export interface GildashOptions {
@@ -100,15 +109,30 @@ interface GildashInternalOptions {
  * `Gildash` indexes TypeScript source code into a local SQLite database,
  * watches for file changes, and provides search / dependency-graph queries.
  *
+ * Every public method returns a `Result<T, GildashError>` — either the
+ * success value `T` directly, or an `Err<GildashError>` that can be checked
+ * with `isErr()` from `@zipbul/result`.
+ *
  * Create an instance with the static {@link Gildash.open} factory.
  * Always call {@link Gildash.close} when done to release resources.
  *
  * @example
  * ```ts
  * import { Gildash } from '@zipbul/gildash';
+ * import { isErr } from '@zipbul/result';
  *
- * const ledger = await Gildash.open({ projectRoot: '/my/project' });
+ * const result = await Gildash.open({ projectRoot: '/my/project' });
+ * if (isErr(result)) {
+ *   console.error(result.data.message);
+ *   process.exit(1);
+ * }
+ * const ledger = result;
+ *
  * const symbols = ledger.searchSymbols({ text: 'handle', kind: 'function' });
+ * if (!isErr(symbols)) {
+ *   symbols.forEach(s => console.log(s.name));
+ * }
+ *
  * await ledger.close();
  * ```
  */
@@ -188,18 +212,19 @@ export class Gildash {
    * and begins watching for file changes.
    *
    * @param options - Configuration for the instance.
-   * @returns A fully-initialised `Gildash` ready for queries.
-   * @throws {Error} If `projectRoot` is not absolute or does not exist.
+   * @returns A fully-initialised `Gildash` ready for queries, or an `Err<GildashError>` on failure.
    *
    * @example
    * ```ts
-   * const ledger = await Gildash.open({
+   * const result = await Gildash.open({
    *   projectRoot: '/home/user/my-app',
    *   extensions: ['.ts', '.tsx'],
    * });
+   * if (isErr(result)) { console.error(result.data.message); process.exit(1); }
+   * const ledger = result;
    * ```
    */
-  static async open(options: GildashOptions & GildashInternalOptions): Promise<Gildash> {
+  static async open(options: GildashOptions & GildashInternalOptions): Promise<Result<Gildash, GildashError>> {
     const {
       projectRoot,
       extensions = ['.ts', '.mts', '.cts'],
@@ -224,16 +249,17 @@ export class Gildash {
     } = options;
 
     if (!path.isAbsolute(projectRoot)) {
-      throw new Error(`Gildash: projectRoot must be an absolute path, got: "${projectRoot}"`);
+      return err(gildashError('validation', `Gildash: projectRoot must be an absolute path, got: "${projectRoot}"`))
     }
     if (!existsSyncFn(projectRoot)) {
-      throw new Error(`Gildash: projectRoot does not exist: "${projectRoot}"`);
+      return err(gildashError('validation', `Gildash: projectRoot does not exist: "${projectRoot}"`))
     }
 
     const db = dbConnectionFactory
       ? dbConnectionFactory()
       : new DbConnection({ projectRoot });
-    db.open();
+    const openResult = db.open();
+    if (isErr(openResult)) return openResult;
     try {
 
     const boundaries: ProjectBoundary[] = await discoverProjectsFn(projectRoot);
@@ -305,7 +331,9 @@ export class Gildash {
       instance.coordinator = c;
       instance.watcher = w;
 
-      await w.start((event) => c.handleWatcherEvent?.(event));
+      await w.start((event) => c.handleWatcherEvent?.(event)).then((startResult) => {
+        if (isErr(startResult)) throw startResult.data;
+      });
 
       const timer = setInterval(() => {
         updateHeartbeatFn(db, process.pid);
@@ -350,7 +378,9 @@ export class Gildash {
               for (const cb of instance.onIndexedCallbacks) {
                 promotedCoordinator.onIndexed(cb);
               }
-              await promotedWatcher.start((event) => promotedCoordinator?.handleWatcherEvent?.(event));
+              await promotedWatcher.start((event) => promotedCoordinator?.handleWatcherEvent?.(event)).then((startResult) => {
+                if (isErr(startResult)) throw startResult.data;
+              });
               const hbTimer = setInterval(() => {
                 updateHeartbeatFn(db, process.pid);
               }, HEARTBEAT_INTERVAL_MS);
@@ -361,9 +391,8 @@ export class Gildash {
             } catch (setupErr) {
               logger.error('[Gildash] owner promotion failed, reverting to reader', setupErr);
               if (promotedWatcher) {
-                await promotedWatcher.close().catch((e) =>
-                  logger.error('[Gildash] watcher close error during promotion rollback', e),
-                );
+                const closeResult = await promotedWatcher.close();
+                if (isErr(closeResult)) logger.error('[Gildash] watcher close error during promotion rollback', closeResult.data);
                 instance.watcher = null;
               }
               if (promotedCoordinator) {
@@ -406,9 +435,9 @@ export class Gildash {
     }
 
     return instance;
-    } catch (err) {
+    } catch (error) {
       db.close();
-      throw err;
+      return err(gildashError('store', 'Gildash: initialization failed', error));
     }
   }
 
@@ -419,13 +448,24 @@ export class Gildash {
    * releases the watcher ownership role, and closes the database.
    * Calling `close()` more than once is safe (subsequent calls are no-ops).
    *
-   * @throws {AggregateError} If one or more sub-systems fail during shutdown.
+   * @returns `void` on success, or `Err<GildashError>` with `type='close'` if one or more
+   *   sub-systems failed during shutdown.  The `cause` field contains an array of
+   *   individual errors from each failed sub-system.
+   *
+   * @example
+   * ```ts
+   * const closeResult = await ledger.close();
+   * if (isErr(closeResult)) {
+   *   console.error('Close failed:', closeResult.data.message);
+   *   // closeResult.data.cause is unknown[] of per-subsystem errors
+   * }
+   * ```
    */
-  async close(): Promise<void> {
+  async close(): Promise<Result<void, GildashError>> {
     if (this.closed) return;
     this.closed = true;
 
-    const closeErrors: Error[] = [];
+    const closeErrors: unknown[] = [];
 
     for (const [sig, handler] of this.signalHandlers) {
       if (sig === 'beforeExit') {
@@ -445,11 +485,8 @@ export class Gildash {
     }
 
     if (this.watcher) {
-      try {
-        await this.watcher.close();
-      } catch (err) {
-        closeErrors.push(err instanceof Error ? err : new Error(String(err)));
-      }
+      const closeResult = await this.watcher.close();
+      if (isErr(closeResult)) closeErrors.push(closeResult.data);
     }
 
     if (this.timer !== null) {
@@ -470,7 +507,7 @@ export class Gildash {
     }
 
     if (closeErrors.length > 0) {
-      throw new AggregateError(closeErrors, 'Gildash: one or more errors occurred during close()');
+      return err(gildashError('close', 'Gildash: one or more errors occurred during close()', closeErrors));
     }
   }
 
@@ -504,27 +541,54 @@ export class Gildash {
   /**
    * Parse a TypeScript source string into an AST and cache the result.
    *
+   * On success the result is automatically stored in the internal LRU parse cache
+   * so that subsequent calls to extraction methods can reuse it.
+   *
    * @param filePath - File path used as the cache key and for diagnostics.
    * @param sourceText - Raw TypeScript source code.
-   * @returns The parsed file representation.
-   * @throws {Error} If the instance is closed.
+   * @returns A {@link ParsedFile}, or `Err<GildashError>` with `type='closed'` if the instance
+   *   is closed, or `type='parse'` if the parser fails.
+   *
+   * @example
+   * ```ts
+   * const parsed = ledger.parseSource('/project/src/app.ts', sourceCode);
+   * if (isErr(parsed)) {
+   *   console.error(parsed.data.message); // e.g. "Failed to parse file: ..."
+   *   return;
+   * }
+   * // parsed is now a ParsedFile
+   * const symbols = ledger.extractSymbols(parsed);
+   * ```
    */
-  parseSource(filePath: string, sourceText: string): ParsedFile {
-    if (this.closed) throw new Error('Gildash: instance is closed');
-    const parsed = this.parseSourceFn(filePath, sourceText);
-    this.parseCache.set(filePath, parsed);
-    return parsed;
+  parseSource(filePath: string, sourceText: string): Result<ParsedFile, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    const result = this.parseSourceFn(filePath, sourceText);
+    if (isErr(result)) return result;
+    this.parseCache.set(filePath, result);
+    return result;
   }
 
   /**
    * Extract all symbol declarations from a previously parsed file.
    *
+   * Returns function, class, variable, type-alias, interface, and enum declarations
+   * found in the AST.
+   *
    * @param parsed - A {@link ParsedFile} obtained from {@link parseSource}.
-   * @returns An array of {@link ExtractedSymbol} entries.
-   * @throws {Error} If the instance is closed.
+   * @returns An array of {@link ExtractedSymbol} entries, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed.
+   *
+   * @example
+   * ```ts
+   * const symbols = ledger.extractSymbols(parsed);
+   * if (isErr(symbols)) return;
+   * for (const sym of symbols) {
+   *   console.log(`${sym.kind}: ${sym.name}`);
+   * }
+   * ```
    */
-  extractSymbols(parsed: ParsedFile): ExtractedSymbol[] {
-    if (this.closed) throw new Error('Gildash: instance is closed');
+  extractSymbols(parsed: ParsedFile): Result<ExtractedSymbol[], GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
     return this.extractSymbolsFn(parsed);
   }
 
@@ -532,12 +596,22 @@ export class Gildash {
    * Extract inter-file relationships (imports, calls, extends, implements)
    * from a previously parsed file.
    *
+   * If tsconfig path aliases were discovered during {@link Gildash.open},
+   * they are automatically applied when resolving import targets.
+   *
    * @param parsed - A {@link ParsedFile} obtained from {@link parseSource}.
-   * @returns An array of {@link CodeRelation} entries.
-   * @throws {Error} If the instance is closed.
+   * @returns An array of {@link CodeRelation} entries, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed.
+   *
+   * @example
+   * ```ts
+   * const relations = ledger.extractRelations(parsed);
+   * if (isErr(relations)) return;
+   * const imports = relations.filter(r => r.type === 'imports');
+   * ```
    */
-  extractRelations(parsed: ParsedFile): CodeRelation[] {
-    if (this.closed) throw new Error('Gildash: instance is closed');
+  extractRelations(parsed: ParsedFile): Result<CodeRelation[], GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
     return this.extractRelationsFn(
       parsed.program,
       parsed.filePath,
@@ -549,16 +623,32 @@ export class Gildash {
    * Trigger a full re-index of all tracked files.
    *
    * Only available to the instance that holds the *owner* role.
+   * Reader instances receive `Err<GildashError>` with `type='closed'`.
    *
-   * @returns The indexing result summary.
-   * @throws {Error} If the instance is closed or is a reader.
+   * @returns An {@link IndexResult} summary on success, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed / reader,
+   *   `type='index'` if the indexing pipeline fails.
+   *
+   * @example
+   * ```ts
+   * const result = await ledger.reindex();
+   * if (isErr(result)) {
+   *   console.error(result.data.message);
+   *   return;
+   * }
+   * console.log(`Indexed ${result.indexedFiles} files in ${result.durationMs}ms`);
+   * ```
    */
-  async reindex(): Promise<IndexResult> {
-    if (this.closed) throw new Error('Gildash: instance is closed');
+  async reindex(): Promise<Result<IndexResult, GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
     if (!this.coordinator) {
-      throw new Error('Gildash: reindex() is not available for readers');
+      return err(gildashError('closed', 'Gildash: reindex() is not available for readers'));
     }
-    return this.coordinator.fullIndex();
+    try {
+      return await this.coordinator.fullIndex();
+    } catch (e) {
+      return err(gildashError('index', 'Gildash: reindex failed', e));
+    }
   }
 
   /**
@@ -574,41 +664,73 @@ export class Gildash {
    * Return aggregate symbol statistics for the given project.
    *
    * @param project - Project name. Defaults to the auto-discovered primary project.
-   * @returns Counts grouped by symbol kind.
-   * @throws {Error} If the instance is closed.
+   * @returns A {@link SymbolStats} object with counts grouped by symbol kind,
+   *   or `Err<GildashError>` with `type='closed'` if the instance is closed,
+   *   `type='store'` if the database query fails.
+   *
+   * @example
+   * ```ts
+   * const stats = ledger.getStats();
+   * if (isErr(stats)) return;
+   * console.log(`Files: ${stats.fileCount}, Symbols: ${stats.symbolCount}`);
+   * ```
    */
-  getStats(project?: string): SymbolStats {
-    if (this.closed) throw new Error('Gildash: instance is closed');
-    return this.symbolRepo.getStats(project ?? this.defaultProject);
+  getStats(project?: string): Result<SymbolStats, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      return this.symbolRepo.getStats(project ?? this.defaultProject);
+    } catch (e) {
+      return err(gildashError('store', 'Gildash: getStats failed', e));
+    }
   }
 
   /**
    * Search indexed symbols by name, kind, file path, or export status.
    *
-   * @param query - Search filters. All fields are optional; omitted fields match everything.
-   * @returns Matching {@link SymbolSearchResult} entries.
-   * @throws {Error} If the instance is closed.
+   * @param query - Search filters (see {@link SymbolSearchQuery}). All fields are optional;
+   *   omitted fields match everything.
+   * @returns An array of {@link SymbolSearchResult} entries, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if the query fails.
    *
    * @example
    * ```ts
    * const fns = ledger.searchSymbols({ kind: 'function', isExported: true });
+   * if (isErr(fns)) return;
+   * fns.forEach(fn => console.log(fn.name, fn.filePath));
    * ```
    */
-  searchSymbols(query: SymbolSearchQuery): SymbolSearchResult[] {
-    if (this.closed) throw new Error('Gildash: instance is closed');
-    return this.symbolSearchFn({ symbolRepo: this.symbolRepo, project: this.defaultProject, query });
+  searchSymbols(query: SymbolSearchQuery): Result<SymbolSearchResult[], GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      return this.symbolSearchFn({ symbolRepo: this.symbolRepo, project: this.defaultProject, query });
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: searchSymbols failed', e));
+    }
   }
 
   /**
    * Search indexed code relationships (imports, calls, extends, implements).
    *
-   * @param query - Search filters. All fields are optional.
-   * @returns Matching {@link CodeRelation} entries.
-   * @throws {Error} If the instance is closed.
+   * @param query - Search filters (see {@link RelationSearchQuery}). All fields are optional.
+   * @returns An array of {@link CodeRelation} entries, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if the query fails.
+   *
+   * @example
+   * ```ts
+   * const rels = ledger.searchRelations({ srcFilePath: 'src/app.ts', type: 'imports' });
+   * if (isErr(rels)) return;
+   * rels.forEach(r => console.log(`${r.srcFilePath} -> ${r.dstFilePath}`));
+   * ```
    */
-  searchRelations(query: RelationSearchQuery): CodeRelation[] {
-    if (this.closed) throw new Error('Gildash: instance is closed');
-    return this.relationSearchFn({ relationRepo: this.relationRepo, project: this.defaultProject, query });
+  searchRelations(query: RelationSearchQuery): Result<CodeRelation[], GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      return this.relationSearchFn({ relationRepo: this.relationRepo, project: this.defaultProject, query });
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: searchRelations failed', e));
+    }
   }
 
   /**
@@ -617,16 +739,27 @@ export class Gildash {
    * @param filePath - Absolute path of the source file.
    * @param project - Project name. Defaults to the primary project.
    * @param limit - Maximum results. Defaults to `10_000`.
-   * @returns Absolute paths of imported files.
-   * @throws {Error} If the instance is closed.
+   * @returns An array of absolute paths that `filePath` imports,
+   *   or `Err<GildashError>` with `type='closed'` / `type='search'`.
+   *
+   * @example
+   * ```ts
+   * const deps = ledger.getDependencies('/project/src/app.ts');
+   * if (isErr(deps)) return;
+   * console.log('Imports:', deps.join(', '));
+   * ```
    */
-  getDependencies(filePath: string, project?: string, limit = 10_000): string[] {
-    if (this.closed) throw new Error('Gildash: instance is closed');
-    return this.relationSearchFn({
-      relationRepo: this.relationRepo,
-      project: project ?? this.defaultProject,
-      query: { srcFilePath: filePath, type: 'imports', project: project ?? this.defaultProject, limit },
-    }).map(r => r.dstFilePath);
+  getDependencies(filePath: string, project?: string, limit = 10_000): Result<string[], GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      return this.relationSearchFn({
+        relationRepo: this.relationRepo,
+        project: project ?? this.defaultProject,
+        query: { srcFilePath: filePath, type: 'imports', project: project ?? this.defaultProject, limit },
+      }).map(r => r.dstFilePath);
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getDependencies failed', e));
+    }
   }
 
   /**
@@ -635,52 +768,92 @@ export class Gildash {
    * @param filePath - Absolute path of the target file.
    * @param project - Project name. Defaults to the primary project.
    * @param limit - Maximum results. Defaults to `10_000`.
-   * @returns Absolute paths of files that import the target.
-   * @throws {Error} If the instance is closed.
+   * @returns An array of absolute paths of files that import `filePath`,
+   *   or `Err<GildashError>` with `type='closed'` / `type='search'`.
+   *
+   * @example
+   * ```ts
+   * const dependents = ledger.getDependents('/project/src/utils.ts');
+   * if (isErr(dependents)) return;
+   * console.log('Imported by:', dependents.join(', '));
+   * ```
    */
-  getDependents(filePath: string, project?: string, limit = 10_000): string[] {
-    if (this.closed) throw new Error('Gildash: instance is closed');
-    return this.relationSearchFn({
-      relationRepo: this.relationRepo,
-      project: project ?? this.defaultProject,
-      query: { dstFilePath: filePath, type: 'imports', project: project ?? this.defaultProject, limit },
-    }).map(r => r.srcFilePath);
+  getDependents(filePath: string, project?: string, limit = 10_000): Result<string[], GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      return this.relationSearchFn({
+        relationRepo: this.relationRepo,
+        project: project ?? this.defaultProject,
+        query: { dstFilePath: filePath, type: 'imports', project: project ?? this.defaultProject, limit },
+      }).map(r => r.srcFilePath);
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getDependents failed', e));
+    }
   }
 
   /**
    * Compute the full set of files transitively affected by changes.
    *
-   * Builds a dependency graph and walks all reverse edges from each changed file.
+   * Internally builds a full {@link DependencyGraph} and walks all reverse
+   * edges from each changed file to find every transitive dependent.
    *
    * @param changedFiles - Absolute paths of files that changed.
    * @param project - Project name. Defaults to the primary project.
-   * @returns Paths of all transitively-dependent files (excludes the changed files themselves).
-   * @throws {Error} If the instance is closed.
+   * @returns De-duplicated absolute paths of all transitively-dependent files
+   *   (excluding the changed files themselves), or `Err<GildashError>` with
+   *   `type='closed'` / `type='search'`.
+   *
+   * @example
+   * ```ts
+   * const affected = await ledger.getAffected(['/project/src/utils.ts']);
+   * if (isErr(affected)) return;
+   * console.log('Affected files:', affected.length);
+   * ```
    */
-  async getAffected(changedFiles: string[], project?: string): Promise<string[]> {
-    if (this.closed) throw new Error('Gildash: instance is closed');
-    const g = new DependencyGraph({
-      relationRepo: this.relationRepo,
-      project: project ?? this.defaultProject,
-    });
-    await g.build();
-    return g.getAffectedByChange(changedFiles);
+  async getAffected(changedFiles: string[], project?: string): Promise<Result<string[], GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const g = new DependencyGraph({
+        relationRepo: this.relationRepo,
+        project: project ?? this.defaultProject,
+      });
+      await g.build();
+      return g.getAffectedByChange(changedFiles);
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getAffected failed', e));
+    }
   }
 
   /**
    * Check whether the import graph contains a circular dependency.
    *
+   * Internally builds a full {@link DependencyGraph} and runs iterative DFS
+   * cycle detection.
+   *
    * @param project - Project name. Defaults to the primary project.
-   * @returns `true` if at least one cycle exists.
-   * @throws {Error} If the instance is closed.
+   * @returns `true` if at least one cycle exists, `false` otherwise,
+   *   or `Err<GildashError>` with `type='closed'` / `type='search'`.
+   *
+   * @example
+   * ```ts
+   * const cycleResult = await ledger.hasCycle();
+   * if (isErr(cycleResult)) return;
+   * if (cycleResult) {
+   *   console.warn('Circular dependency detected!');
+   * }
+   * ```
    */
-  async hasCycle(project?: string): Promise<boolean> {
-    if (this.closed) throw new Error('Gildash: instance is closed');
-    const g = new DependencyGraph({
-      relationRepo: this.relationRepo,
-      project: project ?? this.defaultProject,
-    });
-    await g.build();
-    return g.hasCycle();
+  async hasCycle(project?: string): Promise<Result<boolean, GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const g = new DependencyGraph({
+        relationRepo: this.relationRepo,
+        project: project ?? this.defaultProject,
+      });
+      await g.build();
+      return g.hasCycle();
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: hasCycle failed', e));
+    }
   }
 }

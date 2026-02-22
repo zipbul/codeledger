@@ -1,9 +1,10 @@
+import { err, isErr, type Result } from '@zipbul/result';
 import { Database } from 'bun:sqlite';
 import { mkdirSync, unlinkSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
-import { StoreError } from '../errors';
+import { gildashError, type GildashError } from '../errors';
 import * as schema from './schema';
 import { FTS_SETUP_SQL } from './schema';
 
@@ -22,11 +23,11 @@ export class DbConnection {
   }
 
   get drizzleDb(): BunSQLiteDatabase<typeof schema> {
-    if (!this.drizzle) throw new StoreError('Database is not open. Call open() first.');
+    if (!this.drizzle) throw new Error('Database is not open. Call open() first.');
     return this.drizzle;
   }
 
-  open(): void {
+  open(): Result<void, GildashError> {
     try {
       mkdirSync(dirname(this.dbPath), { recursive: true });
       this.client = new Database(this.dbPath);
@@ -44,23 +45,21 @@ export class DbConnection {
       for (const sql of FTS_SETUP_SQL) {
         this.client.run(sql);
       }
-    } catch (err) {
-      if (this.isCorruptionError(err) && existsSync(this.dbPath)) {
+    } catch (e) {
+      if (this.isCorruptionError(e) && existsSync(this.dbPath)) {
         this.closeClient();
         unlinkSync(this.dbPath);
         for (const ext of ['-wal', '-shm']) {
           const p = this.dbPath + ext;
           if (existsSync(p)) unlinkSync(p);
         }
-        try {
-          this.open();
-          return;
-        } catch (retryErr) {
-          throw new StoreError(`Failed to recover database at ${this.dbPath}`, { cause: retryErr });
+        const retryResult = this.open();
+        if (isErr(retryResult)) {
+          return err(gildashError('store', `Failed to recover database at ${this.dbPath}`, retryResult.data));
         }
+        return retryResult;
       }
-      if (err instanceof StoreError) throw err;
-      throw new StoreError(`Failed to open database at ${this.dbPath}`, { cause: err });
+      return err(gildashError('store', `Failed to open database at ${this.dbPath}`, e));
     }
   }
 
@@ -160,7 +159,7 @@ export class DbConnection {
   }
 
   private requireClient(): Database {
-    if (!this.client) throw new StoreError('Database is not open. Call open() first.');
+    if (!this.client) throw new Error('Database is not open. Call open() first.');
     return this.client;
   }
 

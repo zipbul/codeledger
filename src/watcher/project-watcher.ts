@@ -1,3 +1,4 @@
+import { err, type Result } from '@zipbul/result';
 import type {
   AsyncSubscription,
   SubscribeCallback,
@@ -7,7 +8,7 @@ import { subscribe as parcelSubscribe } from "@parcel/watcher";
 type FileEvent = Parameters<SubscribeCallback>[1][number];
 type SubscribeOptions = NonNullable<Parameters<typeof parcelSubscribe>[2]>;
 import path from "node:path";
-import { WatcherError } from "../errors";
+import { gildashError, type GildashError } from "../errors";
 import type { FileChangeEvent, FileChangeEventType, WatcherOptions } from "./types";
 import type { Logger } from "../gildash";
 
@@ -62,13 +63,13 @@ export class ProjectWatcher {
     this.#logger = logger;
   }
 
-  async start(onChange: (event: FileChangeEvent) => void): Promise<void> {
+  async start(onChange: (event: FileChangeEvent) => void): Promise<Result<void, GildashError>> {
     try {
       this.#subscription = await this.#subscribe(
         this.#rootPath,
         (error, events) => {
           if (error) {
-            this.#logger.error(new WatcherError("Callback error", { cause: error }));
+            this.#logger.error(gildashError('watcher', 'Callback error', error));
             return;
           }
 
@@ -98,7 +99,7 @@ export class ProjectWatcher {
               });
             }
           } catch (callbackError) {
-            this.#logger.error(new WatcherError("Callback error", { cause: callbackError }));
+            this.#logger.error(gildashError('watcher', 'Callback error', callbackError));
           }
         },
         {
@@ -106,11 +107,11 @@ export class ProjectWatcher {
         },
       );
     } catch (error) {
-      throw new WatcherError("Failed to subscribe watcher", { cause: error });
+      return err(gildashError('watcher', 'Failed to subscribe watcher', error));
     }
   }
 
-  async close(): Promise<void> {
+  async close(): Promise<Result<void, GildashError>> {
     if (!this.#subscription) {
       return;
     }
@@ -119,7 +120,7 @@ export class ProjectWatcher {
       await this.#subscription.unsubscribe();
       this.#subscription = undefined;
     } catch (error) {
-      throw new WatcherError("Failed to close watcher", { cause: error });
+      return err(gildashError('watcher', 'Failed to close watcher', error));
     }
   }
 }

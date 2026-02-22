@@ -1,8 +1,9 @@
+import { err, type Result } from '@zipbul/result';
 import { parse } from 'comment-parser';
 import type { JsDocBlock } from '../extractor/types';
-import { ParseError } from '../errors';
+import { gildashError, type GildashError } from '../errors';
 
-export function parseJsDoc(commentText: string): JsDocBlock {
+export function parseJsDoc(commentText: string): Result<JsDocBlock, GildashError> {
   try {
     let stripped = commentText.trim();
     if (stripped.startsWith('/**')) stripped = stripped.slice(3);
@@ -22,7 +23,7 @@ export function parseJsDoc(commentText: string): JsDocBlock {
         ...(t.default !== undefined ? { default: t.default } : {}),
       })),
     };
-  } catch (err) {
-    throw new ParseError(`Failed to parse JSDoc comment`, { cause: err });
+  } catch (e) {
+    return err(gildashError('parse', 'Failed to parse JSDoc comment', e));
   }
 }

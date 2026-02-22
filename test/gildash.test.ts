@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock } from 'bun:test';
+import { isErr } from '@zipbul/result';
 import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,7 +37,7 @@ describe('Gildash integration', () => {
       handleWatcherEvent: mock(() => {}),
     };
 
-    const ledger = await Gildash.open({
+    const result = await Gildash.open({
       projectRoot: tmpDir,
       extensions: ['.ts'],
       watcherFactory: () => watcher,
@@ -54,8 +55,9 @@ describe('Gildash integration', () => {
       symbolSearchFn: mock(() => []) as any,
       relationSearchFn: mock(() => []) as any,
     } as any);
+    if (isErr(result)) throw result.data;
 
-    expect(ledger).toBeInstanceOf(Gildash);
-    await ledger.close();
+    expect(result).toBeInstanceOf(Gildash);
+    await result.close();
   });
 });
