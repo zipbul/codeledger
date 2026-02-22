@@ -1,5 +1,11 @@
 # @zipbul/gildash
 
+## 0.1.1
+
+### Patch Changes
+
+- [#8](https://github.com/zipbul/gildash/pull/8) [`ae82ae0`](https://github.com/zipbul/gildash/commit/ae82ae0b9c28708dbe6678dfef18ad236bc0d2a1) Thanks [@parkrevil](https://github.com/parkrevil)! - Re-publish as 0.1.1: previous 0.1.0 publish attempt blocked by npm 24h re-publish restriction
+
 ## 0.1.0
 
 ### Minor Changes
