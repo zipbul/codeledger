@@ -33,6 +33,7 @@ function makeCoordinatorMock() {
     })),
     shutdown: mock(async () => {}),
     onIndexed: mock((cb: (r: any) => void) => (() => {})),
+    handleWatcherEvent: mock((_event: any) => {}),
     tsconfigPaths: null as any,
     onIndexedCb: null as ((r: any) => void) | null,
   };
