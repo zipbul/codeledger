@@ -10,7 +10,6 @@ import type {
 } from './types';
 import { buildLineOffsets, getLineColumn } from '../parser/source-position';
 import { parseJsDoc } from '../parser/jsdoc-parser';
-import { isErr } from '@zipbul/result';
 
 type OxcSpan = { start: number; end: number };
 
@@ -508,8 +507,7 @@ export function extractSymbols(parsed: ParsedFile): ExtractedSymbol[] {
       const nodeStart = (node as { start?: number }).start ?? 0;
       const jsdocText = findJsDocComment(nodeStart);
       if (jsdocText) {
-        const jsDocResult = parseJsDoc(jsdocText);
-        if (!isErr(jsDocResult)) s.jsDoc = jsDocResult;
+        s.jsDoc = parseJsDoc(jsdocText);
       }
       result.push(s);
     }

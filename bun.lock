@@ -19,9 +19,6 @@
         "drizzle-kit": "^0.31.9",
         "husky": "^9.1.7",
       },
-      "peerDependencies": {
-        "@zipbul/result": "^0.0.3",
-      },
     },
   },
   "packages": {
@@ -256,8 +253,6 @@
     "@types/bun": ["@types/bun@1.3.9", "", { "dependencies": { "bun-types": "1.3.9" } }, "sha512-KQ571yULOdWJiMH+RIWIOZ7B2RXQGpL1YQrBtLIV3FqDcCu6FsbFUBwhdKUlCKUpS3PJDsHlJ1QKlpxoVR+xtw=="],
 
     "@types/node": ["@types/node@25.2.3", "", { "dependencies": { "undici-types": "~7.16.0" } }, "sha512-m0jEgYlYz+mDJZ2+F4v8D1AyQb+QzsNqRuI7xg1VQX/KlKS0qT9r1Mo16yo5F/MtifXFgaofIFsdFMox2SxIbQ=="],
-
-    "@zipbul/result": ["@zipbul/result@0.0.3", "", {}, "sha512-qOrmgy4Kgz0/O+E8UdMUZXvlvDzAxHfjuayI4QJLEksXJDdSeiS9hjQg/bQxdWqDRczTU3BzxoQmn5zycGDy3g=="],
 
     "ajv": ["ajv@8.18.0", "", { "dependencies": { "fast-deep-equal": "^3.1.3", "fast-uri": "^3.0.1", "json-schema-traverse": "^1.0.0", "require-from-string": "^2.0.2" } }, "sha512-PlXPeEWMXMZ7sPYOHqmDyCJzcfNrUr3fGNKtezX14ykXOEIvyK81d+qydx89KY5O71FKMPaQ2vBfBFI5NHR63A=="],
 

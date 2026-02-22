@@ -5,7 +5,6 @@ import { loadTsconfigPaths, clearTsconfigPathsCache } from '../common/tsconfig-r
 import type { TsconfigPaths } from '../common/tsconfig-resolver';
 import { toAbsolutePath } from '../common/path-utils';
 import { hashString } from '../common/hasher';
-import { isErr } from '@zipbul/result';
 import { parseSource } from '../parser/parse-source';
 import { detectChanges } from './file-indexer';
 import { indexFileSymbols } from './symbol-indexer';
@@ -297,9 +296,7 @@ export class IndexCoordinator {
         const parseFn = this.opts.parseSourceFn ?? parseSource;
         for (const fd of preread) {
           const project = resolveFileProject(fd.filePath, boundaries);
-          const parseResult = parseFn(toAbsolutePath(projectRoot, fd.filePath), fd.text);
-          if (isErr(parseResult)) throw parseResult.data;
-          const parsed = parseResult;
+          const parsed = parseFn(toAbsolutePath(projectRoot, fd.filePath), fd.text);
           parsedCacheEntries.push({ filePath: fd.filePath, parsed });
           fileRepo.upsertFile({
             project,
@@ -381,9 +378,7 @@ export class IndexCoordinator {
     const project = resolveFileProject(filePath, boundaries);
 
     const parseFn = this.opts.parseSourceFn ?? parseSource;
-    const parseResult = parseFn(absPath, text);
-    if (isErr(parseResult)) throw parseResult.data;
-    const parsed = parseResult;
+    const parsed = parseFn(absPath, text);
     parseCache.set(filePath, parsed);
 
     fileRepo.upsertFile({

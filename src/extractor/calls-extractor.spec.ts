@@ -1,5 +1,4 @@
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
-import { isErr } from '@zipbul/result';
 import { parseSource } from '../parser/parse-source';
 import type { ImportReference } from './types';
 
@@ -10,9 +9,8 @@ import { extractCalls } from './calls-extractor';
 const FILE = '/project/src/index.ts';
 
 function parse(source: string, filePath = FILE) {
-  const result = parseSource(filePath, source);
-  if (isErr(result)) throw new Error(result.data.message);
-  return result.program as any;
+  const { program } = parseSource(filePath, source);
+  return program as any;
 }
 
 function makeImportMap(entries: [string, ImportReference][] = []): Map<string, ImportReference> {

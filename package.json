@@ -1,6 +1,6 @@
 {
   "name": "@zipbul/gildash",
-  "version": "0.1.0",
+  "version": "0.0.2",
   "description": "TypeScript code indexing and dependency graph engine for Bun",
   "license": "MIT",
   "repository": {
@@ -39,9 +39,6 @@
     "changeset": "changeset",
     "version-packages": "changeset version",
     "release": "changeset publish"
-  },
-  "peerDependencies": {
-    "@zipbul/result": "^0.0.3"
   },
   "dependencies": {
     "@parcel/watcher": "^2.5.6",

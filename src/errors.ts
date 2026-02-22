@@ -1,38 +1,69 @@
 /**
- * Discriminated union type representing all possible error categories in Gildash.
- */
-export type GildashErrorType =
-  | 'watcher'
-  | 'parse'
-  | 'extract'
-  | 'index'
-  | 'store'
-  | 'search'
-  | 'closed'
-  | 'validation'
-  | 'close';
-
-/**
- * Plain-object error value used throughout Gildash's Result-based error handling.
- * Produced by {@link gildashError} and carried as the `data` field of an `Err<GildashError>`.
- */
-export interface GildashError {
-  type: GildashErrorType;
-  message: string;
-  cause?: unknown;
-}
-
-/**
- * Factory function that creates a {@link GildashError} value.
+ * Base error class for all Gildash errors.
+ * Every error thrown by this library is an instance of `GildashError`.
  *
- * @param type    - One of the {@link GildashErrorType} variants.
- * @param message - Human-readable description of the error.
- * @param cause   - Optional root cause (any value). When `undefined`, the `cause`
- *                  property is omitted from the returned object entirely.
+ * @example
+ * ```ts
+ * try {
+ *   await Gildash.open({ projectRoot: '/path' });
+ * } catch (err) {
+ *   if (err instanceof GildashError) {
+ *     console.error('Gildash error:', err.message);
+ *   }
+ * }
+ * ```
  */
-export function gildashError(type: GildashErrorType, message: string, cause?: unknown): GildashError {
-  return cause !== undefined
-    ? { type, message, cause }
-    : { type, message };
+export class GildashError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "GildashError";
+  }
 }
 
+/** Thrown when the file watcher fails to start or stop. */
+export class WatcherError extends GildashError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "WatcherError";
+  }
+}
+
+/** Thrown when AST parsing of a TypeScript file fails. */
+export class ParseError extends GildashError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ParseError";
+  }
+}
+
+/** Thrown when symbol or relation extraction from a parsed AST fails. */
+export class ExtractError extends GildashError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "ExtractError";
+  }
+}
+
+/** Thrown when the indexing pipeline encounters an unrecoverable error. */
+export class IndexError extends GildashError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "IndexError";
+  }
+}
+
+/** Thrown when a database (SQLite) operation fails. */
+export class StoreError extends GildashError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "StoreError";
+  }
+}
+
+/** Thrown when a search query (symbol search, relation search) fails. */
+export class SearchError extends GildashError {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "SearchError";
+  }
+}
