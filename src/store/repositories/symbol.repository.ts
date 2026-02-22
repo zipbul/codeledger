@@ -25,8 +25,15 @@ export interface SearchOptions {
   limit?: number;
 }
 
+/**
+ * Aggregate symbol statistics for a project.
+ *
+ * Returned by {@link Gildash.getStats}.
+ */
 export interface SymbolStats {
+  /** Total number of indexed symbols. */
   symbolCount: number;
+  /** Total number of indexed source files. */
   fileCount: number;
 }
 

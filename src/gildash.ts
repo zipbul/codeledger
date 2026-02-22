@@ -157,7 +157,8 @@ export class Gildash {
   private readonly relationSearchFn: typeof defaultRelationSearch;
   private readonly logger: Logger;
   private readonly defaultProject: string;
-  private readonly role: 'owner' | 'reader';
+  /** Current watcher role: `'owner'` (can reindex) or `'reader'` (read-only). */
+  readonly role: 'owner' | 'reader';
   private timer: ReturnType<typeof setInterval> | null = null;
   private signalHandlers: Array<[string, () => void]> = [];
   private closed = false;

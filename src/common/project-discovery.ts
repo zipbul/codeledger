@@ -1,8 +1,15 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
 
+/**
+ * A discovered sub-project within the indexed project root.
+ *
+ * Returned by {@link Gildash.projects}.
+ */
 export interface ProjectBoundary {
+  /** Relative directory path from the project root. */
   dir: string;
+  /** Unique project name (typically the `name` field from `package.json`). */
   project: string;
 }
 
