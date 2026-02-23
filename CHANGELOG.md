@@ -1,5 +1,18 @@
 # @zipbul/gildash
 
+## 0.3.0
+
+### Minor Changes
+
+- [#14](https://github.com/zipbul/gildash/pull/14) [`a93aecb`](https://github.com/zipbul/gildash/commit/a93aecbe60770f2b38a05e110ada59203effd7bf) Thanks [@parkrevil](https://github.com/parkrevil)! - Add public API extensions for AST cache sharing, file metadata, exact symbol search, and file-scoped symbol listing
+
+  - `getParsedAst(filePath)`: retrieve cached oxc-parser AST from internal LRU cache
+  - `getFileInfo(filePath, project?)`: query indexed file metadata (hash, mtime, size)
+  - `searchSymbols({ text, exact: true })`: exact name match (in addition to existing FTS prefix)
+  - `getSymbolsByFile(filePath, project?)`: convenience wrapper for file-scoped symbol listing
+  - Re-export `ParsedFile` and `FileRecord` types
+  - Add `oxc-parser` to peerDependencies
+
 ## 0.2.0
 
 ### Minor Changes
