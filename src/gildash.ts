@@ -29,6 +29,8 @@ import { relationSearch as defaultRelationSearch } from './search/relation-searc
 import type { RelationSearchQuery } from './search/relation-search';
 import type { SymbolStats } from './store/repositories/symbol.repository';
 import { DependencyGraph } from './search/dependency-graph';
+import { patternSearch as defaultPatternSearch } from './search/pattern-search';
+import type { PatternMatch } from './search/pattern-search';
 import { gildashError, type GildashError } from './errors';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -220,6 +222,7 @@ interface GildashInternalOptions {
   extractRelationsFn?: typeof defaultExtractRelations;
   symbolSearchFn?: typeof defaultSymbolSearch;
   relationSearchFn?: typeof defaultRelationSearch;
+  patternSearchFn?: (opts: { pattern: string; filePaths: string[] }) => Promise<PatternMatch[]>;
   loadTsconfigPathsFn?: typeof loadTsconfigPaths;
   readFileFn?: (filePath: string) => Promise<string>;
   unlinkFn?: (filePath: string) => Promise<void>;
@@ -278,6 +281,7 @@ export class Gildash {
   private readonly extractRelationsFn: typeof defaultExtractRelations;
   private readonly symbolSearchFn: typeof defaultSymbolSearch;
   private readonly relationSearchFn: typeof defaultRelationSearch;
+  private readonly patternSearchFn: (opts: { pattern: string; filePaths: string[] }) => Promise<PatternMatch[]>;
   private readonly readFileFn: (filePath: string) => Promise<string>;
   private readonly unlinkFn: (filePath: string) => Promise<void>;
   private readonly logger: Logger;
@@ -309,6 +313,7 @@ export class Gildash {
     extractRelationsFn: typeof defaultExtractRelations;
     symbolSearchFn: typeof defaultSymbolSearch;
     relationSearchFn: typeof defaultRelationSearch;
+    patternSearchFn: (opts: { pattern: string; filePaths: string[] }) => Promise<PatternMatch[]>;
     readFileFn: (filePath: string) => Promise<string>;
     unlinkFn: (filePath: string) => Promise<void>;
     logger: Logger;
@@ -329,6 +334,7 @@ export class Gildash {
     this.extractRelationsFn = opts.extractRelationsFn;
     this.symbolSearchFn = opts.symbolSearchFn;
     this.relationSearchFn = opts.relationSearchFn;
+    this.patternSearchFn = opts.patternSearchFn;
     this.readFileFn = opts.readFileFn;
     this.unlinkFn = opts.unlinkFn;
     this.logger = opts.logger;
@@ -377,6 +383,7 @@ export class Gildash {
       extractRelationsFn = defaultExtractRelations,
       symbolSearchFn = defaultSymbolSearch,
       relationSearchFn = defaultRelationSearch,
+      patternSearchFn = defaultPatternSearch,
       loadTsconfigPathsFn = loadTsconfigPaths,
       readFileFn = async (fp: string) => Bun.file(fp).text(),
       unlinkFn = async (fp: string) => { await Bun.file(fp).unlink(); },
@@ -443,6 +450,7 @@ export class Gildash {
       extractRelationsFn: extractRelationsFn,
       symbolSearchFn: symbolSearchFn,
       relationSearchFn: relationSearchFn,
+      patternSearchFn: patternSearchFn,
       readFileFn: readFileFn,
       unlinkFn: unlinkFn,
       logger,
@@ -1444,6 +1452,35 @@ export class Gildash {
       chain.push({ filePath: currentFile, exportedAs: currentName });
       currentFile = nextFile;
       currentName = nextName;
+    }
+  }
+
+  /**
+   * Search for an AST structural pattern across indexed TypeScript files.
+   *
+   * Uses ast-grep's `findInFiles` under the hood. Provide `opts.filePaths` to
+   * limit search scope; otherwise all files tracked by the project index are searched.
+   *
+   * @param pattern   - ast-grep structural pattern (e.g. `'console.log($$$)'`).
+   * @param opts      - Optional scope: file paths and/or project override.
+   * @returns An array of {@link PatternMatch} on success, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if the underlying search fails.
+   */
+  async findPattern(
+    pattern: string,
+    opts?: { filePaths?: string[]; project?: string },
+  ): Promise<Result<PatternMatch[], GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const effectiveProject = opts?.project ?? this.defaultProject;
+      const filePaths: string[] = opts?.filePaths
+        ? opts.filePaths
+        : this.fileRepo.getAllFiles(effectiveProject).map((f) => f.filePath);
+
+      return await this.patternSearchFn({ pattern, filePaths });
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: findPattern failed', e));
     }
   }
 

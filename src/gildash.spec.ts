@@ -137,6 +137,7 @@ function makeOptions(opts: {
     loadTsconfigPathsFn: mock((root: string) => null) as any,
     symbolSearchFn: mock((opts: any) => []) as any,
     relationSearchFn: mock((opts: any) => []) as any,
+    patternSearchFn: mock(async (_opts: any) => []) as any,
     readFileFn: opts.readFileFn ?? mock(async (_fp: string) => '// default content'),
     unlinkFn: opts.unlinkFn ?? mock(async (_fp: string) => {}),
     db: db,
@@ -3514,6 +3515,94 @@ describe('Gildash', () => {
       expect(result.originalName).toBe('Foo');
       expect(result.originalFilePath).toBe('/project/src/a.ts');
       expect(result.reExportChain).toEqual([]);
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-15: findPattern ───
+
+  describe('Gildash.findPattern', () => {
+    // 1. [HP] 패턴 매칭 결과 반환
+    it('should return PatternMatch array from patternSearchFn when pattern matches', async () => {
+      const matches = [{ filePath: '/project/src/a.ts', startLine: 5, endLine: 5, matchedText: 'console.log("hi")' }];
+      const opts = makeOptions();
+      (opts as any).patternSearchFn.mockResolvedValue(matches);
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).findPattern('console.log($$$)');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual(matches);
+      await ledger.close();
+    });
+
+    // 2. [HP] filePaths 지정 → patternSearchFn에 전달
+    it('should pass specified filePaths to patternSearchFn when filePaths option is provided', async () => {
+      const opts = makeOptions();
+      (opts as any).patternSearchFn.mockResolvedValue([]);
+      const ledger = await openOrThrow(opts);
+
+      await (ledger as any).findPattern('foo()', { filePaths: ['/project/src/a.ts'] });
+
+      expect((opts as any).patternSearchFn).toHaveBeenCalledWith(
+        expect.objectContaining({ filePaths: ['/project/src/a.ts'] }),
+      );
+      await ledger.close();
+    });
+
+    // 3. [HP] filePaths 미지정 → fileRepo.getAllFiles 사용
+    it('should use fileRepo.getAllFiles when filePaths is not specified', async () => {
+      const fileRepo = makeFileRepoMock();
+      fileRepo.getAllFiles.mockReturnValue([
+        { filePath: '/project/src/a.ts', project: 'test-project', contentHash: 'h1', mtime: 0, size: 100, lineCount: 10 },
+      ]);
+      const opts = makeOptions({ fileRepo });
+      (opts as any).patternSearchFn.mockResolvedValue([]);
+      const ledger = await openOrThrow(opts);
+
+      await (ledger as any).findPattern('foo()');
+
+      expect((opts as any).patternSearchFn).toHaveBeenCalledWith(
+        expect.objectContaining({ filePaths: ['/project/src/a.ts'] }),
+      );
+      await ledger.close();
+    });
+
+    // 4. [HP] 매칭 없음 → 빈 배열
+    it('should return empty array when patternSearchFn returns no matches', async () => {
+      const opts = makeOptions();
+      (opts as any).patternSearchFn.mockResolvedValue([]);
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).findPattern('nonExistentPattern');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([]);
+      await ledger.close();
+    });
+
+    // 5. [EP] closed → Err('closed')
+    it('should return Err(closed) when findPattern is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = await (ledger as any).findPattern('foo()');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    // 6. [EP] patternSearchFn throws → Err('search')
+    it('should return Err(search) when patternSearchFn throws', async () => {
+      const opts = makeOptions();
+      (opts as any).patternSearchFn.mockRejectedValue(new Error('ast-grep failed'));
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).findPattern('foo()');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
       await ledger.close();
     });
   });
