@@ -7,4 +7,3 @@ export type { SymbolRecord, SearchOptions, SymbolStats } from './repositories/sy
 export { RelationRepository } from './repositories/relation.repository';
 export type { RelationRecord } from './repositories/relation.repository';
 export * as schema from './schema';
-export { FTS_SETUP_SQL } from './schema';

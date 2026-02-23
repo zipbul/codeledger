@@ -6,7 +6,7 @@ import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { gildashError, type GildashError } from '../errors';
 import * as schema from './schema';
-import { FTS_SETUP_SQL } from './schema';
+
 
 export interface DbConnectionOptions {
   projectRoot: string;
@@ -41,10 +41,6 @@ export class DbConnection {
       migrate(this.drizzle, {
         migrationsFolder: join(import.meta.dirname, 'migrations'),
       });
-
-      for (const sql of FTS_SETUP_SQL) {
-        this.client.run(sql);
-      }
 
       // bun:sqlite Database.function() is not available in all Bun versions.
       // Regex filtering falls back to JS-layer post-processing when this is absent.
