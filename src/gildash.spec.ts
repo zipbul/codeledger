@@ -102,6 +102,7 @@ function makeOptions(opts: {
   parseCache?: ReturnType<typeof makeParseCacheMock>;
   existsSync?: (p: string) => boolean;
   projectRoot?: string;
+  readFileFn?: (filePath: string) => Promise<string>;
 } = {}) {
   const db = opts.db ?? makeDbMock();
   const watcher = opts.watcher ?? makeWatcherMock();
@@ -135,6 +136,7 @@ function makeOptions(opts: {
     loadTsconfigPathsFn: mock((root: string) => null) as any,
     symbolSearchFn: mock((opts: any) => []) as any,
     relationSearchFn: mock((opts: any) => []) as any,
+    readFileFn: opts.readFileFn ?? mock(async (_fp: string) => '// default content'),
     db: db,
     watcher: watcher,
     coordinator: coordinator,
@@ -2224,6 +2226,289 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
 
       const result = await ledger.getCyclePaths();
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-02: batchParse ───
+
+  describe('Gildash.batchParse', () => {
+    it('should return Map with ParsedFile for each filePath when batchParse succeeds', async () => {
+      const readFileFn = mock(async (fp: string) => `// content of ${fp}`);
+      const opts = makeOptions({ readFileFn });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.batchParse(['/project/src/a.ts', '/project/src/b.ts']);
+
+      expect(isErr(result)).toBe(false);
+      const map = result as Map<string, any>;
+      expect(map).toBeInstanceOf(Map);
+      expect(map.size).toBe(2);
+      expect(map.has('/project/src/a.ts')).toBe(true);
+      expect(map.has('/project/src/b.ts')).toBe(true);
+      await ledger.close();
+    });
+
+    it('should return empty Map when batchParse is called with empty array', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.batchParse([]);
+
+      expect(isErr(result)).toBe(false);
+      expect((result as Map<string, any>).size).toBe(0);
+      await ledger.close();
+    });
+
+    it('should exclude failed file and include successful ones when some files fail to read in batchParse', async () => {
+      const readFileFn = mock(async (fp: string) => {
+        if (fp.includes('fail')) throw new Error('not found');
+        return '// ok';
+      });
+      const opts = makeOptions({ readFileFn });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.batchParse(['/project/src/ok.ts', '/project/src/fail.ts']);
+
+      expect(isErr(result)).toBe(false);
+      const map = result as Map<string, any>;
+      expect(map.has('/project/src/ok.ts')).toBe(true);
+      expect(map.has('/project/src/fail.ts')).toBe(false);
+      await ledger.close();
+    });
+
+    it('should return Err with closed type when batchParse is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = await ledger.batchParse(['/project/src/a.ts']);
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should exclude file when parseSourceFn throws for that file in batchParse', async () => {
+      let callCount = 0;
+      const readFileFn = mock(async (_fp: string) => '// content');
+      const parseSourceFn = mock((fp: string, text: string) => {
+        callCount++;
+        if (fp.includes('broken')) throw new Error('parse error');
+        return { filePath: fp, program: { body: [] }, errors: [], comments: [], sourceText: text };
+      }) as any;
+      const opts = { ...makeOptions({ readFileFn }), parseSourceFn };
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.batchParse(['/project/src/ok.ts', '/project/src/broken.ts']);
+
+      const map = result as Map<string, any>;
+      expect(map.has('/project/src/ok.ts')).toBe(true);
+      expect(map.has('/project/src/broken.ts')).toBe(false);
+      await ledger.close();
+    });
+
+    it('should return Map with single entry when single file is passed to batchParse', async () => {
+      const readFileFn = mock(async (_fp: string) => '// single');
+      const opts = makeOptions({ readFileFn });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.batchParse(['/project/src/single.ts']);
+
+      expect(isErr(result)).toBe(false);
+      expect((result as Map<string, any>).size).toBe(1);
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-11: getModuleInterface ───
+
+  describe('Gildash.getModuleInterface', () => {
+    it('should return ModuleInterface with exported symbols when getModuleInterface is called', async () => {
+      const symbolSearchFn = mock((_opts: any) => [
+        { id: 1, name: 'myFn', filePath: '/project/src/a.ts', kind: 'function', isExported: true,
+          span: { start: { line: 1, column: 0 }, end: { line: 3, column: 1 } },
+          signature: null, fingerprint: null, detail: { parameters: 'x: number', returnType: 'void' } },
+      ]);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = ledger.getModuleInterface('/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      const mi = result as any;
+      expect(mi.filePath).toBe('/project/src/a.ts');
+      expect(mi.exports).toHaveLength(1);
+      expect(mi.exports[0].name).toBe('myFn');
+      expect(mi.exports[0].kind).toBe('function');
+      expect(mi.exports[0].parameters).toBe('x: number');
+      expect(mi.exports[0].returnType).toBe('void');
+      await ledger.close();
+    });
+
+    it('should return empty exports array when no exported symbols exist in getModuleInterface', async () => {
+      const symbolSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = ledger.getModuleInterface('/project/src/empty.ts');
+
+      expect(isErr(result)).toBe(false);
+      const mi = result as any;
+      expect(mi.exports).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should call symbolSearchFn with isExported:true when getModuleInterface is called', async () => {
+      const symbolSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      ledger.getModuleInterface('/project/src/a.ts');
+
+      const callOpts = symbolSearchFn.mock.calls[0]![0] as any;
+      expect(callOpts.query.isExported).toBe(true);
+      expect(callOpts.query.filePath).toBe('/project/src/a.ts');
+      await ledger.close();
+    });
+
+    it('should return Err with closed type when getModuleInterface is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = ledger.getModuleInterface('/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should return Err with search type when symbolSearchFn throws inside getModuleInterface', async () => {
+      const symbolSearchFn = mock((_opts: any) => { throw new Error('fail'); });
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = ledger.getModuleInterface('/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+
+    it('should include jsDoc field when detail contains jsDoc in getModuleInterface', async () => {
+      const symbolSearchFn = mock((_opts: any) => [
+        { id: 2, name: 'MyClass', filePath: '/project/src/a.ts', kind: 'class', isExported: true,
+          span: { start: { line: 1, column: 0 }, end: { line: 10, column: 1 } },
+          signature: null, fingerprint: null, detail: { jsDoc: 'A useful class.' } },
+      ]);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = ledger.getModuleInterface('/project/src/a.ts');
+
+      const mi = result as any;
+      expect(mi.exports[0].jsDoc).toBe('A useful class.');
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-21: getHeritageChain ───
+
+  describe('Gildash.getHeritageChain', () => {
+    it('should return root HeritageNode with one child when A extends B', async () => {
+      const relationSearchFn = mock((opts: any) => {
+        const { query } = opts;
+        if (query.srcSymbolName === 'ClassA') {
+          return [{ type: 'extends', srcFilePath: '/project/src/a.ts', srcSymbolName: 'ClassA', dstFilePath: '/project/src/b.ts', dstSymbolName: 'ClassB' }];
+        }
+        return [];
+      });
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getHeritageChain('ClassA', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      const node = result as any;
+      expect(node.symbolName).toBe('ClassA');
+      expect(node.children).toHaveLength(1);
+      expect(node.children[0].symbolName).toBe('ClassB');
+      expect(node.children[0].kind).toBe('extends');
+      await ledger.close();
+    });
+
+    it('should return root node with empty children when symbol has no heritage', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getHeritageChain('StandaloneClass', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      const node = result as any;
+      expect(node.symbolName).toBe('StandaloneClass');
+      expect(node.children).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should return Err with closed type when getHeritageChain is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = await ledger.getHeritageChain('ClassA', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should not loop infinitely when cycle exists in getHeritageChain', async () => {
+      const relationSearchFn = mock((opts: any) => {
+        const { query } = opts;
+        if (query.srcSymbolName === 'ClassA') {
+          return [{ type: 'extends', srcFilePath: '/project/src/a.ts', srcSymbolName: 'ClassA', dstFilePath: '/project/src/b.ts', dstSymbolName: 'ClassB' }];
+        }
+        if (query.srcSymbolName === 'ClassB') {
+          return [{ type: 'extends', srcFilePath: '/project/src/b.ts', srcSymbolName: 'ClassB', dstFilePath: '/project/src/a.ts', dstSymbolName: 'ClassA' }];
+        }
+        return [];
+      });
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getHeritageChain('ClassA', '/project/src/a.ts');
+
+      expect(Array.isArray((result as any).children)).toBe(true);
+      await ledger.close();
+    });
+
+    it('should include implements children when symbol implements interface', async () => {
+      const relationSearchFn = mock((opts: any) => {
+        const { query } = opts;
+        if (query.srcSymbolName === 'MyClass') {
+          return [{ type: 'implements', srcFilePath: '/project/src/a.ts', srcSymbolName: 'MyClass', dstFilePath: '/project/src/i.ts', dstSymbolName: 'IFoo' }];
+        }
+        return [];
+      });
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getHeritageChain('MyClass', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      const node = result as any;
+      expect(node.children[0].kind).toBe('implements');
+      expect(node.children[0].symbolName).toBe('IFoo');
+      await ledger.close();
+    });
+
+    it('should return Err with search type when relationSearchFn throws inside getHeritageChain', async () => {
+      const relationSearchFn = mock((_opts: any) => { throw new Error('db fail'); });
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getHeritageChain('ClassA', '/project/src/a.ts');
 
       expect(isErr(result)).toBe(true);
       expect((result as any).data.type).toBe('search');

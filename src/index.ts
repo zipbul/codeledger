@@ -1,5 +1,5 @@
 export { Gildash } from "./gildash";
-export type { GildashOptions, Logger, SymbolDiff } from "./gildash";
+export type { GildashOptions, Logger, SymbolDiff, ModuleInterface, HeritageNode } from "./gildash";
 
 export { gildashError } from "./errors";
 export type { GildashError, GildashErrorType } from "./errors";

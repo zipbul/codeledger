@@ -4,10 +4,9 @@ import { existsSync } from 'node:fs';
 import type { ParsedFile } from './parser/types';
 import { parseSource as defaultParseSource } from './parser/parse-source';
 import { ParseCache } from './parser/parse-cache';
-import type { ExtractedSymbol } from './extractor/types';
+import type { ExtractedSymbol, SymbolKind, CodeRelation } from './extractor/types';
 import { extractSymbols as defaultExtractSymbols } from './extractor/symbol-extractor';
 import { extractRelations as defaultExtractRelations } from './extractor/relation-extractor';
-import type { CodeRelation } from './extractor/types';
 import { DbConnection } from './store/connection';
 import { FileRepository } from './store/repositories/file.repository';
 import type { FileRecord } from './store/repositories/file.repository';
@@ -56,6 +55,32 @@ export interface SymbolDiff {
   removed: SymbolSearchResult[];
   /** Symbols present in both but with a different `fingerprint`. */
   modified: Array<{ before: SymbolSearchResult; after: SymbolSearchResult }>;
+}
+
+/**
+ * Public interface of a module — its exported symbols with key metadata.
+ * Returned by {@link Gildash.getModuleInterface}.
+ */
+export interface ModuleInterface {
+  filePath: string;
+  exports: Array<{
+    name: string;
+    kind: SymbolKind;
+    parameters?: string;
+    returnType?: string;
+    jsDoc?: string;
+  }>;
+}
+
+/**
+ * A node in the heritage chain tree returned by {@link Gildash.getHeritageChain}.
+ */
+export interface HeritageNode {
+  symbolName: string;
+  filePath: string;
+  /** Relationship kind (`extends` or `implements`). Undefined for the root query node. */
+  kind?: 'extends' | 'implements';
+  children: HeritageNode[];
 }
 
 /**
@@ -114,6 +139,7 @@ interface GildashInternalOptions {
   symbolSearchFn?: typeof defaultSymbolSearch;
   relationSearchFn?: typeof defaultRelationSearch;
   loadTsconfigPathsFn?: typeof loadTsconfigPaths;
+  readFileFn?: (filePath: string) => Promise<string>;
 }
 
 /**
@@ -169,6 +195,7 @@ export class Gildash {
   private readonly extractRelationsFn: typeof defaultExtractRelations;
   private readonly symbolSearchFn: typeof defaultSymbolSearch;
   private readonly relationSearchFn: typeof defaultRelationSearch;
+  private readonly readFileFn: (filePath: string) => Promise<string>;
   private readonly logger: Logger;
   private readonly defaultProject: string;
   /** Current watcher role: `'owner'` (can reindex) or `'reader'` (read-only). */
@@ -198,6 +225,7 @@ export class Gildash {
     extractRelationsFn: typeof defaultExtractRelations;
     symbolSearchFn: typeof defaultSymbolSearch;
     relationSearchFn: typeof defaultRelationSearch;
+    readFileFn: (filePath: string) => Promise<string>;
     logger: Logger;
     defaultProject: string;
     role: 'owner' | 'reader';
@@ -216,6 +244,7 @@ export class Gildash {
     this.extractRelationsFn = opts.extractRelationsFn;
     this.symbolSearchFn = opts.symbolSearchFn;
     this.relationSearchFn = opts.relationSearchFn;
+    this.readFileFn = opts.readFileFn;
     this.logger = opts.logger;
     this.defaultProject = opts.defaultProject;
     this.role = opts.role;
@@ -263,6 +292,7 @@ export class Gildash {
       symbolSearchFn = defaultSymbolSearch,
       relationSearchFn = defaultRelationSearch,
       loadTsconfigPathsFn = loadTsconfigPaths,
+      readFileFn = async (fp: string) => Bun.file(fp).text(),
     } = options;
 
     if (!path.isAbsolute(projectRoot)) {
@@ -319,6 +349,7 @@ export class Gildash {
       extractRelationsFn: extractRelationsFn,
       symbolSearchFn: symbolSearchFn,
       relationSearchFn: relationSearchFn,
+      readFileFn: readFileFn,
       logger,
       defaultProject,
       role,
@@ -1053,6 +1084,117 @@ export class Gildash {
       return g.getCyclePaths();
     } catch (e) {
       return err(gildashError('search', 'Gildash: getCyclePaths failed', e));
+    }
+  }
+
+  /**
+   * Parse multiple files concurrently and return a map of results.
+   *
+   * Files that fail to read or parse are silently excluded from the result map.
+   * The operation does not fail even if every file fails — it returns an empty `Map`.
+   *
+   * @param filePaths - Absolute paths of files to parse.
+   * @returns A `Map<filePath, ParsedFile>` for every successfully-parsed file,
+   *   or `Err<GildashError>` with `type='closed'` if the instance is closed.
+   */
+  async batchParse(filePaths: string[]): Promise<Result<Map<string, ParsedFile>, GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    const result = new Map<string, ParsedFile>();
+    await Promise.all(
+      filePaths.map(async (fp) => {
+        try {
+          const text = await this.readFileFn(fp);
+          const parsed = this.parseSourceFn(fp, text);
+          if (!isErr(parsed)) {
+            result.set(fp, parsed as ParsedFile);
+          }
+        } catch {
+          // silently exclude failed files
+        }
+      }),
+    );
+    return result;
+  }
+
+  /**
+   * Return the public interface of a module: all exported symbols with key metadata.
+   *
+   * @param filePath - Absolute path of the file.
+   * @param project - Project name. Defaults to the primary project.
+   * @returns A {@link ModuleInterface} object, or `Err<GildashError>` with
+   *   `type='closed'` / `type='search'`.
+   */
+  getModuleInterface(filePath: string, project?: string): Result<ModuleInterface, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const symbols = this.symbolSearchFn({
+        symbolRepo: this.symbolRepo,
+        project: project ?? this.defaultProject,
+        query: { filePath, isExported: true },
+      }) as SymbolSearchResult[];
+      const exports = symbols.map((s) => ({
+        name: s.name,
+        kind: s.kind,
+        parameters: (s.detail.parameters as string | undefined) ?? undefined,
+        returnType: (s.detail.returnType as string | undefined) ?? undefined,
+        jsDoc: (s.detail.jsDoc as string | undefined) ?? undefined,
+      }));
+      return { filePath, exports };
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getModuleInterface failed', e));
+    }
+  }
+
+  /**
+   * Recursively traverse `extends`/`implements` relations to build a heritage tree.
+   *
+   * The root node represents `symbolName`/`filePath`. Its `children` are the symbols
+   * it extends or implements, and so on transitively. A visited set prevents cycles.
+   *
+   * @param symbolName - Name of the starting symbol.
+   * @param filePath - Absolute path of the file containing the symbol.
+   * @param project - Project name. Defaults to the primary project.
+   * @returns A {@link HeritageNode} tree, or `Err<GildashError>` with
+   *   `type='closed'` / `type='search'`.
+   */
+  async getHeritageChain(
+    symbolName: string,
+    filePath: string,
+    project?: string,
+  ): Promise<Result<HeritageNode, GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const proj = project ?? this.defaultProject;
+      const visited = new Set<string>();
+
+      const buildNode = (symName: string, fp: string, kind?: 'extends' | 'implements'): HeritageNode => {
+        const key = `${symName}::${fp}`;
+        if (visited.has(key)) {
+          return { symbolName: symName, filePath: fp, kind, children: [] };
+        }
+        visited.add(key);
+
+        const rels = this.relationSearchFn({
+          relationRepo: this.relationRepo,
+          project: proj,
+          query: { srcFilePath: fp, srcSymbolName: symName, limit: 1000 },
+        }) as CodeRelation[];
+
+        const heritageRels = rels.filter(
+          (r): r is CodeRelation & { type: 'extends' | 'implements' } =>
+            r.type === 'extends' || r.type === 'implements',
+        );
+
+        const children = heritageRels
+          .filter((r) => r.dstSymbolName != null)
+          .map((r) => buildNode(r.dstSymbolName!, r.dstFilePath, r.type));
+
+        return { symbolName: symName, filePath: fp, kind, children };
+      };
+
+      return buildNode(symbolName, filePath);
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getHeritageChain failed', e));
     }
   }
 
