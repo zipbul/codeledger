@@ -3606,4 +3606,113 @@ describe('Gildash', () => {
       await ledger.close();
     });
   });
+
+  // ─── FR-16: indexExternalPackages ───
+
+  describe('Gildash.indexExternalPackages', () => {
+    function makeIndexResult(overrides: Partial<{ indexedFiles: number }> = {}) {
+      return {
+        indexedFiles: overrides.indexedFiles ?? 3,
+        removedFiles: 0,
+        totalSymbols: 10,
+        totalRelations: 5,
+        durationMs: 50,
+        changedFiles: [],
+        deletedFiles: [],
+        failedFiles: [],
+        changedSymbols: { added: [], modified: [], removed: [] },
+      };
+    }
+
+    // 1. [HP] single package → IndexResult 반환
+    it('should return single IndexResult when one existing package is indexed', async () => {
+      const fakeResult = makeIndexResult({ indexedFiles: 5 });
+      const fakeCoordinator = { fullIndex: mock(async () => fakeResult) };
+      const makeExternalCoordinatorFn = mock((_dir: string, _proj: string) => fakeCoordinator);
+      const existsSyncFn = mock((_p: string) => true);
+      const opts = { ...makeOptions(), existsSyncFn, makeExternalCoordinatorFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).indexExternalPackages(['react']);
+
+      expect(isErr(result)).toBe(false);
+      expect(result.length).toBe(1);
+      expect(result[0].indexedFiles).toBe(5);
+      expect(fakeCoordinator.fullIndex).toHaveBeenCalledTimes(1);
+      await ledger.close();
+    });
+
+    // 2. [HP] multiple packages → 2개 결과
+    it('should return 2 results when two packages are indexed', async () => {
+      const r1 = makeIndexResult({ indexedFiles: 3 });
+      const r2 = makeIndexResult({ indexedFiles: 7 });
+      let callCount = 0;
+      const makeExternalCoordinatorFn = mock((_dir: string, _proj: string) => ({
+        fullIndex: async () => (callCount++ === 0 ? r1 : r2),
+      }));
+      const existsSyncFn = mock((_p: string) => true);
+      const opts = { ...makeOptions(), existsSyncFn, makeExternalCoordinatorFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).indexExternalPackages(['react', 'typescript']);
+
+      expect(isErr(result)).toBe(false);
+      expect(result.length).toBe(2);
+      expect(result[0].indexedFiles).toBe(3);
+      expect(result[1].indexedFiles).toBe(7);
+      await ledger.close();
+    });
+
+    // 3. [EP] package not in node_modules → Err('validation')
+    it('should return Err(validation) when package directory does not exist in node_modules', async () => {
+      const existsSyncFn = mock((p: string) => !p.includes('nonexistent'));
+      const opts = { ...makeOptions(), existsSyncFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).indexExternalPackages(['nonexistent-package']);
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('validation');
+      await ledger.close();
+    });
+
+    // 4. [EP] closed → Err('closed')
+    it('should return Err(closed) when indexExternalPackages is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = await (ledger as any).indexExternalPackages(['react']);
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    // 5. [EP] coordinator.fullIndex throws → Err('store')
+    it('should return Err(store) when coordinator fullIndex throws', async () => {
+      const fakeCoordinator = { fullIndex: mock(async () => { throw new Error('index failed'); }) };
+      const makeExternalCoordinatorFn = mock((_dir: string, _proj: string) => fakeCoordinator);
+      const existsSyncFn = mock((_p: string) => true);
+      const opts = { ...makeOptions(), existsSyncFn, makeExternalCoordinatorFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).indexExternalPackages(['react']);
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('store');
+      await ledger.close();
+    });
+
+    // 6. [EP] reader role → Err('closed')
+    it('should return Err(closed) when instance is in reader role', async () => {
+      const opts = makeOptions({ role: 'reader' });
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).indexExternalPackages(['react']);
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+      await ledger.close();
+    });
+  });
 });

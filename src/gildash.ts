@@ -226,6 +226,7 @@ interface GildashInternalOptions {
   loadTsconfigPathsFn?: typeof loadTsconfigPaths;
   readFileFn?: (filePath: string) => Promise<string>;
   unlinkFn?: (filePath: string) => Promise<void>;
+  makeExternalCoordinatorFn?: (packageDir: string, project: string) => { fullIndex(): Promise<IndexResult> };
 }
 
 /**
@@ -284,6 +285,8 @@ export class Gildash {
   private readonly patternSearchFn: (opts: { pattern: string; filePaths: string[] }) => Promise<PatternMatch[]>;
   private readonly readFileFn: (filePath: string) => Promise<string>;
   private readonly unlinkFn: (filePath: string) => Promise<void>;
+  private readonly existsSyncFn: (p: string) => boolean;
+  private readonly makeExternalCoordinatorFn?: (packageDir: string, project: string) => { fullIndex(): Promise<IndexResult> };
   private readonly logger: Logger;
   private readonly defaultProject: string;
   /** Current watcher role: `'owner'` (can reindex) or `'reader'` (read-only). */
@@ -316,6 +319,8 @@ export class Gildash {
     patternSearchFn: (opts: { pattern: string; filePaths: string[] }) => Promise<PatternMatch[]>;
     readFileFn: (filePath: string) => Promise<string>;
     unlinkFn: (filePath: string) => Promise<void>;
+    existsSyncFn: (p: string) => boolean;
+    makeExternalCoordinatorFn?: (packageDir: string, project: string) => { fullIndex(): Promise<IndexResult> };
     logger: Logger;
     defaultProject: string;
     role: 'owner' | 'reader';
@@ -337,6 +342,8 @@ export class Gildash {
     this.patternSearchFn = opts.patternSearchFn;
     this.readFileFn = opts.readFileFn;
     this.unlinkFn = opts.unlinkFn;
+    this.existsSyncFn = opts.existsSyncFn;
+    this.makeExternalCoordinatorFn = opts.makeExternalCoordinatorFn;
     this.logger = opts.logger;
     this.defaultProject = opts.defaultProject;
     this.role = opts.role;
@@ -385,6 +392,7 @@ export class Gildash {
       relationSearchFn = defaultRelationSearch,
       patternSearchFn = defaultPatternSearch,
       loadTsconfigPathsFn = loadTsconfigPaths,
+      makeExternalCoordinatorFn,
       readFileFn = async (fp: string) => Bun.file(fp).text(),
       unlinkFn = async (fp: string) => { await Bun.file(fp).unlink(); },
       watchMode,
@@ -453,6 +461,8 @@ export class Gildash {
       patternSearchFn: patternSearchFn,
       readFileFn: readFileFn,
       unlinkFn: unlinkFn,
+      existsSyncFn,
+      makeExternalCoordinatorFn,
       logger,
       defaultProject,
       role,
@@ -1481,6 +1491,63 @@ export class Gildash {
       return await this.patternSearchFn({ pattern, filePaths });
     } catch (e) {
       return err(gildashError('search', 'Gildash: findPattern failed', e));
+    }
+  }
+
+  /**
+   * Index the TypeScript type declarations (`.d.ts` files) of one or more
+   * `node_modules` packages.
+   *
+   * Each package is indexed under a dedicated `@external/<packageName>` project
+   * so it does not pollute the main project index. Subsequent calls re-index
+   * (incremental diff) the same package.
+   *
+   * @param packages - Package names as they appear in `node_modules/`
+   *   (e.g. `['react', 'typescript']`).
+   * @param opts     - Optional overrides (unused currently, reserved for future use).
+   * @returns An array of {@link IndexResult} — one per package — on success,
+   *   or `Err<GildashError>` with:
+   *   - `type='closed'` if the instance is closed or in reader mode,
+   *   - `type='validation'` if a requested package is not found in `node_modules/`,
+   *   - `type='store'` if indexing fails at runtime.
+   */
+  async indexExternalPackages(
+    packages: string[],
+    opts?: { project?: string },
+  ): Promise<Result<IndexResult[], GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    if (this.role !== 'owner') {
+      return err(gildashError('closed', 'Gildash: indexExternalPackages() is not available for readers'));
+    }
+    try {
+      const results: IndexResult[] = [];
+      for (const packageName of packages) {
+        const packageDir = path.resolve(this.projectRoot, 'node_modules', packageName);
+        if (!this.existsSyncFn(packageDir)) {
+          return err(gildashError('validation', `Gildash: package not found in node_modules: ${packageName}`));
+        }
+        const project = `@external/${packageName}`;
+        const coordinator = this.makeExternalCoordinatorFn
+          ? this.makeExternalCoordinatorFn(packageDir, project)
+          : new IndexCoordinator({
+              projectRoot: packageDir,
+              boundaries: [{ dir: '.', project }],
+              extensions: ['.d.ts'],
+              ignorePatterns: [],
+              dbConnection: this.db,
+              parseCache: this.parseCache,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              fileRepo: this.fileRepo as any,
+              symbolRepo: this.symbolRepo,
+              relationRepo: this.relationRepo,
+              logger: this.logger,
+            });
+        const result = await coordinator.fullIndex();
+        results.push(result);
+      }
+      return results;
+    } catch (e) {
+      return err(gildashError('store', 'Gildash: indexExternalPackages failed', e));
     }
   }
 
