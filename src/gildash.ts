@@ -1125,6 +1125,73 @@ export class Gildash {
   }
 
   /**
+   * Find exported symbols that are never imported anywhere in the project.
+   *
+   * A symbol is considered "dead" if no `imports` or `re-exports` relation in the
+   * project references it by name (matching both `dstFilePath` and `dstSymbolName`).
+   * Exports from entry-point files are excluded by default.
+   *
+   * @param project - Project name. Defaults to the primary project.
+   * @param opts.entryPoints - File paths whose exports are excluded from dead-export detection.
+   *   Defaults to files named `index.ts`, `index.mts`, or `main.ts` anywhere in the project.
+   *   Pass `[]` to disable all entry-point filtering.
+   * @returns An array of `{ symbolName, filePath }` for dead exports,
+   *   or `Err<GildashError>` with `type='closed'` / `type='store'`.
+   */
+  getDeadExports(
+    project?: string,
+    opts?: { entryPoints?: string[] },
+  ): Result<Array<{ symbolName: string; filePath: string }>, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const effectiveProject = project ?? this.defaultProject;
+
+      // 1. Collect all exported symbols
+      const exports = this.symbolRepo.searchByQuery({
+        project: effectiveProject,
+        isExported: true,
+        limit: 100_000,
+      });
+
+      // 2. Collect (dstFilePath::dstSymbolName) from imports + re-exports relations
+      const importedSymbols = new Set<string>();
+      for (const relType of ['imports', 're-exports'] as const) {
+        const relations = this.relationRepo.getByType(effectiveProject, relType);
+        for (const rel of relations) {
+          if (rel.dstSymbolName != null) {
+            importedSymbols.add(`${rel.dstFilePath}::${rel.dstSymbolName}`);
+          }
+        }
+      }
+
+      // 3. Determine entry-point file paths to exclude
+      const entryPoints = opts?.entryPoints;
+      const defaultEntryBasenames = ['index.ts', 'index.mts', 'main.ts'];
+
+      // 4. Filter dead exports
+      const dead = exports
+        .filter((sym) => {
+          // Skip if already imported
+          if (importedSymbols.has(`${sym.filePath}::${sym.name}`)) return false;
+
+          // Skip if from an entry-point file
+          if (entryPoints !== undefined) {
+            // User-supplied list (may be empty → no exclusions)
+            return !entryPoints.includes(sym.filePath);
+          }
+          // Default: exclude files whose basename matches the default entry names
+          const basename = sym.filePath.split('/').pop() ?? sym.filePath;
+          return !defaultEntryBasenames.includes(basename);
+        })
+        .map((sym) => ({ symbolName: sym.name, filePath: sym.filePath }));
+
+      return dead;
+    } catch (e) {
+      return err(gildashError('store', 'Gildash: getDeadExports failed', e));
+    }
+  }
+
+  /**
    * Parse multiple files concurrently and return a map of results.
    *
    * Files that fail to read or parse are silently excluded from the result map.
