@@ -1,5 +1,11 @@
 # @zipbul/gildash
 
+## 0.3.1
+
+### Patch Changes
+
+- [#18](https://github.com/zipbul/gildash/pull/18) [`1d76d79`](https://github.com/zipbul/gildash/commit/1d76d794862f6780e00868409483f7d2965a8403) Thanks [@parkrevil](https://github.com/parkrevil)! - Update README with new API docs and exclude README.ko.md from npm package
+
 ## 0.3.0
 
 ### Minor Changes
