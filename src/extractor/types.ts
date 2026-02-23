@@ -190,6 +190,8 @@ export interface CodeRelation {
   dstSymbolName: string | null;
   /** Optional JSON-encoded metadata about the relation. */
   metaJson?: string;
+  /** Parsed metadata object derived from `metaJson`. */
+  meta?: Record<string, unknown>;
 }
 
 export type { SourcePosition, SourceSpan };
