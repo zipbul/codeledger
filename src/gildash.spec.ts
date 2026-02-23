@@ -3340,4 +3340,181 @@ describe('Gildash', () => {
       await ledger.close();
     });
   });
+
+  // ─── FR-14: resolveSymbol ───
+
+  describe('Gildash.resolveSymbol', () => {
+    // 1. [HP] no re-export → direct return, chain empty
+    it('should return originalName=symbolName and empty reExportChain when no re-export relation exists', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn.mockReturnValue([]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.originalName).toBe('Foo');
+      expect(result.originalFilePath).toBe('/project/src/a.ts');
+      expect(result.reExportChain).toEqual([]);
+      await ledger.close();
+    });
+
+    // 2. [HP] 1-hop re-export (same name)
+    it('should return originalFilePath=B and chain=[A] when Foo is re-exported from A to B', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn
+        .mockReturnValueOnce([{
+          type: 're-exports',
+          srcFilePath: '/project/src/a.ts',
+          srcSymbolName: null,
+          dstFilePath: '/project/src/b.ts',
+          dstSymbolName: null,
+          metaJson: JSON.stringify({ isReExport: true, specifiers: [{ local: 'Foo', exported: 'Foo' }] }),
+        }])
+        .mockReturnValueOnce([]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.originalName).toBe('Foo');
+      expect(result.originalFilePath).toBe('/project/src/b.ts');
+      expect(result.reExportChain).toEqual([{ filePath: '/project/src/a.ts', exportedAs: 'Foo' }]);
+      await ledger.close();
+    });
+
+    // 3. [HP] alias re-export (Bar as Foo)
+    it('should return originalName=Bar when Foo is an alias re-export of Bar from B', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn
+        .mockReturnValueOnce([{
+          type: 're-exports',
+          srcFilePath: '/project/src/a.ts',
+          srcSymbolName: null,
+          dstFilePath: '/project/src/b.ts',
+          dstSymbolName: null,
+          metaJson: JSON.stringify({ isReExport: true, specifiers: [{ local: 'Bar', exported: 'Foo' }] }),
+        }])
+        .mockReturnValueOnce([]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.originalName).toBe('Bar');
+      expect(result.originalFilePath).toBe('/project/src/b.ts');
+      expect(result.reExportChain).toEqual([{ filePath: '/project/src/a.ts', exportedAs: 'Foo' }]);
+      await ledger.close();
+    });
+
+    // 4. [HP] 2-hop chain A → B → C
+    it('should build 2-element chain and originalFilePath=C when Foo passes through A then B to reach C', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn
+        .mockReturnValueOnce([{
+          type: 're-exports',
+          srcFilePath: '/project/src/a.ts',
+          srcSymbolName: null,
+          dstFilePath: '/project/src/b.ts',
+          dstSymbolName: null,
+          metaJson: JSON.stringify({ isReExport: true, specifiers: [{ local: 'Foo', exported: 'Foo' }] }),
+        }])
+        .mockReturnValueOnce([{
+          type: 're-exports',
+          srcFilePath: '/project/src/b.ts',
+          srcSymbolName: null,
+          dstFilePath: '/project/src/c.ts',
+          dstSymbolName: null,
+          metaJson: JSON.stringify({ isReExport: true, specifiers: [{ local: 'Foo', exported: 'Foo' }] }),
+        }])
+        .mockReturnValueOnce([]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.originalFilePath).toBe('/project/src/c.ts');
+      expect(result.reExportChain.length).toBe(2);
+      expect(result.reExportChain[0]).toEqual({ filePath: '/project/src/a.ts', exportedAs: 'Foo' });
+      expect(result.reExportChain[1]).toEqual({ filePath: '/project/src/b.ts', exportedAs: 'Foo' });
+      await ledger.close();
+    });
+
+    // 5. [EP] circular re-export A → B → A → Err('search')
+    it('should return Err(search) when re-export chain is circular', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn
+        .mockReturnValueOnce([{
+          type: 're-exports',
+          srcFilePath: '/project/src/a.ts',
+          srcSymbolName: null,
+          dstFilePath: '/project/src/b.ts',
+          dstSymbolName: null,
+          metaJson: JSON.stringify({ isReExport: true, specifiers: [{ local: 'Foo', exported: 'Foo' }] }),
+        }])
+        .mockReturnValueOnce([{
+          type: 're-exports',
+          srcFilePath: '/project/src/b.ts',
+          srcSymbolName: null,
+          dstFilePath: '/project/src/a.ts',
+          dstSymbolName: null,
+          metaJson: JSON.stringify({ isReExport: true, specifiers: [{ local: 'Foo', exported: 'Foo' }] }),
+        }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+
+    // 6. [EP] closed → Err('closed')
+    it('should return Err(closed) when resolveSymbol is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    // 7. [HP] project 파라미터 전달 확인
+    it('should pass specified project to relationSearchFn when project is provided', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn.mockReturnValue([]);
+      const ledger = await openOrThrow(opts);
+
+      (ledger as any).resolveSymbol('Foo', '/project/src/a.ts', 'my-project');
+
+      expect(opts.relationSearchFn).toHaveBeenCalledWith(
+        expect.objectContaining({ project: 'my-project' }),
+      );
+      await ledger.close();
+    });
+
+    // 8. [EP] export* (specifiers 없음) → 현재 위치 반환
+    it('should return original filePath without following hop when re-export has no specifiers (export *)', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn.mockReturnValue([{
+        type: 're-exports',
+        srcFilePath: '/project/src/a.ts',
+        srcSymbolName: null,
+        dstFilePath: '/project/src/b.ts',
+        dstSymbolName: null,
+        metaJson: JSON.stringify({ isReExport: true }), // no specifiers
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.originalName).toBe('Foo');
+      expect(result.originalFilePath).toBe('/project/src/a.ts');
+      expect(result.reExportChain).toEqual([]);
+      await ledger.close();
+    });
+  });
 });

@@ -143,6 +143,18 @@ export interface FanMetrics {
 }
 
 /**
+ * Result of following a re-export chain to the original symbol definition.
+ */
+export interface ResolvedSymbol {
+  /** The name of the symbol at the end of the re-export chain (may differ from the queried name due to aliasing). */
+  originalName: string;
+  /** Absolute path of the file that originally defines the symbol. */
+  originalFilePath: string;
+  /** Ordered list of re-export hops between the queried file and the original definition. */
+  reExportChain: Array<{ filePath: string; exportedAs: string }>;
+}
+
+/**
  * Options for creating a {@link Gildash} instance via {@link Gildash.open}.
  *
  * @example
@@ -1362,6 +1374,76 @@ export class Gildash {
       };
     } catch (e) {
       return err(gildashError('search', 'Gildash: getFanMetrics failed', e));
+    }
+  }
+
+  /**
+   * Resolve the original definition location of a symbol by following its re-export chain.
+   *
+   * Traverses `re-exports` relations iteratively until no further hop is found or a
+   * circular chain is detected.
+   *
+   * @param symbolName - The exported name to resolve.
+   * @param filePath   - The file from which the symbol is exported.
+   * @param project    - Project scope override (defaults to `defaultProject`).
+   * @returns A {@link ResolvedSymbol} on success, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if a circular re-export chain is detected.
+   */
+  resolveSymbol(
+    symbolName: string,
+    filePath: string,
+    project?: string,
+  ): Result<ResolvedSymbol, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    const effectiveProject = project ?? this.defaultProject;
+    const visited = new Set<string>();
+    const chain: Array<{ filePath: string; exportedAs: string }> = [];
+
+    let currentName = symbolName;
+    let currentFile = filePath;
+
+    for (;;) {
+      const key = `${currentFile}::${currentName}`;
+      if (visited.has(key)) {
+        return err(gildashError('search', 'Gildash: resolveSymbol detected circular re-export chain'));
+      }
+      visited.add(key);
+
+      const rels = this.relationSearchFn({
+        relationRepo: this.relationRepo,
+        project: effectiveProject,
+        query: { type: 're-exports', srcFilePath: currentFile, limit: 500 },
+      }) as CodeRelation[];
+
+      let nextFile: string | undefined;
+      let nextName: string | undefined;
+
+      for (const rel of rels) {
+        let specifiers: Array<{ local: string; exported: string }> | undefined;
+        if (rel.metaJson) {
+          try {
+            const meta = JSON.parse(rel.metaJson) as Record<string, unknown>;
+            if (Array.isArray(meta['specifiers'])) {
+              specifiers = meta['specifiers'] as Array<{ local: string; exported: string }>;
+            }
+          } catch { /* ignore malformed metaJson */ }
+        }
+        if (!specifiers) continue;
+        const match = specifiers.find((s) => s.exported === currentName);
+        if (!match) continue;
+        nextFile = rel.dstFilePath;
+        nextName = match.local;
+        break;
+      }
+
+      if (!nextFile || !nextName) {
+        return { originalName: currentName, originalFilePath: currentFile, reExportChain: chain };
+      }
+
+      chain.push({ filePath: currentFile, exportedAs: currentName });
+      currentFile = nextFile;
+      currentName = nextName;
     }
   }
 
