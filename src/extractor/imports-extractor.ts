@@ -25,14 +25,50 @@ export function extractImports(
       const resolved = candidates[0]!;
 
       const isType = node.importKind === 'type';
-      relations.push({
-        type: 'imports',
-        srcFilePath: filePath,
-        srcSymbolName: null,
-        dstFilePath: resolved,
-        dstSymbolName: null,
-        ...(isType ? { metaJson: JSON.stringify({ isType: true }) } : {}),
-      });
+      const specifiers = (node.specifiers as Array<Record<string, unknown>> | undefined) ?? [];
+
+      if (specifiers.length === 0) {
+        // side-effect import: import './foo'
+        relations.push({
+          type: 'imports',
+          srcFilePath: filePath,
+          srcSymbolName: null,
+          dstFilePath: resolved,
+          dstSymbolName: null,
+          ...(isType ? { metaJson: JSON.stringify({ isType: true }) } : {}),
+        });
+      } else {
+        for (const spec of specifiers) {
+          const specType = spec.type as string;
+          const meta: Record<string, unknown> = {};
+          if (isType) meta.isType = true;
+
+          let dstSymbolName: string;
+          let srcSymbolName: string;
+
+          if (specType === 'ImportDefaultSpecifier') {
+            dstSymbolName = 'default';
+            srcSymbolName = (spec.local as { name: string }).name;
+          } else if (specType === 'ImportNamespaceSpecifier') {
+            dstSymbolName = '*';
+            srcSymbolName = (spec.local as { name: string }).name;
+            meta.importKind = 'namespace';
+          } else {
+            // ImportSpecifier
+            dstSymbolName = (spec.imported as { name: string }).name;
+            srcSymbolName = (spec.local as { name: string }).name;
+          }
+
+          relations.push({
+            type: 'imports',
+            srcFilePath: filePath,
+            srcSymbolName,
+            dstFilePath: resolved,
+            dstSymbolName,
+            ...(Object.keys(meta).length > 0 ? { metaJson: JSON.stringify(meta) } : {}),
+          });
+        }
+      }
       continue;
     }
 
