@@ -2898,4 +2898,178 @@ describe('Gildash', () => {
       await ledger.close();
     });
   });
+
+  // FR-09: getFullSymbol
+  describe('Gildash.getFullSymbol', () => {
+    // 1. [HP] class with members → FullSymbol.members populated
+    it('should return FullSymbol with members when searching for a class symbol with member data in detail', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 1, name: 'MyClass', filePath: 'src/a.ts', kind: 'class',
+        span: { start: { line: 1, column: 0 }, end: { line: 10, column: 1 } },
+        isExported: true, signature: null, fingerprint: 'fp1',
+        detail: {
+          members: [{ name: 'doWork', kind: 'method', type: 'void', visibility: 'public', isStatic: false }],
+          heritage: ['BaseClass'],
+        },
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('MyClass', 'src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.members).toEqual([{ name: 'doWork', kind: 'method', type: 'void', visibility: 'public', isStatic: false }]);
+      await ledger.close();
+    });
+
+    // 2. [HP] function with parameters and returnType → fields populated
+    it('should return FullSymbol with parameters and returnType when searching for a function symbol', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 2, name: 'fetchData', filePath: 'src/b.ts', kind: 'function',
+        span: { start: { line: 5, column: 0 }, end: { line: 8, column: 1 } },
+        isExported: true, signature: 'fetchData(url: string): Promise<Data>', fingerprint: 'fp2',
+        detail: { parameters: 'url: string', returnType: 'Promise<Data>' },
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('fetchData', 'src/b.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.parameters).toBe('url: string');
+      expect(result.returnType).toBe('Promise<Data>');
+      await ledger.close();
+    });
+
+    // 3. [HP] symbol with jsDoc → jsDoc populated
+    it('should return FullSymbol with jsDoc when symbol detail contains jsDoc string', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 3, name: 'MyFunc', filePath: 'src/c.ts', kind: 'function',
+        span: { start: { line: 1, column: 0 }, end: { line: 3, column: 1 } },
+        isExported: true, signature: null, fingerprint: 'fp3',
+        detail: { jsDoc: '/** Does something useful */' },
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('MyFunc', 'src/c.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.jsDoc).toBe('/** Does something useful */');
+      await ledger.close();
+    });
+
+    // 4. [HP] symbol with heritage array → heritage populated
+    it('should return FullSymbol with heritage when symbol detail contains heritage array', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 4, name: 'DerivedClass', filePath: 'src/d.ts', kind: 'class',
+        span: { start: { line: 1, column: 0 }, end: { line: 5, column: 1 } },
+        isExported: true, signature: null, fingerprint: 'fp4',
+        detail: { heritage: ['BaseClass', 'IMixin'] },
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('DerivedClass', 'src/d.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.heritage).toEqual(['BaseClass', 'IMixin']);
+      await ledger.close();
+    });
+
+    // 5. [HP] symbol with decorators → decorators populated
+    it('should return FullSymbol with decorators when symbol detail contains decorators array', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 5, name: 'Injectable', filePath: 'src/e.ts', kind: 'class',
+        span: { start: { line: 1, column: 0 }, end: { line: 5, column: 1 } },
+        isExported: true, signature: null, fingerprint: 'fp5',
+        detail: { decorators: [{ name: 'Injectable', arguments: "'singleton'" }] },
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('Injectable', 'src/e.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.decorators).toEqual([{ name: 'Injectable', arguments: "'singleton'" }]);
+      await ledger.close();
+    });
+
+    // 6. [HP] symbol with no detail fields → all optional fields undefined
+    it('should return FullSymbol with undefined optional fields when symbol detail is empty', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 6, name: 'SimpleVar', filePath: 'src/f.ts', kind: 'variable',
+        span: { start: { line: 1, column: 0 }, end: { line: 1, column: 20 } },
+        isExported: false, signature: null, fingerprint: 'fp6',
+        detail: {},
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('SimpleVar', 'src/f.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.members).toBeUndefined();
+      expect(result.jsDoc).toBeUndefined();
+      expect(result.parameters).toBeUndefined();
+      expect(result.returnType).toBeUndefined();
+      await ledger.close();
+    });
+
+    // 7. [NE] symbol not found → Err with search type
+    it('should return Err with search type when getFullSymbol cannot find the requested symbol', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('NotExist', 'src/x.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+
+    // 8. [NE] closed instance → Err with closed type
+    it('should return Err with closed type when getFullSymbol is called on a closed instance', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = (ledger as any).getFullSymbol('Foo', 'src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    // 9. [ED] symbol with empty members array → members is []
+    it('should return FullSymbol with empty members array when symbol detail has members as empty array', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 7, name: 'EmptyClass', filePath: 'src/g.ts', kind: 'class',
+        span: { start: { line: 1, column: 0 }, end: { line: 2, column: 1 } },
+        isExported: true, signature: null, fingerprint: 'fp7',
+        detail: { members: [] },
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('EmptyClass', 'src/g.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.members).toEqual([]);
+      await ledger.close();
+    });
+
+    // 10. [CO] symbolSearchFn throws → Err('search')
+    it('should return Err with search type when symbolSearchFn throws during getFullSymbol', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockImplementation(() => { throw new Error('db error'); });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('Foo', 'src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+  });
 });

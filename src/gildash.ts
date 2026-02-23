@@ -84,6 +84,34 @@ export interface HeritageNode {
 }
 
 /**
+ * Full symbol detail including members, documentation, and type information.
+ * Returned by {@link Gildash.getFullSymbol}.
+ */
+export interface FullSymbol extends SymbolSearchResult {
+  /** Class/interface members (methods, properties, constructors, accessors). */
+  members?: Array<{
+    name: string;
+    kind: string;
+    type?: string;
+    visibility?: string;
+    isStatic?: boolean;
+    isReadonly?: boolean;
+  }>;
+  /** JSDoc comment attached to the symbol. */
+  jsDoc?: string;
+  /** Stringified parameter list (functions/methods). */
+  parameters?: string;
+  /** Stringified return type (functions/methods). */
+  returnType?: string;
+  /** Superclass/interface names (classes/interfaces with heritage). */
+  heritage?: string[];
+  /** Decorators applied to the symbol. */
+  decorators?: Array<{ name: string; arguments?: string }>;
+  /** Stringified type parameters (generic symbols). */
+  typeParameters?: string;
+}
+
+/**
  * Options for creating a {@link Gildash} instance via {@link Gildash.open}.
  *
  * @example
@@ -1188,6 +1216,51 @@ export class Gildash {
       return dead;
     } catch (e) {
       return err(gildashError('store', 'Gildash: getDeadExports failed', e));
+    }
+  }
+
+  /**
+   * Retrieve full details for a named symbol in a specific file,
+   * including members, documentation, and type information.
+   *
+   * @param symbolName - Exact symbol name to look up.
+   * @param filePath   - Absolute path of the file containing the symbol.
+   * @param project    - Project scope override (defaults to `defaultProject`).
+   * @returns A {@link FullSymbol} on success, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if the symbol is not found or the query fails.
+   */
+  getFullSymbol(
+    symbolName: string,
+    filePath: string,
+    project?: string,
+  ): Result<FullSymbol, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const effectiveProject = project ?? this.defaultProject;
+      const results = this.symbolSearchFn({
+        symbolRepo: this.symbolRepo,
+        project: effectiveProject,
+        query: { exactName: symbolName, filePath, limit: 1 },
+      });
+      if (results.length === 0) {
+        return err(gildashError('search', `Gildash: symbol '${symbolName}' not found in '${filePath}'`));
+      }
+      const sym = results[0]!;
+      const d = sym.detail;
+      const full: FullSymbol = {
+        ...sym,
+        members: Array.isArray(d.members) ? (d.members as FullSymbol['members']) : undefined,
+        jsDoc: typeof d.jsDoc === 'string' ? d.jsDoc : undefined,
+        parameters: typeof d.parameters === 'string' ? d.parameters : undefined,
+        returnType: typeof d.returnType === 'string' ? d.returnType : undefined,
+        heritage: Array.isArray(d.heritage) ? (d.heritage as string[]) : undefined,
+        decorators: Array.isArray(d.decorators) ? (d.decorators as FullSymbol['decorators']) : undefined,
+        typeParameters: typeof d.typeParameters === 'string' ? d.typeParameters : undefined,
+      };
+      return full;
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getFullSymbol failed', e));
     }
   }
 
