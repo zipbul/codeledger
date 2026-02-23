@@ -243,4 +243,119 @@ describe('indexFileSymbols', () => {
     expect(detail.parameters).toBeDefined();
     expect(detail.returnType).toBe('void');
   });
+
+  // --- IMP-C: members full info ---
+
+  function makeClassWithMember(memberOverrides: Parameters<typeof makeSymbol>[0]) {
+    return makeSymbol({
+      kind: 'class', name: 'MyClass', modifiers: [],
+      members: [makeSymbol({ kind: 'method', name: 'doThing', modifiers: [], ...memberOverrides })],
+    });
+  }
+
+  function getMemberDetail(memberOverrides: Parameters<typeof makeClassWithMember>[0] = {}) {
+    const cls = makeClassWithMember(memberOverrides);
+    mockExtractSymbols.mockReturnValue([cls]);
+    const symbolRepo = makeSymbolRepo();
+    indexFileSymbols({ parsed: makeParsedFile(), project: PROJECT, filePath: FILE_PATH, contentHash: CONTENT_HASH, symbolRepo: symbolRepo as any });
+    const [, , , symbols] = symbolRepo.replaceFileSymbols.mock.calls[0]!;
+    const classRow = symbols.find((s: any) => s.name === 'MyClass')!;
+    return JSON.parse(classRow.detailJson!).members[0] as Record<string, unknown>;
+  }
+
+  // 1. [HP] method → kind:'method'
+  it('should store kind method for a regular method member when building detailJson', () => {
+    const m = getMemberDetail({ kind: 'method', name: 'doThing', modifiers: [] });
+    expect(m.kind).toBe('method');
+    expect(m.name).toBe('doThing');
+  });
+
+  // 2. [HP] getter → kind:'getter' (methodKind 우선)
+  it('should store kind getter for a getter member when methodKind is getter', () => {
+    const m = getMemberDetail({ kind: 'method', name: 'doThing', modifiers: [], methodKind: 'getter' });
+    expect(m.kind).toBe('getter');
+  });
+
+  // 3. [HP] setter → kind:'setter'
+  it('should store kind setter for a setter member when methodKind is setter', () => {
+    const m = getMemberDetail({ kind: 'method', name: 'doThing', modifiers: [], methodKind: 'setter' });
+    expect(m.kind).toBe('setter');
+  });
+
+  // 4. [HP] constructor → kind:'constructor'
+  it('should store kind constructor for a constructor member when methodKind is constructor', () => {
+    const m = getMemberDetail({ kind: 'method', name: 'doThing', modifiers: [], methodKind: 'constructor' });
+    expect(m.kind).toBe('constructor');
+  });
+
+  // 5. [HP] property with returnType → kind:'property', type
+  it('should store kind property and type annotation when member is a property with return type', () => {
+    const m = getMemberDetail({ kind: 'property', name: 'doThing', modifiers: [], returnType: 'string' });
+    expect(m.kind).toBe('property');
+    expect(m.type).toBe('string');
+  });
+
+  // 6. [HP] private member → visibility:'private'
+  it('should store visibility private when member has private modifier', () => {
+    const m = getMemberDetail({ kind: 'method', name: 'doThing', modifiers: ['private'] });
+    expect(m.visibility).toBe('private');
+  });
+
+  // 7. [HP] protected member → visibility:'protected'
+  it('should store visibility protected when member has protected modifier', () => {
+    const m = getMemberDetail({ kind: 'method', name: 'doThing', modifiers: ['protected'] });
+    expect(m.visibility).toBe('protected');
+  });
+
+  // 8. [HP] public member → visibility:'public'
+  it('should store visibility public when member has explicit public modifier', () => {
+    const m = getMemberDetail({ kind: 'method', name: 'doThing', modifiers: ['public'] });
+    expect(m.visibility).toBe('public');
+  });
+
+  // 9. [HP] static member → isStatic:true
+  it('should store isStatic true when member has static modifier', () => {
+    const m = getMemberDetail({ kind: 'method', name: 'doThing', modifiers: ['static'] });
+    expect(m.isStatic).toBe(true);
+  });
+
+  // 10. [HP] readonly member → isReadonly:true
+  it('should store isReadonly true when member has readonly modifier', () => {
+    const m = getMemberDetail({ kind: 'property', name: 'doThing', modifiers: ['readonly'] });
+    expect(m.isReadonly).toBe(true);
+  });
+
+  // 11. [NE] empty members array → detail.members absent
+  it('should not include members key in detailJson when class has empty members array', () => {
+    const cls = makeSymbol({ kind: 'class', name: 'Empty', modifiers: [], members: [] });
+    mockExtractSymbols.mockReturnValue([cls]);
+    const symbolRepo = makeSymbolRepo();
+    indexFileSymbols({ parsed: makeParsedFile(), project: PROJECT, filePath: FILE_PATH, contentHash: CONTENT_HASH, symbolRepo: symbolRepo as any });
+    const [, , , symbols] = symbolRepo.replaceFileSymbols.mock.calls[0]!;
+    const detail = symbols[0].detailJson ? JSON.parse(symbols[0].detailJson) : {};
+    expect(detail.members).toBeUndefined();
+  });
+
+  // 12. [CO] static+private → both flags
+  it('should store both isStatic true and visibility private when member has static and private modifiers', () => {
+    const m = getMemberDetail({ kind: 'method', name: 'doThing', modifiers: ['static', 'private'] });
+    expect(m.isStatic).toBe(true);
+    expect(m.visibility).toBe('private');
+  });
+
+  // 13. [ID] same sym twice → identical
+  it('should produce identical members detail when indexFileSymbols called twice with same class', () => {
+    const cls = makeClassWithMember({ kind: 'method', name: 'doThing', modifiers: ['public'] });
+    mockExtractSymbols.mockReturnValue([cls]);
+    const repo1 = makeSymbolRepo();
+    indexFileSymbols({ parsed: makeParsedFile(), project: PROJECT, filePath: FILE_PATH, contentHash: CONTENT_HASH, symbolRepo: repo1 as any });
+    const [, , , syms1] = repo1.replaceFileSymbols.mock.calls[0]!;
+
+    mockExtractSymbols.mockReturnValue([cls]);
+    const repo2 = makeSymbolRepo();
+    indexFileSymbols({ parsed: makeParsedFile(), project: PROJECT, filePath: FILE_PATH, contentHash: CONTENT_HASH, symbolRepo: repo2 as any });
+    const [, , , syms2] = repo2.replaceFileSymbols.mock.calls[0]!;
+
+    expect(syms1[0].detailJson).toBe(syms2[0].detailJson);
+  });
 });

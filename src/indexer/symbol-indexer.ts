@@ -60,7 +60,21 @@ function buildDetailJson(sym: ExtractedSymbol): string | null {
   if (sym.decorators?.length) detail.decorators = sym.decorators;
   if (sym.typeParameters?.length) detail.typeParameters = sym.typeParameters;
   if (sym.modifiers?.length) detail.modifiers = sym.modifiers;
-  if (sym.members?.length) detail.members = sym.members.map((m) => m.name);
+  if (sym.members?.length) {
+    detail.members = sym.members.map((m) => {
+      const visibility = m.modifiers.find(
+        (mod: string) => mod === 'private' || mod === 'protected' || mod === 'public',
+      );
+      return {
+        name: m.name,
+        kind: m.methodKind ?? m.kind,
+        type: m.returnType,
+        visibility,
+        isStatic: m.modifiers.includes('static') || undefined,
+        isReadonly: m.modifiers.includes('readonly') || undefined,
+      };
+    });
+  }
 
   return Object.keys(detail).length > 0 ? JSON.stringify(detail) : null;
 }
