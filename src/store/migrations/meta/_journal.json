@@ -8,6 +8,13 @@
       "when": 1771705270251,
       "tag": "0000_soft_revanche",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1771815700000,
+      "tag": "0001_add_line_count",
+      "breakpoints": true
     }
   ]
 }

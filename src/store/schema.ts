@@ -19,6 +19,7 @@ export const files = sqliteTable(
     size: integer('size').notNull(),
     contentHash: text('content_hash').notNull(),
     updatedAt: text('updated_at').notNull(),
+    lineCount: integer('line_count'),
   },
   (table) => [primaryKey({ columns: [table.project, table.filePath] })],
 );

@@ -912,4 +912,78 @@ describe('IndexCoordinator', () => {
 
     for (let i = 0; i < 20; i++) await Promise.resolve();
   });
+
+  // --- IMP-D: lineCount in upsertFile ---
+
+  // 1. [HP] processFile path: 3-line text → lineCount=3
+  it('should call upsertFile with lineCount=3 when incrementalIndex processes a file with 3 lines', async () => {
+    const fileRepo = makeFileRepo();
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'a\nb\nc', lastModified: 1000, size: 5 } as any);
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/index.ts' }]);
+
+    expect(fileRepo.upsertFile).toHaveBeenCalledWith(
+      expect.objectContaining({ lineCount: 3 }),
+    );
+  });
+
+  // 2. [HP] fullIndex batch path: 4-line text → lineCount=4
+  it('should call upsertFile with lineCount=4 when fullIndex processes a file with 4 lines', async () => {
+    const fileRepo = makeFileRepo();
+    mockDetectChanges.mockResolvedValue({
+      changed: [makeFakeFile('src/a.ts')],
+      unchanged: [],
+      deleted: [],
+    });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'L1\nL2\nL3\nL4', lastModified: 1000, size: 12 } as any);
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.fullIndex();
+
+    expect(fileRepo.upsertFile).toHaveBeenCalledWith(
+      expect.objectContaining({ lineCount: 4 }),
+    );
+  });
+
+  // 3. [ED] empty text "" → lineCount=1
+  it('should call upsertFile with lineCount=1 when processing a file with empty text', async () => {
+    const fileRepo = makeFileRepo();
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => '', lastModified: 1000, size: 0 } as any);
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/empty.ts' }]);
+
+    expect(fileRepo.upsertFile).toHaveBeenCalledWith(
+      expect.objectContaining({ lineCount: 1 }),
+    );
+  });
+
+  // 4. [ED] single newline "\n" → lineCount=2
+  it('should call upsertFile with lineCount=2 when processing a file containing a single newline', async () => {
+    const fileRepo = makeFileRepo();
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => '\n', lastModified: 1000, size: 1 } as any);
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/newline.ts' }]);
+
+    expect(fileRepo.upsertFile).toHaveBeenCalledWith(
+      expect.objectContaining({ lineCount: 2 }),
+    );
+  });
+
+  // 5. [ID] same 5-line text processed twice → both upsertFile calls have lineCount=5
+  it('should call upsertFile with same lineCount=5 both times when same 5-line file is indexed twice', async () => {
+    const fileRepo = makeFileRepo();
+    const text = 'a\nb\nc\nd\ne';
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => text, lastModified: 1000, size: 9 } as any);
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/file.ts' }]);
+    await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/file.ts' }]);
+
+    const calls = (fileRepo.upsertFile.mock.calls as any[][]);
+    expect(calls[0]![0]).toEqual(expect.objectContaining({ lineCount: 5 }));
+    expect(calls[1]![0]).toEqual(expect.objectContaining({ lineCount: 5 }));
+  });
 });

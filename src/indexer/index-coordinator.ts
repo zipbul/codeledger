@@ -321,6 +321,7 @@ export class IndexCoordinator {
             size: fd.size,
             contentHash: fd.contentHash,
             updatedAt: new Date().toISOString(),
+            lineCount: fd.text.split('\n').length,
           });
           indexFileSymbols({ parsed, project, filePath: fd.filePath, contentHash: fd.contentHash, symbolRepo });
           totalRelations += indexFileRelations({
@@ -406,6 +407,7 @@ export class IndexCoordinator {
       size: bunFile.size,
       contentHash,
       updatedAt: new Date().toISOString(),
+      lineCount: text.split('\n').length,
     });
 
     indexFileSymbols({ parsed, project, filePath, contentHash, symbolRepo });
