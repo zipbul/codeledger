@@ -21,6 +21,8 @@ export interface FileRecord {
   contentHash: string;
   /** ISO 8601 timestamp of the last index update. */
   updatedAt: string;
+  /** Number of lines in the file at the time of indexing. */
+  lineCount?: number | null;
 }
 
 export class FileRepository {
@@ -44,6 +46,7 @@ export class FileRepository {
         size: record.size,
         contentHash: record.contentHash,
         updatedAt: record.updatedAt,
+        lineCount: record.lineCount ?? null,
       })
       .onConflictDoUpdate({
         target: [files.project, files.filePath],
@@ -52,6 +55,7 @@ export class FileRepository {
           size: record.size,
           contentHash: record.contentHash,
           updatedAt: record.updatedAt,
+          lineCount: record.lineCount ?? null,
         },
       })
       .run();

@@ -40,6 +40,15 @@ export interface IndexResult {
   deletedFiles: string[];
   /** Absolute paths of files that failed to index. */
   failedFiles: string[];
+  /**
+   * Symbol-level diff compared to the previous index state.
+   * On the very first full index (empty DB), all symbols appear in `added`.
+   */
+  changedSymbols: {
+    added: Array<{ name: string; filePath: string; kind: string }>;
+    modified: Array<{ name: string; filePath: string; kind: string }>;
+    removed: Array<{ name: string; filePath: string; kind: string }>;
+  };
 }
 
 export interface IndexCoordinatorOptions {
@@ -247,6 +256,42 @@ export class IndexCoordinator {
       deletedSymbols.set(filePath, syms);
     }
 
+    // FR-08: collect before-indexing symbol snapshot for changedSymbols diff
+    type SymbolSnap = { name: string; filePath: string; kind: string; fingerprint: string | null };
+    const beforeSnapshot = new Map<string, SymbolSnap>();
+    const afterSnapshot = new Map<string, SymbolSnap>();
+
+    if (useTransaction) {
+      // fullIndex: snapshot all currently-stored symbols before the transaction wipes them
+      for (const boundary of this.opts.boundaries) {
+        for (const f of fileRepo.getAllFiles(boundary.project)) {
+          for (const sym of symbolRepo.getFileSymbols(boundary.project, f.filePath)) {
+            beforeSnapshot.set(`${sym.filePath}::${sym.name}`, {
+              name: sym.name, filePath: sym.filePath, kind: sym.kind, fingerprint: sym.fingerprint,
+            });
+          }
+        }
+      }
+    } else {
+      // incremental: snapshot symbols in files that are about to change
+      for (const file of changed) {
+        const project = resolveFileProject(file.filePath, this.opts.boundaries);
+        for (const sym of symbolRepo.getFileSymbols(project, file.filePath)) {
+          beforeSnapshot.set(`${sym.filePath}::${sym.name}`, {
+            name: sym.name, filePath: sym.filePath, kind: sym.kind, fingerprint: sym.fingerprint,
+          });
+        }
+      }
+      // also include symbols from files being deleted
+      for (const [, syms] of deletedSymbols) {
+        for (const sym of syms) {
+          beforeSnapshot.set(`${sym.filePath}::${sym.name}`, {
+            name: sym.name, filePath: sym.filePath, kind: sym.kind, fingerprint: sym.fingerprint,
+          });
+        }
+      }
+    }
+
     const processDeleted = () => {
       for (const filePath of deleted) {
         const project = resolveFileProject(filePath, this.opts.boundaries);
@@ -307,13 +352,11 @@ export class IndexCoordinator {
             fileRepo.deleteFile(f.project, f.filePath);
           }
         }
-        const parseFn = this.opts.parseSourceFn ?? parseSource;
+
+        // Pass 1: Insert all file records first so that FK constraints on
+        // relations.dstFilePath are satisfiable regardless of processing order.
         for (const fd of preread) {
           const project = resolveFileProject(fd.filePath, boundaries);
-          const parseResult = parseFn(toAbsolutePath(projectRoot, fd.filePath), fd.text);
-          if (isErr(parseResult)) throw parseResult.data;
-          const parsed = parseResult;
-          parsedCacheEntries.push({ filePath: fd.filePath, parsed });
           fileRepo.upsertFile({
             project,
             filePath: fd.filePath,
@@ -321,7 +364,18 @@ export class IndexCoordinator {
             size: fd.size,
             contentHash: fd.contentHash,
             updatedAt: new Date().toISOString(),
+            lineCount: fd.text.split('\n').length,
           });
+        }
+
+        // Pass 2: Parse sources and index symbols + relations.
+        const parseFn = this.opts.parseSourceFn ?? parseSource;
+        for (const fd of preread) {
+          const project = resolveFileProject(fd.filePath, boundaries);
+          const parseResult = parseFn(toAbsolutePath(projectRoot, fd.filePath), fd.text);
+          if (isErr(parseResult)) throw parseResult.data;
+          const parsed = parseResult;
+          parsedCacheEntries.push({ filePath: fd.filePath, parsed });
           indexFileSymbols({ parsed, project, filePath: fd.filePath, contentHash: fd.contentHash, symbolRepo });
           totalRelations += indexFileRelations({
             ast: parsed.program,
@@ -344,6 +398,32 @@ export class IndexCoordinator {
       totalSymbols = counts.symbols;
       totalRelations = counts.relations;
       allFailedFiles = counts.failedFiles;
+    }
+
+    // FR-08: collect after-indexing symbol snapshot
+    for (const file of changed) {
+      const project = resolveFileProject(file.filePath, this.opts.boundaries);
+      for (const sym of symbolRepo.getFileSymbols(project, file.filePath)) {
+        afterSnapshot.set(`${sym.filePath}::${sym.name}`, {
+          name: sym.name, filePath: sym.filePath, kind: sym.kind, fingerprint: sym.fingerprint,
+        });
+      }
+    }
+
+    // FR-08: compute symbol-level diff (added / modified / removed)
+    const changedSymbols: IndexResult['changedSymbols'] = { added: [], modified: [], removed: [] };
+    for (const [key, after] of afterSnapshot) {
+      const before = beforeSnapshot.get(key);
+      if (!before) {
+        changedSymbols.added.push({ name: after.name, filePath: after.filePath, kind: after.kind });
+      } else if (before.fingerprint !== after.fingerprint) {
+        changedSymbols.modified.push({ name: after.name, filePath: after.filePath, kind: after.kind });
+      }
+    }
+    for (const [key, before] of beforeSnapshot) {
+      if (!afterSnapshot.has(key)) {
+        changedSymbols.removed.push({ name: before.name, filePath: before.filePath, kind: before.kind });
+      }
     }
 
     if (!useTransaction) {
@@ -375,6 +455,7 @@ export class IndexCoordinator {
       changedFiles: changed.map((f) => f.filePath),
       deletedFiles: [...deleted],
       failedFiles: allFailedFiles,
+      changedSymbols,
     };
   }
 
@@ -406,6 +487,7 @@ export class IndexCoordinator {
       size: bunFile.size,
       contentHash,
       updatedAt: new Date().toISOString(),
+      lineCount: text.split('\n').length,
     });
 
     indexFileSymbols({ parsed, project, filePath, contentHash, symbolRepo });

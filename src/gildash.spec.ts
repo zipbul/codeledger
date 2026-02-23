@@ -74,7 +74,7 @@ function makeRelationRepoMock() {
 function makeFileRepoMock() {
   return {
     upsertFile: mock(() => {}),
-    getAllFiles: mock(() => []),
+    getAllFiles: mock((): FileRecord[] => []),
     getFilesMap: mock(() => new Map()),
     deleteFile: mock(() => {}),
     getFile: mock((_project: string, _filePath: string): FileRecord | null => null),
@@ -102,6 +102,8 @@ function makeOptions(opts: {
   parseCache?: ReturnType<typeof makeParseCacheMock>;
   existsSync?: (p: string) => boolean;
   projectRoot?: string;
+  readFileFn?: (filePath: string) => Promise<string>;
+  unlinkFn?: (filePath: string) => Promise<void>;
 } = {}) {
   const db = opts.db ?? makeDbMock();
   const watcher = opts.watcher ?? makeWatcherMock();
@@ -135,6 +137,9 @@ function makeOptions(opts: {
     loadTsconfigPathsFn: mock((root: string) => null) as any,
     symbolSearchFn: mock((opts: any) => []) as any,
     relationSearchFn: mock((opts: any) => []) as any,
+    patternSearchFn: mock(async (_opts: any) => []) as any,
+    readFileFn: opts.readFileFn ?? mock(async (_fp: string) => '// default content'),
+    unlinkFn: opts.unlinkFn ?? mock(async (_fp: string) => {}),
     db: db,
     watcher: watcher,
     coordinator: coordinator,
@@ -1531,6 +1536,2270 @@ describe('Gildash', () => {
       expect(symbolSearchFn).toHaveBeenCalledTimes(1);
       const callOpts = symbolSearchFn.mock.calls[0]![0] as any;
       expect(callOpts.query.project).toBeUndefined();
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-17: searchAllSymbols / searchAllRelations ───
+
+  describe('Gildash.searchAllSymbols', () => {
+    it('should call symbolSearchFn with project:undefined when searchAllSymbols is called', async () => {
+      const symbolSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      (ledger as any).searchAllSymbols({ text: 'Foo' });
+
+      expect(symbolSearchFn).toHaveBeenCalledWith(
+        expect.objectContaining({ project: undefined }),
+      );
+      await ledger.close();
+    });
+
+    it('should return symbolSearchFn result when searchAllSymbols succeeds', async () => {
+      const sym = { id: 1, name: 'Foo', filePath: 'a.ts', kind: 'function', span: { start: { line: 1, column: 0 }, end: { line: 3, column: 1 } }, isExported: true, signature: null, fingerprint: 'fp1', detail: {} };
+      const symbolSearchFn = mock((_opts: any) => [sym]);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).searchAllSymbols({});
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([sym]);
+      await ledger.close();
+    });
+
+    it('should pass empty query to symbolSearchFn when searchAllSymbols called with empty query', async () => {
+      const symbolSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      (ledger as any).searchAllSymbols({});
+
+      const callOpts = symbolSearchFn.mock.calls[0]![0] as any;
+      expect(callOpts.project).toBeUndefined();
+      expect(callOpts.query).toEqual({});
+      await ledger.close();
+    });
+
+    it('should return Err with closed type when searchAllSymbols is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = (ledger as any).searchAllSymbols({});
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should return Err with search type when symbolSearchFn throws inside searchAllSymbols', async () => {
+      const symbolSearchFn = mock((_opts: any) => { throw new Error('search fail'); });
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).searchAllSymbols({});
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+
+    it('should return identical results when searchAllSymbols called twice with same query', async () => {
+      const symbolSearchFn = mock((_opts: any) => [{ id: 1, name: 'A' }]);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const r1 = (ledger as any).searchAllSymbols({});
+      const r2 = (ledger as any).searchAllSymbols({});
+
+      expect(r1).toEqual(r2);
+      await ledger.close();
+    });
+
+    it('should pass query.project through to effectiveProject in symbolSearchFn when query.project is set in searchAllSymbols', async () => {
+      const symbolSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      (ledger as any).searchAllSymbols({ project: 'specific' });
+
+      const callOpts = symbolSearchFn.mock.calls[0]![0] as any;
+      expect(callOpts.project).toBeUndefined();
+      expect(callOpts.query.project).toBe('specific');
+      await ledger.close();
+    });
+
+    it('should return empty array when symbolSearchFn returns empty array in searchAllSymbols', async () => {
+      const symbolSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).searchAllSymbols({});
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([]);
+      await ledger.close();
+    });
+  });
+
+  describe('Gildash.searchAllRelations', () => {
+    it('should call relationSearchFn with project:undefined when searchAllRelations is called', async () => {
+      const relationSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      (ledger as any).searchAllRelations({ type: 'imports' });
+
+      expect(relationSearchFn).toHaveBeenCalledWith(
+        expect.objectContaining({ project: undefined }),
+      );
+      await ledger.close();
+    });
+
+    it('should return relationSearchFn result when searchAllRelations succeeds', async () => {
+      const rel = { type: 'imports', srcFilePath: 'a.ts', srcSymbolName: null, dstFilePath: 'b.ts', dstSymbolName: null };
+      const relationSearchFn = mock((_opts: any) => [rel]);
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).searchAllRelations({});
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([rel]);
+      await ledger.close();
+    });
+
+    it('should return Err with closed type when searchAllRelations is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = (ledger as any).searchAllRelations({});
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should return Err with search type when relationSearchFn throws inside searchAllRelations', async () => {
+      const relationSearchFn = mock((_opts: any) => { throw new Error('fail'); });
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).searchAllRelations({});
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-05: listIndexedFiles ───
+
+  describe('Gildash.listIndexedFiles', () => {
+    it('should call fileRepo.getAllFiles with defaultProject when listIndexedFiles is called without project', async () => {
+      const fileRepo = makeFileRepoMock();
+      const opts = makeOptions({ fileRepo });
+      const ledger = await openOrThrow(opts);
+
+      (ledger as any).listIndexedFiles();
+
+      expect(fileRepo.getAllFiles).toHaveBeenCalledWith('test-project');
+      await ledger.close();
+    });
+
+    it('should call fileRepo.getAllFiles with given project when listIndexedFiles is called with project', async () => {
+      const fileRepo = makeFileRepoMock();
+      const opts = makeOptions({ fileRepo });
+      const ledger = await openOrThrow(opts);
+
+      (ledger as any).listIndexedFiles('other-project');
+
+      expect(fileRepo.getAllFiles).toHaveBeenCalledWith('other-project');
+      await ledger.close();
+    });
+
+    it('should return file records when fileRepo.getAllFiles returns records', async () => {
+      const files = [
+        { project: 'test-project', filePath: 'a.ts', mtimeMs: 1000, size: 100, contentHash: 'abc', updatedAt: '2024-01-01', lineCount: 10 },
+        { project: 'test-project', filePath: 'b.ts', mtimeMs: 2000, size: 200, contentHash: 'def', updatedAt: '2024-01-01', lineCount: 20 },
+      ];
+      const fileRepo = makeFileRepoMock();
+      fileRepo.getAllFiles = mock(() => files) as any;
+      const opts = makeOptions({ fileRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).listIndexedFiles();
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual(files);
+      await ledger.close();
+    });
+
+    it('should return Err with closed type when listIndexedFiles is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = (ledger as any).listIndexedFiles();
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should return Err with store type when fileRepo.getAllFiles throws inside listIndexedFiles', async () => {
+      const fileRepo = makeFileRepoMock();
+      fileRepo.getAllFiles = mock(() => { throw new Error('db error'); }) as any;
+      const opts = makeOptions({ fileRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).listIndexedFiles();
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('store');
+      await ledger.close();
+    });
+
+    it('should return empty array when no files are indexed', async () => {
+      const fileRepo = makeFileRepoMock();
+      fileRepo.getAllFiles = mock(() => []) as any;
+      const opts = makeOptions({ fileRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).listIndexedFiles();
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should return same result on two consecutive listIndexedFiles calls when data is unchanged', async () => {
+      const files = [{ project: 'test-project', filePath: 'a.ts', mtimeMs: 1000, size: 100, contentHash: 'abc', updatedAt: '2024-01-01' }];
+      const fileRepo = makeFileRepoMock();
+      fileRepo.getAllFiles = mock(() => files) as any;
+      const opts = makeOptions({ fileRepo });
+      const ledger = await openOrThrow(opts);
+
+      const r1 = (ledger as any).listIndexedFiles();
+      const r2 = (ledger as any).listIndexedFiles();
+
+      expect(r1).toEqual(r2);
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-20: getInternalRelations ───
+
+  describe('Gildash.getInternalRelations', () => {
+    it('should call relationSearchFn with both srcFilePath and dstFilePath set to filePath when getInternalRelations is called', async () => {
+      const relationSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      (ledger as any).getInternalRelations('src/a.ts');
+
+      const callOpts = relationSearchFn.mock.calls[0]![0] as any;
+      expect(callOpts.query.srcFilePath).toBe('src/a.ts');
+      expect(callOpts.query.dstFilePath).toBe('src/a.ts');
+      await ledger.close();
+    });
+
+    it('should pass project param to relationSearchFn when getInternalRelations is called with project', async () => {
+      const relationSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      (ledger as any).getInternalRelations('src/a.ts', 'my-project');
+
+      const callOpts = relationSearchFn.mock.calls[0]![0] as any;
+      expect(callOpts.project).toBe('my-project');
+      await ledger.close();
+    });
+
+    it('should return intra-file relations when relationSearchFn returns relations', async () => {
+      const rel = { type: 'calls', srcFilePath: 'src/a.ts', srcSymbolName: 'fnA', dstFilePath: 'src/a.ts', dstSymbolName: 'fnB' };
+      const relationSearchFn = mock((_opts: any) => [rel]);
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getInternalRelations('src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([rel]);
+      await ledger.close();
+    });
+
+    it('should return Err with closed type when getInternalRelations is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = (ledger as any).getInternalRelations('src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should return Err with search type when relationSearchFn throws inside getInternalRelations', async () => {
+      const relationSearchFn = mock((_opts: any) => { throw new Error('fail'); });
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getInternalRelations('src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+
+    it('should return empty array when no intra-file relations exist', async () => {
+      const relationSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getInternalRelations('src/isolated.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should return identical results when getInternalRelations is called twice for same file', async () => {
+      const rel = { type: 'calls', srcFilePath: 'a.ts', srcSymbolName: null, dstFilePath: 'a.ts', dstSymbolName: null };
+      const relationSearchFn = mock((_opts: any) => [rel]);
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const r1 = (ledger as any).getInternalRelations('a.ts');
+      const r2 = (ledger as any).getInternalRelations('a.ts');
+
+      expect(r1).toEqual(r2);
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-18: diffSymbols ───
+
+  describe('Gildash.diffSymbols', () => {
+    function makeSym(overrides: Partial<{ name: string; filePath: string; fingerprint: string | null; kind: string }> = {}) {
+      return {
+        id: 1, name: 'myFn', filePath: 'src/a.ts', kind: 'function',
+        span: { start: { line: 1, column: 0 }, end: { line: 5, column: 1 } },
+        isExported: true, signature: null, fingerprint: 'fp-default', detail: {},
+        ...overrides,
+      };
+    }
+
+    it('should return added=[sym] when before=[] and after=[sym]', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      const sym = makeSym();
+
+      const diff = (ledger as any).diffSymbols([], [sym]);
+
+      expect(diff.added).toEqual([sym]);
+      expect(diff.removed).toEqual([]);
+      expect(diff.modified).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should return removed=[sym] when before=[sym] and after=[]', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      const sym = makeSym();
+
+      const diff = (ledger as any).diffSymbols([sym], []);
+
+      expect(diff.added).toEqual([]);
+      expect(diff.removed).toEqual([sym]);
+      expect(diff.modified).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should return all empty when before and after contain the same symbol with same fingerprint', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      const sym = makeSym({ fingerprint: 'fp1' });
+
+      const diff = (ledger as any).diffSymbols([sym], [sym]);
+
+      expect(diff.added).toEqual([]);
+      expect(diff.removed).toEqual([]);
+      expect(diff.modified).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should return modified=[{before,after}] when same name+filePath but different fingerprint', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      const before = makeSym({ fingerprint: 'fp1' });
+      const after = makeSym({ fingerprint: 'fp2' });
+
+      const diff = (ledger as any).diffSymbols([before], [after]);
+
+      expect(diff.modified).toHaveLength(1);
+      expect(diff.modified[0]).toEqual({ before, after });
+      expect(diff.added).toEqual([]);
+      expect(diff.removed).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should correctly classify added, removed and unchanged when mix of changes', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      const unchanged = makeSym({ name: 'unchanged', fingerprint: 'fp1' });
+      const removed = makeSym({ name: 'removed', fingerprint: 'fp2' });
+      const added = makeSym({ name: 'added', fingerprint: 'fp3' });
+
+      const diff = (ledger as any).diffSymbols([unchanged, removed], [unchanged, added]);
+
+      expect(diff.added).toEqual([added]);
+      expect(diff.removed).toEqual([removed]);
+      expect(diff.modified).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should return all empty when before=[] and after=[]', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+
+      const diff = (ledger as any).diffSymbols([], []);
+
+      expect(diff.added).toEqual([]);
+      expect(diff.removed).toEqual([]);
+      expect(diff.modified).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should treat sym with null fingerprint in both before and after as unchanged', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      const sym = makeSym({ fingerprint: null });
+
+      const diff = (ledger as any).diffSymbols([sym], [sym]);
+
+      expect(diff.modified).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should treat same name in different filePaths as add+remove not modified', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      const before = makeSym({ name: 'fn', filePath: 'a.ts' });
+      const after = makeSym({ name: 'fn', filePath: 'b.ts' });
+
+      const diff = (ledger as any).diffSymbols([before], [after]);
+
+      expect(diff.added).toEqual([after]);
+      expect(diff.removed).toEqual([before]);
+      expect(diff.modified).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should handle undefined fingerprint in both before and after as unchanged', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      const sym = makeSym({ fingerprint: undefined as any });
+
+      const diff = (ledger as any).diffSymbols([sym], [sym]);
+
+      expect(diff.modified).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should correctly report all three categories simultaneously', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      const addedSym = makeSym({ name: 'newFn', fingerprint: 'fp-new' });
+      const removedSym = makeSym({ name: 'oldFn', fingerprint: 'fp-old' });
+      const beforeMod = makeSym({ name: 'changedFn', fingerprint: 'fp-before' });
+      const afterMod = makeSym({ name: 'changedFn', fingerprint: 'fp-after' });
+      const unchanged = makeSym({ name: 'stableFn', fingerprint: 'fp-stable' });
+
+      const diff = (ledger as any).diffSymbols(
+        [removedSym, beforeMod, unchanged],
+        [addedSym, afterMod, unchanged],
+      );
+
+      expect(diff.added).toEqual([addedSym]);
+      expect(diff.removed).toEqual([removedSym]);
+      expect(diff.modified).toHaveLength(1);
+      expect(diff.modified[0]).toEqual({ before: beforeMod, after: afterMod });
+      await ledger.close();
+    });
+
+    it('should return same diff result when diffSymbols called twice with same inputs', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      const before = [makeSym({ fingerprint: 'fp1' })];
+      const after = [makeSym({ fingerprint: 'fp2' })];
+
+      const d1 = (ledger as any).diffSymbols(before, after);
+      const d2 = (ledger as any).diffSymbols(before, after);
+
+      expect(d1).toEqual(d2);
+      await ledger.close();
+    });
+
+    it('should return modified when before.fingerprint=null and after.fingerprint="fp1" for same sym', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      const before = makeSym({ fingerprint: null });
+      const after = makeSym({ fingerprint: 'fp1' });
+
+      const diff = (ledger as any).diffSymbols([before], [after]);
+
+      expect(diff.modified).toHaveLength(1);
+      await ledger.close();
+    });
+
+    it('should include multiple modified entries when multiple symbols change fingerprint', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      const b1 = makeSym({ name: 'fnA', fingerprint: 'fp-a-before' });
+      const b2 = makeSym({ name: 'fnB', fingerprint: 'fp-b-before' });
+      const a1 = makeSym({ name: 'fnA', fingerprint: 'fp-a-after' });
+      const a2 = makeSym({ name: 'fnB', fingerprint: 'fp-b-after' });
+
+      const diff = (ledger as any).diffSymbols([b1, b2], [a1, a2]);
+
+      expect(diff.modified).toHaveLength(2);
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-03: getImportGraph ───
+
+  describe('Gildash.getImportGraph', () => {
+    it('should return a Map with import edges when getImportGraph is called after indexing', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockReturnValue([
+        { srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts', type: 'imports', project: 'test-project', srcSymbolName: null, dstSymbolName: null, metaJson: null },
+      ]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getImportGraph();
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toBeInstanceOf(Map);
+      expect((result as Map<string, string[]>).get('src/a.ts')).toContain('src/b.ts');
+      await ledger.close();
+    });
+
+    it('should return empty Map when no import relations exist in getImportGraph', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getImportGraph();
+
+      expect(isErr(result)).toBe(false);
+      expect((result as Map<string, string[]>).size).toBe(0);
+      await ledger.close();
+    });
+
+    it('should return Err with closed type when getImportGraph is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = await ledger.getImportGraph();
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should return Err with search type when relationRepo throws inside getImportGraph', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockImplementation(() => { throw new Error('db error'); });
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getImportGraph();
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-13: getTransitiveDependencies ───
+
+  describe('Gildash.getTransitiveDependencies', () => {
+    it('should return B and C when chain A→B→C exists and getTransitiveDependencies is called for A', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockReturnValue([
+        { srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts', type: 'imports', project: 'test-project', srcSymbolName: null, dstSymbolName: null, metaJson: null },
+        { srcFilePath: 'src/b.ts', dstFilePath: 'src/c.ts', type: 'imports', project: 'test-project', srcSymbolName: null, dstSymbolName: null, metaJson: null },
+      ]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getTransitiveDependencies('src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result as string[]).toContain('src/b.ts');
+      expect(result as string[]).toContain('src/c.ts');
+      await ledger.close();
+    });
+
+    it('should return empty array when file has no dependencies in getTransitiveDependencies', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getTransitiveDependencies('src/isolated.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should return Err with closed type when getTransitiveDependencies is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = await ledger.getTransitiveDependencies('src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should not loop infinitely when cycle exists in getTransitiveDependencies', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockReturnValue([
+        { srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts', type: 'imports', project: 'test-project', srcSymbolName: null, dstSymbolName: null, metaJson: null },
+        { srcFilePath: 'src/b.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project', srcSymbolName: null, dstSymbolName: null, metaJson: null },
+      ]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getTransitiveDependencies('src/a.ts');
+
+      expect(Array.isArray(result)).toBe(true);
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-04: getCyclePaths ───
+
+  describe('Gildash.getCyclePaths', () => {
+    it('should return cycle paths when A→B→A cycle exists', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockReturnValue([
+        { srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts', type: 'imports', project: 'test-project', srcSymbolName: null, dstSymbolName: null, metaJson: null },
+        { srcFilePath: 'src/b.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project', srcSymbolName: null, dstSymbolName: null, metaJson: null },
+      ]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getCyclePaths();
+
+      expect(isErr(result)).toBe(false);
+      expect((result as string[][]).length).toBeGreaterThan(0);
+      await ledger.close();
+    });
+
+    it('should return empty array when no cycles exist in getCyclePaths', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getCyclePaths();
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should return Err with closed type when getCyclePaths is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = await ledger.getCyclePaths();
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should return Err with search type when relationRepo throws inside getCyclePaths', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockImplementation(() => { throw new Error('db error'); });
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getCyclePaths();
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-02: batchParse ───
+
+  describe('Gildash.batchParse', () => {
+    it('should return Map with ParsedFile for each filePath when batchParse succeeds', async () => {
+      const readFileFn = mock(async (fp: string) => `// content of ${fp}`);
+      const opts = makeOptions({ readFileFn });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.batchParse(['/project/src/a.ts', '/project/src/b.ts']);
+
+      expect(isErr(result)).toBe(false);
+      const map = result as Map<string, any>;
+      expect(map).toBeInstanceOf(Map);
+      expect(map.size).toBe(2);
+      expect(map.has('/project/src/a.ts')).toBe(true);
+      expect(map.has('/project/src/b.ts')).toBe(true);
+      await ledger.close();
+    });
+
+    it('should return empty Map when batchParse is called with empty array', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.batchParse([]);
+
+      expect(isErr(result)).toBe(false);
+      expect((result as Map<string, any>).size).toBe(0);
+      await ledger.close();
+    });
+
+    it('should exclude failed file and include successful ones when some files fail to read in batchParse', async () => {
+      const readFileFn = mock(async (fp: string) => {
+        if (fp.includes('fail')) throw new Error('not found');
+        return '// ok';
+      });
+      const opts = makeOptions({ readFileFn });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.batchParse(['/project/src/ok.ts', '/project/src/fail.ts']);
+
+      expect(isErr(result)).toBe(false);
+      const map = result as Map<string, any>;
+      expect(map.has('/project/src/ok.ts')).toBe(true);
+      expect(map.has('/project/src/fail.ts')).toBe(false);
+      await ledger.close();
+    });
+
+    it('should return Err with closed type when batchParse is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = await ledger.batchParse(['/project/src/a.ts']);
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should exclude file when parseSourceFn throws for that file in batchParse', async () => {
+      let callCount = 0;
+      const readFileFn = mock(async (_fp: string) => '// content');
+      const parseSourceFn = mock((fp: string, text: string) => {
+        callCount++;
+        if (fp.includes('broken')) throw new Error('parse error');
+        return { filePath: fp, program: { body: [] }, errors: [], comments: [], sourceText: text };
+      }) as any;
+      const opts = { ...makeOptions({ readFileFn }), parseSourceFn };
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.batchParse(['/project/src/ok.ts', '/project/src/broken.ts']);
+
+      const map = result as Map<string, any>;
+      expect(map.has('/project/src/ok.ts')).toBe(true);
+      expect(map.has('/project/src/broken.ts')).toBe(false);
+      await ledger.close();
+    });
+
+    it('should return Map with single entry when single file is passed to batchParse', async () => {
+      const readFileFn = mock(async (_fp: string) => '// single');
+      const opts = makeOptions({ readFileFn });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.batchParse(['/project/src/single.ts']);
+
+      expect(isErr(result)).toBe(false);
+      expect((result as Map<string, any>).size).toBe(1);
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-11: getModuleInterface ───
+
+  describe('Gildash.getModuleInterface', () => {
+    it('should return ModuleInterface with exported symbols when getModuleInterface is called', async () => {
+      const symbolSearchFn = mock((_opts: any) => [
+        { id: 1, name: 'myFn', filePath: '/project/src/a.ts', kind: 'function', isExported: true,
+          span: { start: { line: 1, column: 0 }, end: { line: 3, column: 1 } },
+          signature: null, fingerprint: null, detail: { parameters: 'x: number', returnType: 'void' } },
+      ]);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = ledger.getModuleInterface('/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      const mi = result as any;
+      expect(mi.filePath).toBe('/project/src/a.ts');
+      expect(mi.exports).toHaveLength(1);
+      expect(mi.exports[0].name).toBe('myFn');
+      expect(mi.exports[0].kind).toBe('function');
+      expect(mi.exports[0].parameters).toBe('x: number');
+      expect(mi.exports[0].returnType).toBe('void');
+      await ledger.close();
+    });
+
+    it('should return empty exports array when no exported symbols exist in getModuleInterface', async () => {
+      const symbolSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = ledger.getModuleInterface('/project/src/empty.ts');
+
+      expect(isErr(result)).toBe(false);
+      const mi = result as any;
+      expect(mi.exports).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should call symbolSearchFn with isExported:true when getModuleInterface is called', async () => {
+      const symbolSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      ledger.getModuleInterface('/project/src/a.ts');
+
+      const callOpts = symbolSearchFn.mock.calls[0]![0] as any;
+      expect(callOpts.query.isExported).toBe(true);
+      expect(callOpts.query.filePath).toBe('/project/src/a.ts');
+      await ledger.close();
+    });
+
+    it('should return Err with closed type when getModuleInterface is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = ledger.getModuleInterface('/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should return Err with search type when symbolSearchFn throws inside getModuleInterface', async () => {
+      const symbolSearchFn = mock((_opts: any) => { throw new Error('fail'); });
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = ledger.getModuleInterface('/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+
+    it('should include jsDoc field when detail contains jsDoc in getModuleInterface', async () => {
+      const symbolSearchFn = mock((_opts: any) => [
+        { id: 2, name: 'MyClass', filePath: '/project/src/a.ts', kind: 'class', isExported: true,
+          span: { start: { line: 1, column: 0 }, end: { line: 10, column: 1 } },
+          signature: null, fingerprint: null, detail: { jsDoc: 'A useful class.' } },
+      ]);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = ledger.getModuleInterface('/project/src/a.ts');
+
+      const mi = result as any;
+      expect(mi.exports[0].jsDoc).toBe('A useful class.');
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-21: getHeritageChain ───
+
+  describe('Gildash.getHeritageChain', () => {
+    it('should return root HeritageNode with one child when A extends B', async () => {
+      const relationSearchFn = mock((opts: any) => {
+        const { query } = opts;
+        if (query.srcSymbolName === 'ClassA') {
+          return [{ type: 'extends', srcFilePath: '/project/src/a.ts', srcSymbolName: 'ClassA', dstFilePath: '/project/src/b.ts', dstSymbolName: 'ClassB' }];
+        }
+        return [];
+      });
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getHeritageChain('ClassA', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      const node = result as any;
+      expect(node.symbolName).toBe('ClassA');
+      expect(node.children).toHaveLength(1);
+      expect(node.children[0].symbolName).toBe('ClassB');
+      expect(node.children[0].kind).toBe('extends');
+      await ledger.close();
+    });
+
+    it('should return root node with empty children when symbol has no heritage', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getHeritageChain('StandaloneClass', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      const node = result as any;
+      expect(node.symbolName).toBe('StandaloneClass');
+      expect(node.children).toEqual([]);
+      await ledger.close();
+    });
+
+    it('should return Err with closed type when getHeritageChain is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = await ledger.getHeritageChain('ClassA', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should not loop infinitely when cycle exists in getHeritageChain', async () => {
+      const relationSearchFn = mock((opts: any) => {
+        const { query } = opts;
+        if (query.srcSymbolName === 'ClassA') {
+          return [{ type: 'extends', srcFilePath: '/project/src/a.ts', srcSymbolName: 'ClassA', dstFilePath: '/project/src/b.ts', dstSymbolName: 'ClassB' }];
+        }
+        if (query.srcSymbolName === 'ClassB') {
+          return [{ type: 'extends', srcFilePath: '/project/src/b.ts', srcSymbolName: 'ClassB', dstFilePath: '/project/src/a.ts', dstSymbolName: 'ClassA' }];
+        }
+        return [];
+      });
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getHeritageChain('ClassA', '/project/src/a.ts');
+
+      expect(Array.isArray((result as any).children)).toBe(true);
+      await ledger.close();
+    });
+
+    it('should include implements children when symbol implements interface', async () => {
+      const relationSearchFn = mock((opts: any) => {
+        const { query } = opts;
+        if (query.srcSymbolName === 'MyClass') {
+          return [{ type: 'implements', srcFilePath: '/project/src/a.ts', srcSymbolName: 'MyClass', dstFilePath: '/project/src/i.ts', dstSymbolName: 'IFoo' }];
+        }
+        return [];
+      });
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getHeritageChain('MyClass', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      const node = result as any;
+      expect(node.children[0].kind).toBe('implements');
+      expect(node.children[0].symbolName).toBe('IFoo');
+      await ledger.close();
+    });
+
+    it('should return Err with search type when relationSearchFn throws inside getHeritageChain', async () => {
+      const relationSearchFn = mock((_opts: any) => { throw new Error('db fail'); });
+      const opts = { ...makeOptions(), relationSearchFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getHeritageChain('ClassA', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+  });
+
+  // ── FR-01 watchMode: false ─────────────────────────────────────────────────
+
+  describe('watchMode: false (scan-only mode)', () => {
+    // [HP] watchMode:false → acquireWatcherRoleFn 미호출
+    it('should not call acquireWatcherRoleFn when watchMode is false', async () => {
+      const acquireMock = mock(async () => 'owner' as const);
+      const opts = { ...makeOptions(), acquireWatcherRoleFn: acquireMock, watchMode: false } as any;
+      const ledger = await openOrThrow(opts);
+
+      expect(acquireMock).not.toHaveBeenCalled();
+      await ledger.close();
+    });
+
+    // [HP] watchMode:false → watcherFactory 미호출
+    it('should not call watcherFactory when watchMode is false', async () => {
+      const watcherFactory = mock(() => makeWatcherMock());
+      const opts = { ...makeOptions(), watcherFactory, watchMode: false } as any;
+      const ledger = await openOrThrow(opts);
+
+      expect(watcherFactory).not.toHaveBeenCalled();
+      await ledger.close();
+    });
+
+    // [HP] watchMode:false → heartbeat timer 미생성 (timer = null)
+    it('should not start a heartbeat timer when watchMode is false', async () => {
+      const opts = { ...makeOptions(), watchMode: false } as any;
+      const ledger = await openOrThrow(opts);
+
+      expect((ledger as any).timer).toBeNull();
+      await ledger.close();
+    });
+
+    // [HP] watchMode:false → signal handler 미등록
+    it('should not register signal handlers when watchMode is false', async () => {
+      const opts = { ...makeOptions(), watchMode: false } as any;
+      const ledger = await openOrThrow(opts);
+
+      expect((ledger as any).signalHandlers).toHaveLength(0);
+      await ledger.close();
+    });
+
+    // [HP] watchMode:false → coordinatorFactory 호출됨 + fullIndex 실행됨
+    it('should call coordinatorFactory and run fullIndex when watchMode is false', async () => {
+      const coordinatorMock = makeCoordinatorMock();
+      const coordinatorFactory = mock(() => coordinatorMock);
+      const opts = { ...makeOptions(), coordinatorFactory, watchMode: false } as any;
+      const ledger = await openOrThrow(opts);
+
+      expect(coordinatorFactory).toHaveBeenCalled();
+      expect(coordinatorMock.fullIndex).toHaveBeenCalled();
+      await ledger.close();
+    });
+
+    // [HP] watchMode:undefined (기본값) → acquireWatcherRoleFn 호출됨
+    it('should call acquireWatcherRoleFn when watchMode is undefined (default behavior preserved)', async () => {
+      const acquireMock = mock(async () => 'owner' as const);
+      const opts = { ...makeOptions(), acquireWatcherRoleFn: acquireMock } as any;
+      const ledger = await openOrThrow(opts);
+
+      expect(acquireMock).toHaveBeenCalled();
+      await ledger.close();
+    });
+  });
+
+  // ── FR-01 close cleanup ────────────────────────────────────────────────────
+
+  describe('close({ cleanup })', () => {
+    // [HP] close({cleanup:true}) → unlinkFn이 .db/.db-wal/.db-shm 각각으로 호출됨
+    it('should call unlinkFn for db, wal, and shm files when cleanup is true', async () => {
+      const unlinkFn = mock(async (_p: string) => {});
+      const opts = { ...makeOptions(), unlinkFn } as any;
+      const ledger = await openOrThrow(opts);
+      await ledger.close({ cleanup: true });
+
+      expect(unlinkFn).toHaveBeenCalledTimes(3);
+      const paths = unlinkFn.mock.calls.map((c: any[]) => c[0] as string);
+      expect(paths.some((p: string) => p.endsWith('gildash.db'))).toBe(true);
+      expect(paths.some((p: string) => p.endsWith('gildash.db-wal'))).toBe(true);
+      expect(paths.some((p: string) => p.endsWith('gildash.db-shm'))).toBe(true);
+    });
+
+    // [HP] close({cleanup:false}) → unlinkFn 미호출
+    it('should not call unlinkFn when cleanup is false', async () => {
+      const unlinkFn = mock(async (_p: string) => {});
+      const opts = { ...makeOptions(), unlinkFn } as any;
+      const ledger = await openOrThrow(opts);
+      await ledger.close({ cleanup: false });
+
+      expect(unlinkFn).not.toHaveBeenCalled();
+    });
+
+    // [HP] close() opts 없음 → unlinkFn 미호출
+    it('should not call unlinkFn when close is called without opts', async () => {
+      const unlinkFn = mock(async (_p: string) => {});
+      const opts = { ...makeOptions(), unlinkFn } as any;
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      expect(unlinkFn).not.toHaveBeenCalled();
+    });
+
+    // [ED] close({cleanup:true}) + unlinkFn throws → close 정상 완료
+    it('should complete close normally when unlinkFn throws with cleanup true', async () => {
+      const unlinkFn = mock(async (_p: string) => { throw new Error('unlink failed'); });
+      const opts = { ...makeOptions(), unlinkFn } as any;
+      const ledger = await openOrThrow(opts);
+      const result = await ledger.close({ cleanup: true });
+
+      expect(isErr(result)).toBe(false);
+    });
+  });
+
+  // ─── FR-07: getDeadExports ───
+
+  describe('Gildash.getDeadExports', () => {
+    function makeExportedSymbol(name: string, filePath: string) {
+      return { name, filePath, kind: 'function', project: 'test-project', isExported: 1,
+        startLine: 1, startColumn: 0, endLine: 5, endColumn: 1,
+        signature: null, fingerprint: null, detailJson: null, contentHash: 'h1', indexedAt: '2024-01-01' };
+    }
+
+    function makeImportRelation(dstFilePath: string, dstSymbolName: string | null, type = 'imports') {
+      return { type, srcFilePath: 'src/other.ts', srcSymbolName: null,
+        dstFilePath, dstSymbolName, project: 'test-project', metaJson: null };
+    }
+
+    // [HP] all exports imported → returns []
+    it('should return empty array when all exported symbols are imported by other files', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Foo', 'src/a.ts')]) as any;
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType = mock((_p: string, type: string) =>
+        type === 'imports' ? [makeImportRelation('src/a.ts', 'Foo')] : []
+      ) as any;
+      const opts = makeOptions({ symbolRepo, relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getDeadExports();
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([]);
+      await ledger.close();
+    });
+
+    // [HP] 1 export not imported → returns [{symbolName, filePath}]
+    it('should return one item when one exported symbol is not imported by any file', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Bar', 'src/b.ts')]) as any;
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType = mock(() => []) as any;
+      const opts = makeOptions({ symbolRepo, relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getDeadExports();
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([{ symbolName: 'Bar', filePath: 'src/b.ts' }]);
+      await ledger.close();
+    });
+
+    // [HP] multiple dead exports → all returned
+    it('should return all dead exports when multiple exported symbols are not imported', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => [
+        makeExportedSymbol('A', 'src/utils.ts'),
+        makeExportedSymbol('B', 'src/utils.ts'),
+        makeExportedSymbol('C', 'src/utils.ts'),
+      ]) as any;
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType = mock(() => []) as any;
+      const opts = makeOptions({ symbolRepo, relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getDeadExports();
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toHaveLength(3);
+      await ledger.close();
+    });
+
+    // [HP] dstSymbolName=null in relation → symbol still considered dead
+    it('should not consider a symbol imported when relation has null dstSymbolName', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Baz', 'src/c.ts')]) as any;
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType = mock((_p: string, type: string) =>
+        type === 'imports' ? [makeImportRelation('src/c.ts', null)] : []
+      ) as any;
+      const opts = makeOptions({ symbolRepo, relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getDeadExports();
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([{ symbolName: 'Baz', filePath: 'src/c.ts' }]);
+      await ledger.close();
+    });
+
+    // [HP] entryPoints specified → excludes exports from those files
+    it('should exclude exports from entry point files when entryPoints option is specified', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Entry', 'src/index.ts')]) as any;
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType = mock(() => []) as any;
+      const opts = makeOptions({ symbolRepo, relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getDeadExports(undefined, { entryPoints: ['src/index.ts'] });
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([]);
+      await ledger.close();
+    });
+
+    // [HP] entryPoints=[] → no exclusion, even default names not excluded
+    it('should not exclude any exports when entryPoints is an empty array', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Main', 'src/index.ts')]) as any;
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType = mock(() => []) as any;
+      const opts = makeOptions({ symbolRepo, relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getDeadExports(undefined, { entryPoints: [] });
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([{ symbolName: 'Main', filePath: 'src/index.ts' }]);
+      await ledger.close();
+    });
+
+    // [HP] entryPoints not specified → default entry points applied
+    it('should exclude exports from index.ts by default when entryPoints is not specified', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Default', 'src/index.ts')]) as any;
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType = mock(() => []) as any;
+      const opts = makeOptions({ symbolRepo, relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getDeadExports();
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([]);
+      await ledger.close();
+    });
+
+    // [HP] project not specified → defaultProject used
+    it('should pass defaultProject to symbolRepo when project is not specified', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => []) as any;
+      const opts = makeOptions({ symbolRepo });
+      const ledger = await openOrThrow(opts);
+
+      (ledger as any).getDeadExports();
+
+      expect(symbolRepo.searchByQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ project: 'test-project' }),
+      );
+      await ledger.close();
+    });
+
+    // [HP] same name exported from 2 files, one imported → correct per-file distinction
+    it('should treat exports with same name from different files independently based on filePath', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => [
+        makeExportedSymbol('Shared', 'src/a.ts'),
+        makeExportedSymbol('Shared', 'src/b.ts'),
+      ]) as any;
+      const relationRepo = makeRelationRepoMock();
+      // only src/a.ts::Shared is imported
+      relationRepo.getByType = mock((_p: string, type: string) =>
+        type === 'imports' ? [makeImportRelation('src/a.ts', 'Shared')] : []
+      ) as any;
+      const opts = makeOptions({ symbolRepo, relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getDeadExports();
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([{ symbolName: 'Shared', filePath: 'src/b.ts' }]);
+      await ledger.close();
+    });
+
+    // [HP] 're-exports' type relation included in imported determination
+    it('should not mark a symbol as dead when it is referenced via a re-exports relation', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Widget', 'src/widget.ts')]) as any;
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType = mock((_p: string, type: string) =>
+        type === 're-exports' ? [makeImportRelation('src/widget.ts', 'Widget', 're-exports')] : []
+      ) as any;
+      const opts = makeOptions({ symbolRepo, relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getDeadExports();
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([]);
+      await ledger.close();
+    });
+
+    // [NE] closed → Err('closed')
+    it('should return Err with closed type when getDeadExports is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = (ledger as any).getDeadExports();
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    // [NE] symbolRepo.searchByQuery throws → Err
+    it('should return Err with store type when symbolRepo throws inside getDeadExports', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => { throw new Error('db error'); }) as any;
+      const opts = makeOptions({ symbolRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getDeadExports();
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('store');
+      await ledger.close();
+    });
+
+    // [NE] relationRepo.getByType throws → Err
+    it('should return Err with store type when relationRepo throws inside getDeadExports', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => []) as any;
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType = mock(() => { throw new Error('relation db error'); }) as any;
+      const opts = makeOptions({ symbolRepo, relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getDeadExports();
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('store');
+      await ledger.close();
+    });
+
+    // [ED] 0 import relations → all exports are dead
+    it('should return all exports as dead when there are no import relations in the project', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => [
+        makeExportedSymbol('X', 'src/x.ts'),
+        makeExportedSymbol('Y', 'src/y.ts'),
+      ]) as any;
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType = mock(() => []) as any;
+      const opts = makeOptions({ symbolRepo, relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getDeadExports();
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toHaveLength(2);
+      await ledger.close();
+    });
+
+    // [ED] project specified → correct project passed to queries
+    it('should pass specified project to symbolRepo and relationRepo when project is given', async () => {
+      const symbolRepo = makeSymbolRepoMock();
+      symbolRepo.searchByQuery = mock(() => []) as any;
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType = mock(() => []) as any;
+      const opts = makeOptions({ symbolRepo, relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      (ledger as any).getDeadExports('custom-project');
+
+      expect(symbolRepo.searchByQuery).toHaveBeenCalledWith(
+        expect.objectContaining({ project: 'custom-project' }),
+      );
+      expect(relationRepo.getByType).toHaveBeenCalledWith('custom-project', expect.any(String));
+      await ledger.close();
+    });
+  });
+
+  // FR-09: getFullSymbol
+  describe('Gildash.getFullSymbol', () => {
+    // 1. [HP] class with members → FullSymbol.members populated
+    it('should return FullSymbol with members when searching for a class symbol with member data in detail', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 1, name: 'MyClass', filePath: 'src/a.ts', kind: 'class',
+        span: { start: { line: 1, column: 0 }, end: { line: 10, column: 1 } },
+        isExported: true, signature: null, fingerprint: 'fp1',
+        detail: {
+          members: [{ name: 'doWork', kind: 'method', type: 'void', visibility: 'public', isStatic: false }],
+          heritage: ['BaseClass'],
+        },
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('MyClass', 'src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.members).toEqual([{ name: 'doWork', kind: 'method', type: 'void', visibility: 'public', isStatic: false }]);
+      await ledger.close();
+    });
+
+    // 2. [HP] function with parameters and returnType → fields populated
+    it('should return FullSymbol with parameters and returnType when searching for a function symbol', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 2, name: 'fetchData', filePath: 'src/b.ts', kind: 'function',
+        span: { start: { line: 5, column: 0 }, end: { line: 8, column: 1 } },
+        isExported: true, signature: 'fetchData(url: string): Promise<Data>', fingerprint: 'fp2',
+        detail: { parameters: 'url: string', returnType: 'Promise<Data>' },
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('fetchData', 'src/b.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.parameters).toBe('url: string');
+      expect(result.returnType).toBe('Promise<Data>');
+      await ledger.close();
+    });
+
+    // 3. [HP] symbol with jsDoc → jsDoc populated
+    it('should return FullSymbol with jsDoc when symbol detail contains jsDoc string', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 3, name: 'MyFunc', filePath: 'src/c.ts', kind: 'function',
+        span: { start: { line: 1, column: 0 }, end: { line: 3, column: 1 } },
+        isExported: true, signature: null, fingerprint: 'fp3',
+        detail: { jsDoc: '/** Does something useful */' },
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('MyFunc', 'src/c.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.jsDoc).toBe('/** Does something useful */');
+      await ledger.close();
+    });
+
+    // 4. [HP] symbol with heritage array → heritage populated
+    it('should return FullSymbol with heritage when symbol detail contains heritage array', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 4, name: 'DerivedClass', filePath: 'src/d.ts', kind: 'class',
+        span: { start: { line: 1, column: 0 }, end: { line: 5, column: 1 } },
+        isExported: true, signature: null, fingerprint: 'fp4',
+        detail: { heritage: ['BaseClass', 'IMixin'] },
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('DerivedClass', 'src/d.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.heritage).toEqual(['BaseClass', 'IMixin']);
+      await ledger.close();
+    });
+
+    // 5. [HP] symbol with decorators → decorators populated
+    it('should return FullSymbol with decorators when symbol detail contains decorators array', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 5, name: 'Injectable', filePath: 'src/e.ts', kind: 'class',
+        span: { start: { line: 1, column: 0 }, end: { line: 5, column: 1 } },
+        isExported: true, signature: null, fingerprint: 'fp5',
+        detail: { decorators: [{ name: 'Injectable', arguments: "'singleton'" }] },
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('Injectable', 'src/e.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.decorators).toEqual([{ name: 'Injectable', arguments: "'singleton'" }]);
+      await ledger.close();
+    });
+
+    // 6. [HP] symbol with no detail fields → all optional fields undefined
+    it('should return FullSymbol with undefined optional fields when symbol detail is empty', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 6, name: 'SimpleVar', filePath: 'src/f.ts', kind: 'variable',
+        span: { start: { line: 1, column: 0 }, end: { line: 1, column: 20 } },
+        isExported: false, signature: null, fingerprint: 'fp6',
+        detail: {},
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('SimpleVar', 'src/f.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.members).toBeUndefined();
+      expect(result.jsDoc).toBeUndefined();
+      expect(result.parameters).toBeUndefined();
+      expect(result.returnType).toBeUndefined();
+      await ledger.close();
+    });
+
+    // 7. [NE] symbol not found → Err with search type
+    it('should return Err with search type when getFullSymbol cannot find the requested symbol', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('NotExist', 'src/x.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+
+    // 8. [NE] closed instance → Err with closed type
+    it('should return Err with closed type when getFullSymbol is called on a closed instance', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = (ledger as any).getFullSymbol('Foo', 'src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    // 9. [ED] symbol with empty members array → members is []
+    it('should return FullSymbol with empty members array when symbol detail has members as empty array', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        id: 7, name: 'EmptyClass', filePath: 'src/g.ts', kind: 'class',
+        span: { start: { line: 1, column: 0 }, end: { line: 2, column: 1 } },
+        isExported: true, signature: null, fingerprint: 'fp7',
+        detail: { members: [] },
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('EmptyClass', 'src/g.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.members).toEqual([]);
+      await ledger.close();
+    });
+
+    // 10. [CO] symbolSearchFn throws → Err('search')
+    it('should return Err with search type when symbolSearchFn throws during getFullSymbol', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockImplementation(() => { throw new Error('db error'); });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('Foo', 'src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+  });
+
+  // FR-10: getFileStats
+  describe('Gildash.getFileStats', () => {
+    // 1. [HP] indexed file with symbols and relations → all fields correct
+    it('should return all file stats when getFileStats is called for an indexed file', async () => {
+      const fileRepo = makeFileRepoMock();
+      const symbolRepo = makeSymbolRepoMock();
+      const relationRepo = makeRelationRepoMock();
+      fileRepo.getFile.mockReturnValue({
+        project: 'test-project', filePath: 'src/a.ts',
+        contentHash: 'h1', mtimeMs: 1000, size: 512, lineCount: 80, updatedAt: '',
+      });
+      symbolRepo.getFileSymbols.mockReturnValue([
+        { name: 'Foo', kind: 'class', filePath: 'src/a.ts', isExported: true },
+        { name: 'bar', kind: 'function', filePath: 'src/a.ts', isExported: true },
+        { name: '_internal', kind: 'function', filePath: 'src/a.ts', isExported: false },
+      ] as any);
+      relationRepo.getOutgoing.mockReturnValue([{}, {}] as any);
+      const opts = makeOptions({ fileRepo, symbolRepo, relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFileStats('src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toMatchObject({
+        filePath: 'src/a.ts',
+        lineCount: 80,
+        size: 512,
+        symbolCount: 3,
+        exportedSymbolCount: 2,
+        relationCount: 2,
+      });
+      await ledger.close();
+    });
+
+    // 2. [HP] file with 0 symbols → symbolCount=0, exportedSymbolCount=0
+    it('should return symbolCount=0 and exportedSymbolCount=0 when file has no symbols', async () => {
+      const fileRepo = makeFileRepoMock();
+      fileRepo.getFile.mockReturnValue({
+        project: 'test-project', filePath: 'src/empty.ts',
+        contentHash: 'h0', mtimeMs: 0, size: 0, lineCount: 1, updatedAt: '',
+      });
+      const opts = makeOptions({ fileRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFileStats('src/empty.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.symbolCount).toBe(0);
+      expect(result.exportedSymbolCount).toBe(0);
+      await ledger.close();
+    });
+
+    // 3. [HP] 3 symbols, 2 exported → exportedSymbolCount=2
+    it('should return exportedSymbolCount=2 when only 2 of 3 symbols are exported', async () => {
+      const fileRepo = makeFileRepoMock();
+      const symbolRepo = makeSymbolRepoMock();
+      fileRepo.getFile.mockReturnValue({
+        project: 'test-project', filePath: 'src/b.ts',
+        contentHash: 'h2', mtimeMs: 2, size: 100, lineCount: 20, updatedAt: '',
+      });
+      symbolRepo.getFileSymbols.mockReturnValue([
+        { name: 'A', kind: 'class', filePath: 'src/b.ts', isExported: true },
+        { name: 'B', kind: 'class', filePath: 'src/b.ts', isExported: true },
+        { name: 'c', kind: 'variable', filePath: 'src/b.ts', isExported: false },
+      ] as any);
+      const opts = makeOptions({ fileRepo, symbolRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFileStats('src/b.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.symbolCount).toBe(3);
+      expect(result.exportedSymbolCount).toBe(2);
+      await ledger.close();
+    });
+
+    // 4. [NE] file not indexed → Err('search')
+    it('should return Err with search type when getFileStats is called for a file not in the index', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFileStats('src/missing.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+
+    // 5. [NE] closed → Err('closed')
+    it('should return Err with closed type when getFileStats is called on a closed instance', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = (ledger as any).getFileStats('src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    // 6. [ED] lineCount null → returns 0
+    it('should return lineCount=0 when file record has null lineCount', async () => {
+      const fileRepo = makeFileRepoMock();
+      fileRepo.getFile.mockReturnValue({
+        project: 'test-project', filePath: 'src/null-lc.ts',
+        contentHash: 'h3', mtimeMs: 0, size: 0, lineCount: null, updatedAt: '',
+      });
+      const opts = makeOptions({ fileRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFileStats('src/null-lc.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.lineCount).toBe(0);
+      await ledger.close();
+    });
+
+    // 7. [CO] getFileSymbols throws → Err('store')
+    it('should return Err with store type when symbolRepo.getFileSymbols throws inside getFileStats', async () => {
+      const fileRepo = makeFileRepoMock();
+      const symbolRepo = makeSymbolRepoMock();
+      fileRepo.getFile.mockReturnValue({
+        project: 'test-project', filePath: 'src/a.ts',
+        contentHash: 'h4', mtimeMs: 0, size: 0, lineCount: 1, updatedAt: '',
+      });
+      symbolRepo.getFileSymbols.mockImplementation(() => { throw new Error('db fail'); });
+      const opts = makeOptions({ fileRepo, symbolRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFileStats('src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('store');
+      await ledger.close();
+    });
+
+    // 8. [HP] 0 relations → relationCount=0
+    it('should return relationCount=0 when file has no outgoing relations', async () => {
+      const fileRepo = makeFileRepoMock();
+      fileRepo.getFile.mockReturnValue({
+        project: 'test-project', filePath: 'src/leaf.ts',
+        contentHash: 'h5', mtimeMs: 0, size: 50, lineCount: 5, updatedAt: '',
+      });
+      const opts = makeOptions({ fileRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFileStats('src/leaf.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.relationCount).toBe(0);
+      await ledger.close();
+    });
+  });
+
+  // FR-12: getFanMetrics
+  describe('Gildash.getFanMetrics', () => {
+    // 1. [HP] 3 files import A → fanIn=3
+    it('should return fanIn=3 when three files import the target file', async () => {
+      const relationRepo = makeRelationRepoMock();
+      // 3 files (b, c, d) import src/a.ts
+      relationRepo.getByType.mockReturnValue([
+        { srcFilePath: 'src/b.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project' },
+        { srcFilePath: 'src/c.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project' },
+        { srcFilePath: 'src/d.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project' },
+      ]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).getFanMetrics('src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.fanIn).toBe(3);
+      await ledger.close();
+    });
+
+    // 2. [HP] A imports 2 files → fanOut=2
+    it('should return fanOut=2 when target file imports two other files', async () => {
+      const relationRepo = makeRelationRepoMock();
+      // a imports b and c
+      relationRepo.getByType.mockReturnValue([
+        { srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts', type: 'imports', project: 'test-project' },
+        { srcFilePath: 'src/a.ts', dstFilePath: 'src/c.ts', type: 'imports', project: 'test-project' },
+      ]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).getFanMetrics('src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.fanOut).toBe(2);
+      await ledger.close();
+    });
+
+    // 3. [HP] isolated file → fanIn=0, fanOut=0
+    it('should return fanIn=0 and fanOut=0 when file has no import relationships', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).getFanMetrics('src/isolated.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.fanIn).toBe(0);
+      expect(result.fanOut).toBe(0);
+      await ledger.close();
+    });
+
+    // 4. [NE] closed → Err('closed')
+    it('should return Err with closed type when getFanMetrics is called on a closed instance', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = await (ledger as any).getFanMetrics('src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    // 5. [NE] build throws → Err('search')
+    it('should return Err with search type when DependencyGraph build throws during getFanMetrics', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockImplementation(() => { throw new Error('db fail'); });
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).getFanMetrics('src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+
+    // 6. [ED] single incoming import → fanIn=1
+    it('should return fanIn=1 when exactly one file imports the target file', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockReturnValue([
+        { srcFilePath: 'src/b.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project' },
+      ]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).getFanMetrics('src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.fanIn).toBe(1);
+      await ledger.close();
+    });
+
+    // 7. [CO] import cycle: A↔B → both fanIn>0 and fanOut>0
+    it('should return both fanIn>0 and fanOut>0 when target file is in an import cycle', async () => {
+      const relationRepo = makeRelationRepoMock();
+      // a imports b, b imports a
+      relationRepo.getByType.mockReturnValue([
+        { srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts', type: 'imports', project: 'test-project' },
+        { srcFilePath: 'src/b.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project' },
+      ]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).getFanMetrics('src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.fanIn).toBeGreaterThan(0);
+      expect(result.fanOut).toBeGreaterThan(0);
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-14: resolveSymbol ───
+
+  describe('Gildash.resolveSymbol', () => {
+    // 1. [HP] no re-export → direct return, chain empty
+    it('should return originalName=symbolName and empty reExportChain when no re-export relation exists', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn.mockReturnValue([]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.originalName).toBe('Foo');
+      expect(result.originalFilePath).toBe('/project/src/a.ts');
+      expect(result.reExportChain).toEqual([]);
+      await ledger.close();
+    });
+
+    // 2. [HP] 1-hop re-export (same name)
+    it('should return originalFilePath=B and chain=[A] when Foo is re-exported from A to B', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn
+        .mockReturnValueOnce([{
+          type: 're-exports',
+          srcFilePath: '/project/src/a.ts',
+          srcSymbolName: null,
+          dstFilePath: '/project/src/b.ts',
+          dstSymbolName: null,
+          metaJson: JSON.stringify({ isReExport: true, specifiers: [{ local: 'Foo', exported: 'Foo' }] }),
+        }])
+        .mockReturnValueOnce([]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.originalName).toBe('Foo');
+      expect(result.originalFilePath).toBe('/project/src/b.ts');
+      expect(result.reExportChain).toEqual([{ filePath: '/project/src/a.ts', exportedAs: 'Foo' }]);
+      await ledger.close();
+    });
+
+    // 3. [HP] alias re-export (Bar as Foo)
+    it('should return originalName=Bar when Foo is an alias re-export of Bar from B', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn
+        .mockReturnValueOnce([{
+          type: 're-exports',
+          srcFilePath: '/project/src/a.ts',
+          srcSymbolName: null,
+          dstFilePath: '/project/src/b.ts',
+          dstSymbolName: null,
+          metaJson: JSON.stringify({ isReExport: true, specifiers: [{ local: 'Bar', exported: 'Foo' }] }),
+        }])
+        .mockReturnValueOnce([]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.originalName).toBe('Bar');
+      expect(result.originalFilePath).toBe('/project/src/b.ts');
+      expect(result.reExportChain).toEqual([{ filePath: '/project/src/a.ts', exportedAs: 'Foo' }]);
+      await ledger.close();
+    });
+
+    // 4. [HP] 2-hop chain A → B → C
+    it('should build 2-element chain and originalFilePath=C when Foo passes through A then B to reach C', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn
+        .mockReturnValueOnce([{
+          type: 're-exports',
+          srcFilePath: '/project/src/a.ts',
+          srcSymbolName: null,
+          dstFilePath: '/project/src/b.ts',
+          dstSymbolName: null,
+          metaJson: JSON.stringify({ isReExport: true, specifiers: [{ local: 'Foo', exported: 'Foo' }] }),
+        }])
+        .mockReturnValueOnce([{
+          type: 're-exports',
+          srcFilePath: '/project/src/b.ts',
+          srcSymbolName: null,
+          dstFilePath: '/project/src/c.ts',
+          dstSymbolName: null,
+          metaJson: JSON.stringify({ isReExport: true, specifiers: [{ local: 'Foo', exported: 'Foo' }] }),
+        }])
+        .mockReturnValueOnce([]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.originalFilePath).toBe('/project/src/c.ts');
+      expect(result.reExportChain.length).toBe(2);
+      expect(result.reExportChain[0]).toEqual({ filePath: '/project/src/a.ts', exportedAs: 'Foo' });
+      expect(result.reExportChain[1]).toEqual({ filePath: '/project/src/b.ts', exportedAs: 'Foo' });
+      await ledger.close();
+    });
+
+    // 5. [EP] circular re-export A → B → A → Err('search')
+    it('should return Err(search) when re-export chain is circular', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn
+        .mockReturnValueOnce([{
+          type: 're-exports',
+          srcFilePath: '/project/src/a.ts',
+          srcSymbolName: null,
+          dstFilePath: '/project/src/b.ts',
+          dstSymbolName: null,
+          metaJson: JSON.stringify({ isReExport: true, specifiers: [{ local: 'Foo', exported: 'Foo' }] }),
+        }])
+        .mockReturnValueOnce([{
+          type: 're-exports',
+          srcFilePath: '/project/src/b.ts',
+          srcSymbolName: null,
+          dstFilePath: '/project/src/a.ts',
+          dstSymbolName: null,
+          metaJson: JSON.stringify({ isReExport: true, specifiers: [{ local: 'Foo', exported: 'Foo' }] }),
+        }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+
+    // 6. [EP] closed → Err('closed')
+    it('should return Err(closed) when resolveSymbol is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    // 7. [HP] project 파라미터 전달 확인
+    it('should pass specified project to relationSearchFn when project is provided', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn.mockReturnValue([]);
+      const ledger = await openOrThrow(opts);
+
+      (ledger as any).resolveSymbol('Foo', '/project/src/a.ts', 'my-project');
+
+      expect(opts.relationSearchFn).toHaveBeenCalledWith(
+        expect.objectContaining({ project: 'my-project' }),
+      );
+      await ledger.close();
+    });
+
+    // 8. [EP] export* (specifiers 없음) → 현재 위치 반환
+    it('should return original filePath without following hop when re-export has no specifiers (export *)', async () => {
+      const opts = makeOptions();
+      opts.relationSearchFn.mockReturnValue([{
+        type: 're-exports',
+        srcFilePath: '/project/src/a.ts',
+        srcSymbolName: null,
+        dstFilePath: '/project/src/b.ts',
+        dstSymbolName: null,
+        metaJson: JSON.stringify({ isReExport: true }), // no specifiers
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.originalName).toBe('Foo');
+      expect(result.originalFilePath).toBe('/project/src/a.ts');
+      expect(result.reExportChain).toEqual([]);
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-15: findPattern ───
+
+  describe('Gildash.findPattern', () => {
+    // 1. [HP] 패턴 매칭 결과 반환
+    it('should return PatternMatch array from patternSearchFn when pattern matches', async () => {
+      const matches = [{ filePath: '/project/src/a.ts', startLine: 5, endLine: 5, matchedText: 'console.log("hi")' }];
+      const opts = makeOptions();
+      (opts as any).patternSearchFn.mockResolvedValue(matches);
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).findPattern('console.log($$$)');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual(matches);
+      await ledger.close();
+    });
+
+    // 2. [HP] filePaths 지정 → patternSearchFn에 전달
+    it('should pass specified filePaths to patternSearchFn when filePaths option is provided', async () => {
+      const opts = makeOptions();
+      (opts as any).patternSearchFn.mockResolvedValue([]);
+      const ledger = await openOrThrow(opts);
+
+      await (ledger as any).findPattern('foo()', { filePaths: ['/project/src/a.ts'] });
+
+      expect((opts as any).patternSearchFn).toHaveBeenCalledWith(
+        expect.objectContaining({ filePaths: ['/project/src/a.ts'] }),
+      );
+      await ledger.close();
+    });
+
+    // 3. [HP] filePaths 미지정 → fileRepo.getAllFiles 사용
+    it('should use fileRepo.getAllFiles when filePaths is not specified', async () => {
+      const fileRepo = makeFileRepoMock();
+      fileRepo.getAllFiles.mockReturnValue([
+        { filePath: '/project/src/a.ts', project: 'test-project', contentHash: 'h1', mtimeMs: 0, size: 100, lineCount: 10, updatedAt: '' },
+      ]);
+      const opts = makeOptions({ fileRepo });
+      (opts as any).patternSearchFn.mockResolvedValue([]);
+      const ledger = await openOrThrow(opts);
+
+      await (ledger as any).findPattern('foo()');
+
+      expect((opts as any).patternSearchFn).toHaveBeenCalledWith(
+        expect.objectContaining({ filePaths: ['/project/src/a.ts'] }),
+      );
+      await ledger.close();
+    });
+
+    // 4. [HP] 매칭 없음 → 빈 배열
+    it('should return empty array when patternSearchFn returns no matches', async () => {
+      const opts = makeOptions();
+      (opts as any).patternSearchFn.mockResolvedValue([]);
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).findPattern('nonExistentPattern');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual([]);
+      await ledger.close();
+    });
+
+    // 5. [EP] closed → Err('closed')
+    it('should return Err(closed) when findPattern is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = await (ledger as any).findPattern('foo()');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    // 6. [EP] patternSearchFn throws → Err('search')
+    it('should return Err(search) when patternSearchFn throws', async () => {
+      const opts = makeOptions();
+      (opts as any).patternSearchFn.mockRejectedValue(new Error('ast-grep failed'));
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).findPattern('foo()');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+  });
+
+  // ─── FR-16: indexExternalPackages ───
+
+  describe('Gildash.indexExternalPackages', () => {
+    function makeIndexResult(overrides: Partial<{ indexedFiles: number }> = {}) {
+      return {
+        indexedFiles: overrides.indexedFiles ?? 3,
+        removedFiles: 0,
+        totalSymbols: 10,
+        totalRelations: 5,
+        durationMs: 50,
+        changedFiles: [],
+        deletedFiles: [],
+        failedFiles: [],
+        changedSymbols: { added: [], modified: [], removed: [] },
+      };
+    }
+
+    // 1. [HP] single package → IndexResult 반환
+    it('should return single IndexResult when one existing package is indexed', async () => {
+      const fakeResult = makeIndexResult({ indexedFiles: 5 });
+      const fakeCoordinator = { fullIndex: mock(async () => fakeResult) };
+      const makeExternalCoordinatorFn = mock((_dir: string, _proj: string) => fakeCoordinator);
+      const existsSyncFn = mock((_p: string) => true);
+      const opts = { ...makeOptions(), existsSyncFn, makeExternalCoordinatorFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).indexExternalPackages(['react']);
+
+      expect(isErr(result)).toBe(false);
+      expect(result.length).toBe(1);
+      expect(result[0].indexedFiles).toBe(5);
+      expect(fakeCoordinator.fullIndex).toHaveBeenCalledTimes(1);
+      await ledger.close();
+    });
+
+    // 2. [HP] multiple packages → 2개 결과
+    it('should return 2 results when two packages are indexed', async () => {
+      const r1 = makeIndexResult({ indexedFiles: 3 });
+      const r2 = makeIndexResult({ indexedFiles: 7 });
+      let callCount = 0;
+      const makeExternalCoordinatorFn = mock((_dir: string, _proj: string) => ({
+        fullIndex: async () => (callCount++ === 0 ? r1 : r2),
+      }));
+      const existsSyncFn = mock((_p: string) => true);
+      const opts = { ...makeOptions(), existsSyncFn, makeExternalCoordinatorFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).indexExternalPackages(['react', 'typescript']);
+
+      expect(isErr(result)).toBe(false);
+      expect(result.length).toBe(2);
+      expect(result[0].indexedFiles).toBe(3);
+      expect(result[1].indexedFiles).toBe(7);
+      await ledger.close();
+    });
+
+    // 3. [EP] package not in node_modules → Err('validation')
+    it('should return Err(validation) when package directory does not exist in node_modules', async () => {
+      const existsSyncFn = mock((p: string) => !p.includes('nonexistent'));
+      const opts = { ...makeOptions(), existsSyncFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).indexExternalPackages(['nonexistent-package']);
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('validation');
+      await ledger.close();
+    });
+
+    // 4. [EP] closed → Err('closed')
+    it('should return Err(closed) when indexExternalPackages is called after close', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = await (ledger as any).indexExternalPackages(['react']);
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    // 5. [EP] coordinator.fullIndex throws → Err('store')
+    it('should return Err(store) when coordinator fullIndex throws', async () => {
+      const fakeCoordinator = { fullIndex: mock(async () => { throw new Error('index failed'); }) };
+      const makeExternalCoordinatorFn = mock((_dir: string, _proj: string) => fakeCoordinator);
+      const existsSyncFn = mock((_p: string) => true);
+      const opts = { ...makeOptions(), existsSyncFn, makeExternalCoordinatorFn } as any;
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).indexExternalPackages(['react']);
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('store');
+      await ledger.close();
+    });
+
+    // 6. [EP] reader role → Err('closed')
+    it('should return Err(closed) when instance is in reader role', async () => {
+      const opts = makeOptions({ role: 'reader' });
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).indexExternalPackages(['react']);
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+      await ledger.close();
+    });
+  });
+
+  // ─── LEG-2: DependencyGraph 내부 캐싱 ───
+
+  describe('Gildash DependencyGraph cache (LEG-2)', () => {
+    function makeIndexResultForLeg() {
+      return {
+        indexedFiles: 0, removedFiles: 0, totalSymbols: 0, totalRelations: 0, durationMs: 10,
+        changedFiles: [], deletedFiles: [], failedFiles: [],
+        changedSymbols: { added: [], modified: [], removed: [] },
+      };
+    }
+
+    // 1. [HP] 연속 hasCycle() 호출 → graph 1번만 빌드
+    it('should build DependencyGraph only once for consecutive calls with same project', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockReturnValue([]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      await ledger.hasCycle();
+      const afterFirst = relationRepo.getByType.mock.calls.length; // 3 (imports, type-ref, re-exports)
+
+      await ledger.hasCycle(); // cache hit → no rebuild
+
+      expect(relationRepo.getByType.mock.calls.length).toBe(afterFirst); // still 3
+      await ledger.close();
+    });
+
+    // 2. [HP] 다른 project → 캐시 미스, 새 빌드
+    it('should rebuild DependencyGraph when project key differs from cached key', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockReturnValue([]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      await ledger.hasCycle();
+      const afterFirst = relationRepo.getByType.mock.calls.length; // 3
+
+      await ledger.hasCycle('other-project'); // different key → rebuild
+
+      expect(relationRepo.getByType.mock.calls.length).toBeGreaterThan(afterFirst); // > 3
+      await ledger.close();
+    });
+
+    // 3. [HP] reindex() 후 → 캐시 무효화됨
+    it('should invalidate cache after reindex() completes', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockReturnValue([]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      await ledger.hasCycle(); // builds and caches
+      const afterFirst = relationRepo.getByType.mock.calls.length;
+
+      await ledger.reindex(); // should invalidate
+
+      await ledger.hasCycle(); // should rebuild
+
+      expect(relationRepo.getByType.mock.calls.length).toBeGreaterThan(afterFirst);
+      await ledger.close();
+    });
+
+    // 4. [HP] coordinator onIndexed 콜백 발화 → 캐시 무효화
+    it('should invalidate cache when coordinator fires onIndexed callback', async () => {
+      const registeredCallbacks: Array<(r: any) => void> = [];
+      const fakeCoordinator = {
+        fullIndex: mock(async () => makeIndexResultForLeg()),
+        onIndexed: mock((cb: any) => { registeredCallbacks.push(cb); }),
+        shutdown: mock(async () => {}),
+      };
+      const coordinatorFactory = mock(() => fakeCoordinator as any);
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockReturnValue([]);
+      const opts = { ...makeOptions({ relationRepo }), coordinatorFactory } as any;
+      const ledger = await openOrThrow(opts);
+
+      await ledger.hasCycle(); // builds and caches
+      const afterFirst = relationRepo.getByType.mock.calls.length;
+
+      // Simulate coordinator firing all registered onIndexed callbacks (incl. cache-clearing one)
+      for (const cb of registeredCallbacks) cb(makeIndexResultForLeg());
+
+      await ledger.hasCycle(); // should rebuild
+
+      expect(relationRepo.getByType.mock.calls.length).toBeGreaterThan(afterFirst);
       await ledger.close();
     });
   });

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, mock } from 'bun:test';
+import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { RelationRecord } from '../store/repositories/relation.repository';
 import { relationSearch } from './relation-search';
 import type { IRelationRepo, RelationSearchQuery } from './relation-search';
@@ -192,5 +192,125 @@ describe('relationSearch', () => {
     expect(r.dstFilePath).toBe('src/b.ts');
     expect(r.dstSymbolName).toBe('fnB');
     expect(r.metaJson).toBe('{}');
+  });
+
+  // --- META: meta field auto-parsing ---
+
+  // 1. [HP] valid metaJson → meta object parsed
+  it('should set meta to parsed object when metaJson is valid JSON', () => {
+    mockSearchRelations = mock(() => [makeRelationRecord({ metaJson: '{"isType":true}' })]);
+    mockRepo = { searchRelations: mockSearchRelations } as IRelationRepo;
+    const results = relationSearch({ relationRepo: mockRepo, query: {} });
+    expect(results[0]!.meta).toEqual({ isType: true });
+  });
+
+  // 2. [HP] multi-key metaJson → meta with all keys
+  it('should set meta with all key-value pairs when metaJson has multiple entries', () => {
+    mockSearchRelations = mock(() => [makeRelationRecord({ metaJson: '{"a":1,"b":"hello","flag":true}' })]);
+    mockRepo = { searchRelations: mockSearchRelations } as IRelationRepo;
+    const results = relationSearch({ relationRepo: mockRepo, query: {} });
+    expect(results[0]!.meta).toEqual({ a: 1, b: 'hello', flag: true });
+  });
+
+  // 3. [HP] result still includes metaJson alongside meta (backward compat)
+  it('should preserve metaJson field alongside meta in the returned CodeRelation', () => {
+    const json = '{"isReExport":true}';
+    mockSearchRelations = mock(() => [makeRelationRecord({ metaJson: json })]);
+    mockRepo = { searchRelations: mockSearchRelations } as IRelationRepo;
+    const results = relationSearch({ relationRepo: mockRepo, query: {} });
+    expect(results[0]!.metaJson).toBe(json);
+    expect(results[0]!.meta).toEqual({ isReExport: true });
+  });
+
+  // 4. [HP] multiple records all with valid metaJson → all get meta
+  it('should parse meta for each record independently when multiple records have valid metaJson', () => {
+    mockSearchRelations = mock(() => [
+      makeRelationRecord({ metaJson: '{"k":1}', srcFilePath: 'a.ts' }),
+      makeRelationRecord({ metaJson: '{"k":2}', srcFilePath: 'b.ts' }),
+    ]);
+    mockRepo = { searchRelations: mockSearchRelations } as IRelationRepo;
+    const results = relationSearch({ relationRepo: mockRepo, query: {} });
+    expect(results[0]!.meta).toEqual({ k: 1 });
+    expect(results[1]!.meta).toEqual({ k: 2 });
+  });
+
+  // 5. [NE] metaJson=null → meta=undefined
+  it('should set meta to undefined when metaJson is null', () => {
+    mockSearchRelations = mock(() => [makeRelationRecord({ metaJson: null })]);
+    mockRepo = { searchRelations: mockSearchRelations } as IRelationRepo;
+    const results = relationSearch({ relationRepo: mockRepo, query: {} });
+    expect(results[0]!.meta).toBeUndefined();
+  });
+
+  // 6. [NE] malformed JSON → meta=undefined, console.error called
+  it('should set meta to undefined and log error when metaJson is malformed JSON', () => {
+    const spyError = spyOn(console, 'error').mockImplementation(() => {});
+    mockSearchRelations = mock(() => [makeRelationRecord({ metaJson: '{broken' })]);
+    mockRepo = { searchRelations: mockSearchRelations } as IRelationRepo;
+    const results = relationSearch({ relationRepo: mockRepo, query: {} });
+    expect(results[0]!.meta).toBeUndefined();
+    expect(spyError).toHaveBeenCalled();
+    spyError.mockRestore();
+  });
+
+  // 7. [NE] mixed [null, valid] records → [undefined, parsed]
+  it('should return undefined meta for null record and parsed meta for valid record in mixed array', () => {
+    mockSearchRelations = mock(() => [
+      makeRelationRecord({ metaJson: null, srcFilePath: 'a.ts' }),
+      makeRelationRecord({ metaJson: '{"a":1}', srcFilePath: 'b.ts' }),
+    ]);
+    mockRepo = { searchRelations: mockSearchRelations } as IRelationRepo;
+    const results = relationSearch({ relationRepo: mockRepo, query: {} });
+    expect(results[0]!.meta).toBeUndefined();
+    expect(results[1]!.meta).toEqual({ a: 1 });
+  });
+
+  // 8. [ED] empty string metaJson → falsy → meta=undefined
+  it('should set meta to undefined when metaJson is empty string', () => {
+    mockSearchRelations = mock(() => [makeRelationRecord({ metaJson: '' as any })]);
+    mockRepo = { searchRelations: mockSearchRelations } as IRelationRepo;
+    const results = relationSearch({ relationRepo: mockRepo, query: {} });
+    expect(results[0]!.meta).toBeUndefined();
+  });
+
+  // 9. [ED] metaJson='{}' → meta={}
+  it('should set meta to empty object when metaJson is empty JSON object', () => {
+    mockSearchRelations = mock(() => [makeRelationRecord({ metaJson: '{}' })]);
+    mockRepo = { searchRelations: mockSearchRelations } as IRelationRepo;
+    const results = relationSearch({ relationRepo: mockRepo, query: {} });
+    expect(results[0]!.meta).toEqual({});
+  });
+
+  // 10. [ED] records=[] → returns [] no meta parsing
+  it('should return empty array with no meta parsing when searchRelations returns no records', () => {
+    mockSearchRelations = mock(() => []);
+    mockRepo = { searchRelations: mockSearchRelations } as IRelationRepo;
+    const results = relationSearch({ relationRepo: mockRepo, query: {} });
+    expect(results).toHaveLength(0);
+  });
+
+  // 11. [CO] malformed first + valid second → independent parsing
+  it('should independently handle malformed first record and valid second record meta parsing', () => {
+    const spyError = spyOn(console, 'error').mockImplementation(() => {});
+    mockSearchRelations = mock(() => [
+      makeRelationRecord({ metaJson: '{bad}', srcFilePath: 'a.ts' }),
+      makeRelationRecord({ metaJson: '{"ok":1}', srcFilePath: 'b.ts' }),
+    ]);
+    mockRepo = { searchRelations: mockSearchRelations } as IRelationRepo;
+    const results = relationSearch({ relationRepo: mockRepo, query: {} });
+    expect(results[0]!.meta).toBeUndefined();
+    expect(results[1]!.meta).toEqual({ ok: 1 });
+    spyError.mockRestore();
+  });
+
+  // 12. [ID] same query called twice → same meta result
+  it('should return same meta value on repeated calls with identical records', () => {
+    const json = '{"k":42}';
+    mockSearchRelations = mock(() => [makeRelationRecord({ metaJson: json })]);
+    mockRepo = { searchRelations: mockSearchRelations } as IRelationRepo;
+    const r1 = relationSearch({ relationRepo: mockRepo, query: {} });
+    const r2 = relationSearch({ relationRepo: mockRepo, query: {} });
+    expect(r1[0]!.meta).toEqual({ k: 42 });
+    expect(r2[0]!.meta).toEqual({ k: 42 });
   });
 });

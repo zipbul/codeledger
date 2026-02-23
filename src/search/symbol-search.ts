@@ -22,6 +22,16 @@ export interface SymbolSearchQuery {
   project?: string;
   /** Maximum number of results. Defaults to `100`. */
   limit?: number;
+  /**
+   * Filter by decorator name (LEG-1).
+   * Restricts results to symbols annotated with this decorator (matched against `detailJson.decorators[].name`).
+   */
+  decorator?: string;
+  /**
+   * Filter by regex pattern applied to the symbol name (FR-19).
+   * Requires the `REGEXP` SQL function to be registered in the DB connection.
+   */
+  regex?: string;
 }
 
 /**
@@ -57,6 +67,8 @@ export interface ISymbolRepo {
     isExported?: boolean;
     project?: string;
     limit: number;
+    decorator?: string;
+    regex?: string;
   }): (SymbolRecord & { id: number })[];
 }
 
@@ -91,6 +103,9 @@ export function symbolSearch(options: {
       if (ftsQuery) opts.ftsQuery = ftsQuery;
     }
   }
+
+  if (query.decorator) opts.decorator = query.decorator;
+  if (query.regex) opts.regex = query.regex;
 
   const records = symbolRepo.searchByQuery(opts);
 

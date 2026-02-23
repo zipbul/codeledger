@@ -556,9 +556,12 @@ describe('IndexCoordinator', () => {
 
   it('should delete all files across all project boundaries when fullIndex runs in multi-boundary project', async () => {
     const fileRepo = makeFileRepo();
+    // getAllFiles is called twice per boundary: once for before-snapshot and once inside the transaction
     fileRepo.getAllFiles
-      .mockImplementationOnce(() => [{ project: 'pkg-a', filePath: 'packages/a/src/a.ts' }] as unknown as FileRecord[])
-      .mockImplementationOnce(() => [{ project: 'pkg-b', filePath: 'packages/b/src/b.ts' }] as unknown as FileRecord[]);
+      .mockReturnValueOnce([{ project: 'pkg-a', filePath: 'packages/a/src/a.ts' }] as unknown as FileRecord[]) // before snapshot: pkg-a
+      .mockReturnValueOnce([{ project: 'pkg-b', filePath: 'packages/b/src/b.ts' }] as unknown as FileRecord[]) // before snapshot: pkg-b
+      .mockReturnValueOnce([{ project: 'pkg-a', filePath: 'packages/a/src/a.ts' }] as unknown as FileRecord[]) // transaction delete: pkg-a
+      .mockReturnValueOnce([{ project: 'pkg-b', filePath: 'packages/b/src/b.ts' }] as unknown as FileRecord[]); // transaction delete: pkg-b
     const dbConnection = makeDbConnection();
     const coordinator = new IndexCoordinator({
       projectRoot: PROJECT_ROOT,
@@ -911,5 +914,292 @@ describe('IndexCoordinator', () => {
     jest.advanceTimersByTime(150);
 
     for (let i = 0; i < 20; i++) await Promise.resolve();
+  });
+
+  // --- IMP-D: lineCount in upsertFile ---
+
+  // 1. [HP] processFile path: 3-line text → lineCount=3
+  it('should call upsertFile with lineCount=3 when incrementalIndex processes a file with 3 lines', async () => {
+    const fileRepo = makeFileRepo();
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'a\nb\nc', lastModified: 1000, size: 5 } as any);
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/index.ts' }]);
+
+    expect(fileRepo.upsertFile).toHaveBeenCalledWith(
+      expect.objectContaining({ lineCount: 3 }),
+    );
+  });
+
+  // 2. [HP] fullIndex batch path: 4-line text → lineCount=4
+  it('should call upsertFile with lineCount=4 when fullIndex processes a file with 4 lines', async () => {
+    const fileRepo = makeFileRepo();
+    mockDetectChanges.mockResolvedValue({
+      changed: [makeFakeFile('src/a.ts')],
+      unchanged: [],
+      deleted: [],
+    });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'L1\nL2\nL3\nL4', lastModified: 1000, size: 12 } as any);
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.fullIndex();
+
+    expect(fileRepo.upsertFile).toHaveBeenCalledWith(
+      expect.objectContaining({ lineCount: 4 }),
+    );
+  });
+
+  // 3. [ED] empty text "" → lineCount=1
+  it('should call upsertFile with lineCount=1 when processing a file with empty text', async () => {
+    const fileRepo = makeFileRepo();
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => '', lastModified: 1000, size: 0 } as any);
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/empty.ts' }]);
+
+    expect(fileRepo.upsertFile).toHaveBeenCalledWith(
+      expect.objectContaining({ lineCount: 1 }),
+    );
+  });
+
+  // 4. [ED] single newline "\n" → lineCount=2
+  it('should call upsertFile with lineCount=2 when processing a file containing a single newline', async () => {
+    const fileRepo = makeFileRepo();
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => '\n', lastModified: 1000, size: 1 } as any);
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/newline.ts' }]);
+
+    expect(fileRepo.upsertFile).toHaveBeenCalledWith(
+      expect.objectContaining({ lineCount: 2 }),
+    );
+  });
+
+  // 5. [ID] same 5-line text processed twice → both upsertFile calls have lineCount=5
+  it('should call upsertFile with same lineCount=5 both times when same 5-line file is indexed twice', async () => {
+    const fileRepo = makeFileRepo();
+    const text = 'a\nb\nc\nd\ne';
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => text, lastModified: 1000, size: 9 } as any);
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/file.ts' }]);
+    await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/file.ts' }]);
+
+    const calls = (fileRepo.upsertFile.mock.calls as any[][]);
+    expect(calls[0]![0]).toEqual(expect.objectContaining({ lineCount: 5 }));
+    expect(calls[1]![0]).toEqual(expect.objectContaining({ lineCount: 5 }));
+  });
+
+  // FR-08: changedSymbols diff 로직
+  describe('changedSymbols', () => {
+    // 1. [HP] incremental: 새 파일 → changedSymbols.added에 추가된 심볼
+    it('should include new symbols in changedSymbols.added when incrementalIndex processes a new file', async () => {
+      const symbolRepo = makeSymbolRepo();
+      // before: 파일이 없었으므로 getFileSymbols(before) = []
+      // after : 인덱싱 후 getFileSymbols = [sym1, sym2]
+      const sym1 = { name: 'Foo', filePath: 'src/new.ts', kind: 'class', fingerprint: 'fp-foo' } as any;
+      const sym2 = { name: 'bar', filePath: 'src/new.ts', kind: 'function', fingerprint: 'fp-bar' } as any;
+      symbolRepo.getFileSymbols
+        .mockReturnValueOnce([])          // before snapshot
+        .mockReturnValueOnce([sym1, sym2]) // after snapshot (processFile 내 count용도 포함)
+        .mockReturnValue([sym1, sym2]);    // 이후 추가 호출 대비
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'code', lastModified: 1, size: 4 } as any);
+      const coordinator = makeCoordinator({ symbolRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'create', filePath: 'src/new.ts' }]);
+
+      expect(result.changedSymbols.added).toEqual(
+        expect.arrayContaining([
+          { name: 'Foo', filePath: 'src/new.ts', kind: 'class' },
+          { name: 'bar', filePath: 'src/new.ts', kind: 'function' },
+        ]),
+      );
+      expect(result.changedSymbols.modified).toHaveLength(0);
+      expect(result.changedSymbols.removed).toHaveLength(0);
+    });
+
+    // 2. [HP] incremental: fingerprint 변경 → changedSymbols.modified
+    it('should include symbol in changedSymbols.modified when incrementalIndex detects a fingerprint change', async () => {
+      const symbolRepo = makeSymbolRepo();
+      const beforeSym = { name: 'doWork', filePath: 'src/a.ts', kind: 'function', fingerprint: 'fp-old' } as any;
+      const afterSym  = { name: 'doWork', filePath: 'src/a.ts', kind: 'function', fingerprint: 'fp-new' } as any;
+      symbolRepo.getFileSymbols
+        .mockReturnValueOnce([beforeSym])  // before snapshot
+        .mockReturnValueOnce([afterSym])   // after snapshot
+        .mockReturnValue([afterSym]);
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'updated', lastModified: 2, size: 7 } as any);
+      const coordinator = makeCoordinator({ symbolRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/a.ts' }]);
+
+      expect(result.changedSymbols.modified).toEqual([
+        { name: 'doWork', filePath: 'src/a.ts', kind: 'function' },
+      ]);
+      expect(result.changedSymbols.added).toHaveLength(0);
+      expect(result.changedSymbols.removed).toHaveLength(0);
+    });
+
+    // 3. [HP] incremental: 파일 삭제 → changedSymbols.removed에 기존 심볼
+    it('should include deleted symbols in changedSymbols.removed when incrementalIndex processes a delete event', async () => {
+      const symbolRepo = makeSymbolRepo();
+      const sym = { name: 'OldClass', filePath: 'src/old.ts', kind: 'class', fingerprint: 'fp-old' } as any;
+      symbolRepo.getFileSymbols.mockReturnValue([sym]);
+      const coordinator = makeCoordinator({ symbolRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'delete', filePath: 'src/old.ts' }]);
+
+      expect(result.changedSymbols.removed).toEqual([
+        { name: 'OldClass', filePath: 'src/old.ts', kind: 'class' },
+      ]);
+      expect(result.changedSymbols.added).toHaveLength(0);
+      expect(result.changedSymbols.modified).toHaveLength(0);
+    });
+
+    // 4. [HP] incremental: fingerprint 동일 → changedSymbols 모두 빈 배열
+    it('should return empty changedSymbols arrays when incrementalIndex processes a file with unchanged fingerprints', async () => {
+      const symbolRepo = makeSymbolRepo();
+      const sym = { name: 'Stable', filePath: 'src/stable.ts', kind: 'class', fingerprint: 'fp-same' } as any;
+      symbolRepo.getFileSymbols
+        .mockReturnValueOnce([sym])  // before snapshot
+        .mockReturnValue([sym]);     // after snapshot (same)
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'same', lastModified: 1, size: 4 } as any);
+      const coordinator = makeCoordinator({ symbolRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/stable.ts' }]);
+
+      expect(result.changedSymbols.added).toHaveLength(0);
+      expect(result.changedSymbols.modified).toHaveLength(0);
+      expect(result.changedSymbols.removed).toHaveLength(0);
+    });
+
+    // 5. [HP] incremental: 심볼 A 제거 + 심볼 B 추가 → added에 B, removed에 A
+    it('should report removed symbol A and added symbol B in changedSymbols when symbols are swapped in a file', async () => {
+      const symbolRepo = makeSymbolRepo();
+      const symA = { name: 'Alpha', filePath: 'src/swap.ts', kind: 'class',    fingerprint: 'fp-a' } as any;
+      const symB = { name: 'Beta',  filePath: 'src/swap.ts', kind: 'function', fingerprint: 'fp-b' } as any;
+      symbolRepo.getFileSymbols
+        .mockReturnValueOnce([symA])  // before snapshot
+        .mockReturnValue([symB]);     // after snapshot
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'swapped', lastModified: 1, size: 7 } as any);
+      const coordinator = makeCoordinator({ symbolRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/swap.ts' }]);
+
+      expect(result.changedSymbols.removed).toEqual([{ name: 'Alpha', filePath: 'src/swap.ts', kind: 'class' }]);
+      expect(result.changedSymbols.added).toEqual([{ name: 'Beta', filePath: 'src/swap.ts', kind: 'function' }]);
+      expect(result.changedSymbols.modified).toHaveLength(0);
+    });
+
+    // 6. [HP] incremental: events=[] → changedSymbols 모두 빈 배열
+    it('should return all empty changedSymbols arrays when incrementalIndex is called with empty events array', async () => {
+      const coordinator = makeCoordinator();
+
+      const result = await coordinator.incrementalIndex([]);
+
+      expect(result.changedSymbols.added).toHaveLength(0);
+      expect(result.changedSymbols.modified).toHaveLength(0);
+      expect(result.changedSymbols.removed).toHaveLength(0);
+    });
+
+    // 7. [ST] fullIndex: 최초 실행 (beforeSnapshot 없음) → 모든 심볼 added
+    it('should report all symbols as added in changedSymbols when fullIndex runs on an empty database', async () => {
+      const fileRepo   = makeFileRepo();
+      const symbolRepo = makeSymbolRepo();
+      // getAllFiles: before snapshot 시 비어있음 (DB가 비어있음)
+      fileRepo.getAllFiles.mockReturnValue([]);
+      // 새로 index된 파일의 심볼 (after)
+      const sym = { name: 'NewSym', filePath: 'src/main.ts', kind: 'function', fingerprint: 'fp-new' } as any;
+      // after snapshot: changed 파일에서 getFileSymbols
+      symbolRepo.getFileSymbols.mockReturnValue([sym]);
+      mockDetectChanges.mockResolvedValue({
+        changed: [{ filePath: 'src/main.ts', contentHash: '', mtimeMs: 0, size: 0 }],
+        unchanged: [],
+        deleted: [],
+      });
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'new code', lastModified: 1, size: 8 } as any);
+      const coordinator = makeCoordinator({ fileRepo, symbolRepo });
+
+      const result = await coordinator.fullIndex();
+
+      expect(result.changedSymbols.added).toEqual([{ name: 'NewSym', filePath: 'src/main.ts', kind: 'function' }]);
+      expect(result.changedSymbols.removed).toHaveLength(0);
+    });
+
+    // 8. [ST] fullIndex: 기존과 동일 내용 → changedSymbols 모두 빈 배열
+    it('should return empty changedSymbols arrays when fullIndex re-indexes files with unchanged symbol fingerprints', async () => {
+      const fileRepo   = makeFileRepo();
+      const symbolRepo = makeSymbolRepo();
+      const sym = { name: 'Unchanged', filePath: 'src/lib.ts', kind: 'class', fingerprint: 'fp-same' } as any;
+      // getAllFiles before snapshot
+      fileRepo.getAllFiles.mockReturnValue([{ project: 'test-project', filePath: 'src/lib.ts' } as any]);
+      // getFileSymbols: before (called per getAllFiles entry) and after (called per changed file)
+      symbolRepo.getFileSymbols.mockReturnValue([sym]);
+      mockDetectChanges.mockResolvedValue({
+        changed: [{ filePath: 'src/lib.ts', contentHash: '', mtimeMs: 0, size: 0 }],
+        unchanged: [],
+        deleted: [],
+      });
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'same code', lastModified: 1, size: 9 } as any);
+      const coordinator = makeCoordinator({ fileRepo, symbolRepo });
+
+      const result = await coordinator.fullIndex();
+
+      expect(result.changedSymbols.added).toHaveLength(0);
+      expect(result.changedSymbols.modified).toHaveLength(0);
+      expect(result.changedSymbols.removed).toHaveLength(0);
+    });
+
+    // 9. [ID] 동일 내용 incremental 두 번 → 두 번째 changedSymbols 모두 빈 배열
+    it('should return empty changedSymbols on second incrementalIndex when file content is identical', async () => {
+      const symbolRepo = makeSymbolRepo();
+      const sym = { name: 'Dup', filePath: 'src/dup.ts', kind: 'function', fingerprint: 'fp-dup' } as any;
+      // 각 incremental 실행당 getFileSymbols 3회 호출: before snapshot, processFile count, after snapshot
+      symbolRepo.getFileSymbols
+        .mockReturnValueOnce([])    // 1st run — before snapshot
+        .mockReturnValueOnce([sym]) // 1st run — processFile count
+        .mockReturnValueOnce([sym]) // 1st run — after snapshot
+        // 2nd run: all mockReturnValue([sym])
+        .mockReturnValue([sym]);
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'dup', lastModified: 1, size: 3 } as any);
+      const coordinator = makeCoordinator({ symbolRepo });
+
+      await coordinator.incrementalIndex([{ eventType: 'create', filePath: 'src/dup.ts' }]);
+      const second = await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/dup.ts' }]);
+
+      expect(second.changedSymbols.added).toHaveLength(0);
+      expect(second.changedSymbols.modified).toHaveLength(0);
+      expect(second.changedSymbols.removed).toHaveLength(0);
+    });
+
+    // 10. [OR] fullIndex snapshot 타이밍: getAllFiles → getFileSymbols 순서로 before snapshot 수집
+    it('should call getAllFiles before transaction to collect before snapshot when fullIndex runs', async () => {
+      const fileRepo   = makeFileRepo();
+      const symbolRepo = makeSymbolRepo();
+      const calls: string[] = [];
+      fileRepo.getAllFiles.mockImplementation(() => {
+        calls.push('getAllFiles');
+        return [];
+      });
+      symbolRepo.getFileSymbols.mockImplementation(() => {
+        calls.push('getFileSymbols');
+        return [];
+      });
+      const dbConn = makeDbConnection();
+      dbConn.transaction.mockImplementation((fn: () => any) => {
+        calls.push('transaction');
+        return fn();
+      });
+      mockDetectChanges.mockResolvedValue({ changed: [], unchanged: [], deleted: [] });
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => '', lastModified: 0, size: 0 } as any);
+      const coordinator = makeCoordinator({ fileRepo, symbolRepo, dbConnection: dbConn });
+
+      await coordinator.fullIndex();
+
+      const getAllFilesIdx  = calls.indexOf('getAllFiles');
+      const transactionIdx = calls.indexOf('transaction');
+      // getAllFiles(before snapshot)는 transaction 이전에 호출되어야 한다
+      expect(getAllFilesIdx).toBeGreaterThanOrEqual(0);
+      expect(transactionIdx).toBeGreaterThan(getAllFilesIdx);
+    });
   });
 });

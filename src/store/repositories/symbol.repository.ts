@@ -151,8 +151,10 @@ export class SymbolRepository {
     isExported?: boolean;
     project?: string;
     limit: number;
+    decorator?: string;
+    regex?: string;
   }): (SymbolRecord & { id: number })[] {
-    return this.db.drizzleDb
+    const results = this.db.drizzleDb
       .select()
       .from(symbols)
       .where(
@@ -167,10 +169,25 @@ export class SymbolRepository {
           opts.isExported !== undefined
             ? eq(symbols.isExported, opts.isExported ? 1 : 0)
             : undefined,
+          opts.decorator
+            ? sql`${symbols.id} IN (SELECT s.id FROM symbols s, json_each(s.detail_json, '$.decorators') je WHERE json_extract(je.value, '$.name') = ${opts.decorator})`
+            : undefined,
+          // NOTE: regex is applied as a JS-layer post-filter below; no SQL condition here.
         ),
       )
       .orderBy(symbols.name)
-      .limit(opts.limit)
+      // Fetch a larger pool when regex filtering is needed, since JS filtering reduces the result set.
+      .limit(opts.regex ? Math.max(opts.limit * 50, 5000) : opts.limit)
       .all() as (SymbolRecord & { id: number })[];
+
+    if (!opts.regex) return results;
+
+    // JS-layer regex post-filter (SQL REGEXP UDF not available in all Bun versions)
+    try {
+      const pattern = new RegExp(opts.regex);
+      return results.filter(r => pattern.test(r.name)).slice(0, opts.limit) as (SymbolRecord & { id: number })[];
+    } catch {
+      return [];
+    }
   }
 }

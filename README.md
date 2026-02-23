@@ -6,118 +6,222 @@
 [![CI](https://github.com/zipbul/gildash/actions/workflows/ci.yml/badge.svg)](https://github.com/zipbul/gildash/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-A **Bun-native** TypeScript code indexer. Extracts symbols, tracks cross-file relationships, and builds a full dependency graph — all stored in a local SQLite database.
+A **Bun-native** TypeScript code intelligence engine.
+
+gildash indexes your TypeScript codebase into a local SQLite database, then lets you search symbols, trace cross-file relationships, analyze dependency graphs, and match structural patterns — all with incremental, file-watcher-driven updates.
+
+## 💡 Why gildash?
+
+| Problem | How gildash solves it |
+|---------|----------------------|
+| "Which files break if I change this module?" | Directed import graph with transitive impact analysis |
+| "Are there any circular dependencies?" | Cycle detection across the full import graph |
+| "Where is this symbol actually defined?" | Re-export chain resolution to the original source |
+| "Which exports are never imported?" | Dead-export detection across projects |
+| "Find every `console.log(...)` call" | AST-level structural pattern search via [ast-grep](https://ast-grep.github.io/) |
 
 <br>
 
-## Features
+## ✨ Features
 
 - **Symbol extraction** — Functions, classes, variables, types, interfaces, enums, and properties extracted via [oxc-parser](https://oxc.rs) AST
-- **Relation tracking** — `import`, `calls`, `extends`, `implements` relationships across files
-- **Full-text search** — SQLite FTS5-powered symbol name search
-- **Dependency graph** — Directed import graph with cycle detection and transitive impact analysis
+- **Relation tracking** — `import`, `re-exports`, `type-references`, `calls`, `extends`, `implements` relationships across files
+- **Full-text search** — SQLite FTS5-powered symbol name search with exact match, regex, and decorator filtering
+- **Dependency graph** — Directed import graph with cycle detection, transitive impact analysis, and internal caching
+- **Structural pattern matching** — AST-level code search via [@ast-grep/napi](https://ast-grep.github.io/)
 - **Incremental indexing** — `@parcel/watcher`-based file change detection; only re-indexes modified files
+- **Symbol-level diff** — `changedSymbols` in `IndexResult` tracks added/modified/removed symbols per index cycle
 - **Multi-process safe** — Owner/reader role separation guarantees a single writer per database
+- **Scan-only mode** — `watchMode: false` for one-shot indexing without file watcher overhead
+- **External package indexing** — Index `.d.ts` type declarations from `node_modules`
 
 <br>
 
-## Requirements
+## 📋 Requirements
 
 - **Bun** v1.3 or higher
 - TypeScript source files: `.ts`, `.mts`, `.cts`
 
 <br>
 
-## Installation
+## 📦 Installation
 
 ```bash
 bun add @zipbul/gildash
 ```
 
+> **Peer dependency** — [`@zipbul/result`](https://www.npmjs.com/package/@zipbul/result) is required. All public methods return `Result<T, GildashError>`.
+
 <br>
 
-## Quick Start
+## 🚀 Quick Start
 
 ```ts
 import { Gildash } from '@zipbul/gildash';
+import { isErr } from '@zipbul/result';
 
+// 1. Open — indexes every .ts file on first run, then watches for changes
 const ledger = await Gildash.open({
   projectRoot: '/absolute/path/to/project',
 });
 
-// Search for exported classes by name
-const hits = ledger.searchSymbols({
-  text: 'UserService',
-  kind: 'class',
-  isExported: true,
-});
-
-// Exact name match (not FTS prefix)
-const exact = ledger.searchSymbols({ text: 'UserService', exact: true });
-
-// Find what a file imports
-const deps = ledger.getDependencies('src/app.ts');
-
-// Find everything affected by a change
-const affected = await ledger.getAffected(['src/utils.ts']);
-
-// Detect circular dependencies
-if (await ledger.hasCycle()) {
-  console.warn('Circular dependency detected');
+// 2. Search — find symbols by name
+const result = ledger.searchSymbols({ text: 'UserService', kind: 'class' });
+if (!isErr(result)) {
+  result.forEach(s => console.log(`${s.name} → ${s.filePath}`));
 }
 
-// File metadata & symbols
-const fileInfo = ledger.getFileInfo('src/app.ts');
-const symbols  = ledger.getSymbolsByFile('src/app.ts');
-
-// Cached AST lookup
-const ast = ledger.getParsedAst('/absolute/path/to/src/app.ts');
-
-// Subscribe to index-complete events
-const unsubscribe = ledger.onIndexed((result) => {
-  console.log(`Indexed ${result.indexedFiles} files in ${result.durationMs}ms`);
-});
-
+// 3. Close — release resources
 await ledger.close();
 ```
 
-### Error handling
+That's it. Project discovery (monorepo-aware), incremental re-indexing, and multi-process safety are handled automatically.
 
-All errors extend `GildashError`:
+<br>
+
+## 📖 Usage Guide
+
+### Symbol Search
+
+Search indexed symbols with FTS5 full-text, exact match, regex, or decorator filters.
 
 ```ts
-import { Gildash, GildashError, ParseError } from '@zipbul/gildash';
+// Full-text search (FTS5 prefix matching)
+const hits = ledger.searchSymbols({ text: 'handle' });
 
-try {
-  const ledger = await Gildash.open({ projectRoot: '/path' });
-} catch (err) {
-  if (err instanceof ParseError) {
-    // AST parsing failure
-  } else if (err instanceof GildashError) {
-    // Any gildash error
-  }
+// Exact name match
+const exact = ledger.searchSymbols({ text: 'UserService', exact: true });
+
+// Regex pattern
+const handlers = ledger.searchSymbols({ regex: '^handle.*Click$' });
+
+// Decorator filter
+const injectables = ledger.searchSymbols({ decorator: 'Injectable' });
+
+// Combine filters
+const exportedClasses = ledger.searchSymbols({
+  kind: 'class',
+  isExported: true,
+  limit: 50,
+});
+```
+
+Use `searchRelations()` to find cross-file relationships:
+
+```ts
+const imports = ledger.searchRelations({ srcFilePath: 'src/app.ts', type: 'imports' });
+const callers = ledger.searchRelations({ dstSymbolName: 'processOrder', type: 'calls' });
+```
+
+For monorepo projects, `searchAllSymbols()` and `searchAllRelations()` search across every discovered project.
+
+---
+
+### Dependency Analysis
+
+Analyze import graphs, detect cycles, and compute change impact.
+
+```ts
+// Direct imports / importers
+const deps = ledger.getDependencies('src/app.ts');
+const importers = ledger.getDependents('src/utils.ts');
+
+// Transitive impact — which files are affected by a change?
+const affected = await ledger.getAffected(['src/utils.ts']);
+
+// Full import graph (adjacency list)
+const graph = await ledger.getImportGraph();
+
+// Transitive dependencies (forward BFS)
+const transitive = await ledger.getTransitiveDependencies('src/app.ts');
+
+// Circular dependency detection
+const hasCycles = await ledger.hasCycle();
+const cyclePaths = await ledger.getCyclePaths();
+```
+
+---
+
+### Code Quality Analysis
+
+Detect dead exports, inspect module interfaces, and measure coupling.
+
+```ts
+// Dead exports — exported symbols never imported anywhere
+const dead = ledger.getDeadExports();
+
+// File statistics — line count, symbol count, size
+const stats = ledger.getFileStats('src/app.ts');
+
+// Fan-in / fan-out coupling metrics
+const fan = await ledger.getFanMetrics('src/app.ts');
+
+// Module public interface — all exported symbols with metadata
+const iface = ledger.getModuleInterface('src/services/user.ts');
+
+// Full symbol detail — members, jsDoc, decorators, type info
+const full = ledger.getFullSymbol('UserService', 'src/services/user.ts');
+```
+
+---
+
+### Pattern Matching & Tracing
+
+Search code by AST structure and trace symbol origins through re-export chains.
+
+```ts
+// Structural pattern search (ast-grep syntax)
+const logs = await ledger.findPattern('console.log($$$)');
+const hooks = await ledger.findPattern('useState($A)', {
+  filePaths: ['src/components/App.tsx'],
+});
+
+// Resolve re-export chains — find where a symbol is actually defined
+const resolved = ledger.resolveSymbol('MyComponent', 'src/index.ts');
+
+// Heritage chain — extends/implements tree traversal
+const tree = await ledger.getHeritageChain('UserService', 'src/services/user.ts');
+```
+
+<br>
+
+## 🔧 Scan-only Mode
+
+For CI pipelines or one-shot analysis, disable the file watcher:
+
+```ts
+const ledger = await Gildash.open({
+  projectRoot: '/path/to/project',
+  watchMode: false,        // no watcher, no heartbeat
+});
+
+// ... run your queries ...
+
+await ledger.close({ cleanup: true });   // delete DB files after use
+```
+
+<br>
+
+## ❌ Error Handling
+
+Every public method returns `Result<T, GildashError>` from [`@zipbul/result`](https://www.npmjs.com/package/@zipbul/result). Use `isErr()` to branch:
+
+```ts
+import { isErr } from '@zipbul/result';
+
+const result = ledger.searchSymbols({ text: 'foo' });
+if (isErr(result)) {
+  console.error(result.data.type, result.data.message);
+} else {
+  console.log(`Found ${result.length} symbols`);
 }
 ```
 
 <br>
 
-## API
+## ⚙️ Configuration
 
 ### `Gildash.open(options)`
-
-Creates and returns a `Gildash` instance. Performs a full index on first run, then watches for file changes.
-
-```ts
-const ledger = await Gildash.open({
-  projectRoot: '/absolute/path',
-  extensions: ['.ts', '.mts', '.cts'],
-  ignorePatterns: ['dist', 'vendor'],
-  parseCacheCapacity: 500,
-  logger: console,
-});
-```
-
-#### options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
@@ -126,178 +230,201 @@ const ledger = await Gildash.open({
 | `ignorePatterns` | `string[]` | `[]` | Glob patterns to exclude |
 | `parseCacheCapacity` | `number` | `500` | LRU parse-cache capacity |
 | `logger` | `Logger` | `console` | Custom logger (`{ error(...args): void }`) |
+| `watchMode` | `boolean` | `true` | `false` disables the file watcher (scan-only mode) |
 
-Returns `Promise<Gildash>`
+Returns `Promise<Gildash>` (wrapped in `Result`).
 
----
+<br>
 
-### `ledger.searchSymbols(query)`
+## 🔍 API Reference
 
-Search symbols by name (FTS5 full-text), kind, file path, and/or export status.
+### Search
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `searchSymbols(query)` | `Result<SymbolSearchResult[]>` | FTS5 full-text + exact / regex / decorator filters |
+| `searchRelations(query)` | `Result<CodeRelation[]>` | Filter by file, symbol, or relation type |
+| `searchAllSymbols(query)` | `Result<SymbolSearchResult[]>` | Cross-project symbol search |
+| `searchAllRelations(query)` | `Result<CodeRelation[]>` | Cross-project relation search |
+| `listIndexedFiles(project?)` | `Result<FileRecord[]>` | All indexed files for a project |
+| `getSymbolsByFile(filePath)` | `Result<SymbolSearchResult[]>` | All symbols in a single file |
+
+### Dependency Graph
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getDependencies(filePath)` | `Result<string[]>` | Files imported by `filePath` |
+| `getDependents(filePath)` | `Result<string[]>` | Files that import `filePath` |
+| `getAffected(changedFiles)` | `Promise<Result<string[]>>` | Transitive impact set |
+| `hasCycle(project?)` | `Promise<Result<boolean>>` | Circular dependency check |
+| `getCyclePaths(project?)` | `Promise<Result<string[][]>>` | All cycle paths |
+| `getImportGraph(project?)` | `Promise<Result<Map>>` | Full adjacency list |
+| `getTransitiveDependencies(filePath)` | `Promise<Result<string[]>>` | Forward transitive BFS |
+
+### Analysis
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getDeadExports(project?, opts?)` | `Result<Array>` | Unused exported symbols |
+| `getFullSymbol(name, filePath)` | `Result<FullSymbol>` | Members, jsDoc, decorators, type info |
+| `getFileStats(filePath)` | `Result<FileStats>` | Line count, symbol count, size |
+| `getFanMetrics(filePath)` | `Promise<Result<FanMetrics>>` | Fan-in / fan-out coupling |
+| `getModuleInterface(filePath)` | `Result<ModuleInterface>` | Public exports with metadata |
+| `getInternalRelations(filePath)` | `Result<CodeRelation[]>` | Intra-file relations |
+| `diffSymbols(before, after)` | `SymbolDiff` | Snapshot diff (added / removed / modified) |
+
+### Advanced
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `findPattern(pattern, opts?)` | `Promise<Result<PatternMatch[]>>` | AST structural search (ast-grep) |
+| `resolveSymbol(name, filePath)` | `Result<ResolvedSymbol>` | Follow re-export chain to original |
+| `getHeritageChain(name, filePath)` | `Promise<Result<HeritageNode>>` | extends / implements tree |
+| `indexExternalPackages(packages)` | `Promise<Result<IndexResult[]>>` | Index `.d.ts` from `node_modules` |
+| `batchParse(filePaths)` | `Promise<Result<Map>>` | Concurrent multi-file parsing |
+
+### Lifecycle & Low-level
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `reindex()` | `Promise<Result<IndexResult>>` | Force full re-index (owner only) |
+| `onIndexed(callback)` | `() => void` | Subscribe to index-complete events |
+| `parseSource(filePath, src)` | `Result<ParsedFile>` | Parse & cache a single file |
+| `extractSymbols(parsed)` | `Result<ExtractedSymbol[]>` | Extract symbols from parsed AST |
+| `extractRelations(parsed)` | `Result<CodeRelation[]>` | Extract relations from parsed AST |
+| `getParsedAst(filePath)` | `ParsedFile \| undefined` | Cached AST lookup (read-only) |
+| `getFileInfo(filePath)` | `Result<FileRecord \| null>` | File metadata (hash, mtime, size) |
+| `getStats(project?)` | `Result<SymbolStats>` | Symbol / file count statistics |
+| `projects` | `ProjectBoundary[]` | Discovered project boundaries |
+| `close(opts?)` | `Promise<Result<void>>` | Shutdown (pass `{ cleanup: true }` to delete DB) |
+
+<br>
+
+<details>
+<summary><strong>Type Definitions</strong></summary>
 
 ```ts
-// Full-text search
-const results = ledger.searchSymbols({ text: 'handleClick' });
+// ── Search ──────────────────────────────────────────────────────────────
 
-// Exact name match (not FTS prefix)
-const exact = ledger.searchSymbols({ text: 'UserService', exact: true });
+interface SymbolSearchQuery {
+  text?: string;        // FTS5 full-text query
+  exact?: boolean;      // exact name match (not prefix)
+  kind?: SymbolKind;    // 'function' | 'method' | 'class' | 'variable' | 'type' | 'interface' | 'enum' | 'property'
+  filePath?: string;
+  isExported?: boolean;
+  project?: string;
+  limit?: number;       // default: 100
+  decorator?: string;   // e.g. 'Injectable'
+  regex?: string;       // regex applied to symbol name
+}
 
-// Filter by kind + export status
-const classes = ledger.searchSymbols({
-  kind: 'class',
-  isExported: true,
-  limit: 50,
-});
-
-// Scope to a specific file
-const inFile = ledger.searchSymbols({
-  filePath: 'src/services/user.ts',
-});
-```
-
-#### SymbolSearchQuery
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `text` | `string?` | FTS5 full-text search query |
-| `exact` | `boolean?` | When `true`, `text` is treated as an exact name match (not FTS prefix) |
-| `kind` | `SymbolKind?` | `'function'` \| `'method'` \| `'class'` \| `'variable'` \| `'type'` \| `'interface'` \| `'enum'` \| `'property'` |
-| `filePath` | `string?` | Filter by file path |
-| `isExported` | `boolean?` | Filter by export status |
-| `project` | `string?` | Project name (monorepo) |
-| `limit` | `number?` | Max results (default: `100`) |
-
-Returns `SymbolSearchResult[]`
-
-```ts
 interface SymbolSearchResult {
   id: number;
   filePath: string;
   kind: SymbolKind;
   name: string;
-  span: {
-    start: { line: number; column: number };
-    end: { line: number; column: number };
-  };
+  span: { start: { line: number; column: number }; end: { line: number; column: number } };
   isExported: boolean;
   signature: string | null;
   fingerprint: string | null;
   detail: Record<string, unknown>;
 }
-```
 
----
+interface RelationSearchQuery {
+  srcFilePath?: string;
+  srcSymbolName?: string;
+  dstFilePath?: string;
+  dstSymbolName?: string;
+  type?: 'imports' | 'type-references' | 're-exports' | 'calls' | 'extends' | 'implements';
+  project?: string;
+  limit?: number;       // default: 500
+}
 
-### `ledger.searchRelations(query)`
-
-Search cross-file relationships by source/destination file, symbol name, or relation type.
-
-```ts
-// All imports from a file
-const imports = ledger.searchRelations({
-  srcFilePath: 'src/app.ts',
-  type: 'imports',
-});
-
-// Find callers of a specific function
-const callers = ledger.searchRelations({
-  dstSymbolName: 'processOrder',
-  type: 'calls',
-});
-```
-
-#### RelationSearchQuery
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `srcFilePath` | `string?` | Source file path |
-| `srcSymbolName` | `string?` | Source symbol name |
-| `dstFilePath` | `string?` | Destination file path |
-| `dstSymbolName` | `string?` | Destination symbol name |
-| `type` | `'imports'` \| `'calls'` \| `'extends'` \| `'implements'`? | Relation type |
-| `project` | `string?` | Project name |
-| `limit` | `number?` | Max results (default: `500`) |
-
-Returns `CodeRelation[]`
-
-```ts
 interface CodeRelation {
-  type: 'imports' | 'calls' | 'extends' | 'implements';
+  type: 'imports' | 'type-references' | 're-exports' | 'calls' | 'extends' | 'implements';
   srcFilePath: string;
-  srcSymbolName: string | null;  // null = module-level
+  srcSymbolName: string | null;
   dstFilePath: string;
   dstSymbolName: string | null;
   metaJson?: string;
+  meta?: Record<string, unknown>;   // auto-parsed from metaJson
 }
-```
 
----
+// ── Analysis ────────────────────────────────────────────────────────────
 
-### `ledger.getDependencies(filePath, project?)`
-
-Returns files that the given file imports.
-
-```ts
-const deps = ledger.getDependencies('src/app.ts');
-// → ['src/utils.ts', 'src/config.ts', ...]
-```
-
-Returns `string[]`
-
----
-
-### `ledger.getDependents(filePath, project?)`
-
-Returns files that import the given file.
-
-```ts
-const dependents = ledger.getDependents('src/utils.ts');
-// → ['src/app.ts', 'src/services/user.ts', ...]
-```
-
-Returns `string[]`
-
----
-
-### `ledger.getAffected(changedFiles, project?)`
-
-Computes the full transitive set of files affected by file changes.
-
-```ts
-const affected = await ledger.getAffected(['src/utils.ts']);
-// → ['src/app.ts', 'src/services/user.ts', 'src/main.ts', ...]
-```
-
-Returns `Promise<string[]>`
-
----
-
-### `ledger.hasCycle(project?)`
-
-Detects circular dependencies in the import graph.
-
-```ts
-if (await ledger.hasCycle()) {
-  console.warn('Circular dependency detected');
+interface FullSymbol extends SymbolSearchResult {
+  members?: Array<{
+    name: string;
+    kind: string;
+    type?: string;
+    visibility?: string;
+    isStatic?: boolean;
+    isReadonly?: boolean;
+  }>;
+  jsDoc?: string;
+  parameters?: string;
+  returnType?: string;
+  heritage?: string[];
+  decorators?: Array<{ name: string; arguments?: string }>;
+  typeParameters?: string;
 }
-```
 
-Returns `Promise<boolean>`
+interface FileStats {
+  filePath: string;
+  lineCount: number;
+  symbolCount: number;
+  relationCount: number;
+  size: number;
+  exportedSymbolCount: number;
+}
 
----
+interface FanMetrics {
+  filePath: string;
+  fanIn: number;    // files importing this file
+  fanOut: number;   // files this file imports
+}
 
-### `ledger.reindex()`
+interface ModuleInterface {
+  filePath: string;
+  exports: Array<{
+    name: string;
+    kind: SymbolKind;
+    parameters?: string;
+    returnType?: string;
+    jsDoc?: string;
+  }>;
+}
 
-Forces a full re-index. Only available when the instance holds the owner role.
+interface SymbolDiff {
+  added: SymbolSearchResult[];
+  removed: SymbolSearchResult[];
+  modified: Array<{ before: SymbolSearchResult; after: SymbolSearchResult }>;
+}
 
-```ts
-const result = await ledger.reindex();
-console.log(`Indexed ${result.indexedFiles} files in ${result.durationMs}ms`);
-```
+// ── Advanced ────────────────────────────────────────────────────────────
 
-Returns `Promise<IndexResult>`
+interface PatternMatch {
+  filePath: string;
+  startLine: number;
+  endLine: number;
+  matchedText: string;
+}
 
-```ts
+interface ResolvedSymbol {
+  originalName: string;
+  originalFilePath: string;
+  reExportChain: Array<{ filePath: string; exportedAs: string }>;
+}
+
+interface HeritageNode {
+  symbolName: string;
+  filePath: string;
+  kind?: 'extends' | 'implements';
+  children: HeritageNode[];
+}
+
+// ── Indexing ────────────────────────────────────────────────────────────
+
 interface IndexResult {
   indexedFiles: number;
   removedFiles: number;
@@ -307,204 +434,73 @@ interface IndexResult {
   changedFiles: string[];
   deletedFiles: string[];
   failedFiles: string[];
+  changedSymbols: {
+    added: Array<{ name: string; filePath: string; kind: string }>;
+    modified: Array<{ name: string; filePath: string; kind: string }>;
+    removed: Array<{ name: string; filePath: string; kind: string }>;
+  };
 }
-```
 
----
-
-### `ledger.onIndexed(callback)`
-
-Subscribes to index-complete events. Returns an unsubscribe function.
-
-```ts
-const unsubscribe = ledger.onIndexed((result) => {
-  console.log(`Indexed ${result.indexedFiles} files`);
-});
-
-// Later
-unsubscribe();
-```
-
-Returns `() => void`
-
----
-
-### `ledger.projects`
-
-Detected project boundaries. In a monorepo, multiple projects are discovered automatically from `package.json` files.
-
-```ts
-const boundaries = ledger.projects;
-// → [{ dir: '.', project: 'my-app' }, { dir: 'packages/core', project: '@my/core' }]
-```
-
-Type: `ProjectBoundary[]`
-
-```ts
-interface ProjectBoundary {
-  dir: string;
+interface FileRecord {
   project: string;
+  filePath: string;
+  mtimeMs: number;
+  size: number;
+  contentHash: string;
+  updatedAt: string;
+  lineCount?: number | null;
+}
+
+// ── Errors ──────────────────────────────────────────────────────────────
+
+interface GildashError {
+  type: GildashErrorType;   // see Error Types table below
+  message: string;
+  cause?: unknown;
 }
 ```
 
----
-
-### `ledger.getStats(project?)`
-
-Returns symbol count statistics.
-
-```ts
-const stats = ledger.getStats();
-// → { symbolCount: 1234, fileCount: 56 }
-```
-
-Returns `SymbolStats`
-
-```ts
-interface SymbolStats {
-  symbolCount: number;
-  fileCount: number;
-}
-```
-
----
-
-### `ledger.parseSource(filePath, sourceText)`
-
-Parses a TypeScript file and caches the AST internally.
-
-```ts
-const parsed = ledger.parseSource('src/foo.ts', sourceCode);
-```
-
-Returns `ParsedFile`
-
----
-
-### `ledger.extractSymbols(parsed)`
-
-Extracts symbols from a parsed file.
-
-```ts
-const symbols = ledger.extractSymbols(parsed);
-```
-
-Returns `ExtractedSymbol[]`
-
----
-
-### `ledger.extractRelations(parsed)`
-
-Extracts cross-file relations from a parsed file.
-
-```ts
-const relations = ledger.extractRelations(parsed);
-```
-
-Returns `CodeRelation[]`
-
----
-
-### `ledger.getParsedAst(filePath)`
-
-Retrieves a previously-parsed AST from the internal LRU cache.
-
-Returns `undefined` if the file has not been parsed or was evicted from the cache.
-The returned object is shared with the internal cache — treat it as **read-only**.
-
-```ts
-const ast = ledger.getParsedAst('/absolute/path/to/src/app.ts');
-if (ast) {
-  console.log(ast.program.body.length, 'AST nodes');
-}
-```
-
-Returns `ParsedFile | undefined`
-
----
-
-### `ledger.getFileInfo(filePath, project?)`
-
-Retrieves metadata for an indexed file, including content hash, mtime, and size.
-Returns `null` if the file has not been indexed yet.
-
-```ts
-const info = ledger.getFileInfo('src/app.ts');
-if (!isErr(info) && info !== null) {
-  console.log(`Hash: ${info.contentHash}, Size: ${info.size}`);
-}
-```
-
-Returns `Result<FileRecord | null, GildashError>`
-
----
-
-### `ledger.getSymbolsByFile(filePath, project?)`
-
-Lists all symbols declared in a specific file. Convenience wrapper around `searchSymbols` with a `filePath` filter.
-
-```ts
-const symbols = ledger.getSymbolsByFile('src/app.ts');
-if (!isErr(symbols)) {
-  for (const sym of symbols) {
-    console.log(`${sym.kind}: ${sym.name}`);
-  }
-}
-```
-
-Returns `Result<SymbolSearchResult[], GildashError>`
-
----
-
-### `ledger.close()`
-
-Graceful shutdown. Stops the watcher, releases the database, and removes signal handlers.
-
-```ts
-await ledger.close();
-```
-
-Returns `Promise<void>`
+</details>
 
 <br>
 
-## Errors
+## ⚠️ Error Types
 
-All errors extend `GildashError`, which extends `Error`.
-
-| Class | When |
-|-------|------|
-| `GildashError` | Base class for all errors |
-| `WatcherError` | File watcher start/stop failure |
-| `ParseError` | AST parsing failure |
-| `ExtractError` | Symbol/relation extraction failure |
-| `IndexError` | Indexing pipeline failure |
-| `StoreError` | Database operation failure |
-| `SearchError` | Search query failure |
+| Type | When |
+|------|------|
+| `watcher` | File watcher start / stop failure |
+| `parse` | AST parsing failure |
+| `extract` | Symbol / relation extraction failure |
+| `index` | Indexing pipeline failure |
+| `store` | Database operation failure |
+| `search` | Search query failure |
+| `closed` | Operation on a closed instance |
+| `validation` | Invalid input (e.g. missing `node_modules` package) |
+| `close` | Error during shutdown |
 
 <br>
 
-## Architecture
+## 🏗 Architecture
 
 ```
 Gildash (Facade)
-├── Parser      — oxc-parser-based TypeScript AST parser
-├── Extractor   — Symbol & relation extraction (imports, calls, heritage)
-├── Store       — bun:sqlite + drizzle-orm (files, symbols, relations, FTS5)
-├── Indexer     — Change detection → parse → extract → store pipeline
-├── Search      — Symbol search, relation search, dependency graph
+├── Parser      — oxc-parser-based TypeScript AST parsing
+├── Extractor   — Symbol & relation extraction (imports, re-exports, type-refs, calls, heritage)
+├── Store       — bun:sqlite + drizzle-orm (files · symbols · relations · FTS5)
+├── Indexer     — File change → parse → extract → store pipeline, symbol-level diff
+├── Search      — FTS + regex + decorator search, relation queries, dependency graph, ast-grep
 └── Watcher     — @parcel/watcher + owner/reader role management
 ```
 
 ### Owner / Reader Pattern
 
-When multiple processes share the same SQLite database, a single-writer guarantee is enforced.
+When multiple processes share the same SQLite database, gildash enforces a single-writer guarantee:
 
 - **Owner** — Runs the file watcher, performs indexing, sends a heartbeat every 30 s
-- **Reader** — Read-only access; polls owner status every 60 s and self-promotes if the owner goes stale
+- **Reader** — Read-only access; polls owner health every 60 s and self-promotes if the owner goes stale
 
 <br>
 
-## License
+## 📄 License
 
 [MIT](./LICENSE) © [zipbul](https://github.com/zipbul)

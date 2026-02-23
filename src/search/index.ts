@@ -6,3 +6,6 @@ export type { RelationSearchQuery, IRelationRepo } from './relation-search';
 
 export { DependencyGraph } from './dependency-graph';
 export type { IDependencyGraphRepo } from './dependency-graph';
+
+export { patternSearch } from './pattern-search';
+export type { PatternMatch, PatternSearchOptions } from './pattern-search';

@@ -177,4 +177,97 @@ describe('FileRepository', () => {
     expect(() => repo.deleteFile('test-project', 'src/index.ts')).not.toThrow();
     expect(() => repo.upsertFile(makeFileRecord())).not.toThrow();
   });
+
+  // --- IMP-D: lineCount ---
+
+  // 1. [HP] upsertFile passes lineCount in insert values
+  it('should pass lineCount in insert values when upsertFile is called with lineCount=10', () => {
+    const { db, chain } = makeDbMock();
+    const record = makeFileRecord({ lineCount: 10 } as any);
+
+    const repo = new FileRepository(db);
+    repo.upsertFile(record);
+
+    expect(chain['values']).toHaveBeenCalledWith(
+      expect.objectContaining({ lineCount: 10 }),
+    );
+  });
+
+  // 2. [HP] upsertFile passes lineCount in onConflictDoUpdate set
+  it('should include lineCount in onConflictDoUpdate set when upsertFile is called with lineCount=10', () => {
+    const { db, chain } = makeDbMock();
+    const record = makeFileRecord({ lineCount: 10 } as any);
+
+    const repo = new FileRepository(db);
+    repo.upsertFile(record);
+
+    expect(chain['onConflictDoUpdate']).toHaveBeenCalledWith(
+      expect.objectContaining({ set: expect.objectContaining({ lineCount: 10 }) }),
+    );
+  });
+
+  // 3. [NE] upsertFile with lineCount=null passes null to DB
+  it('should pass null lineCount in insert values when upsertFile is called with lineCount=null', () => {
+    const { db, chain } = makeDbMock();
+    const record = makeFileRecord({ lineCount: null } as any);
+
+    const repo = new FileRepository(db);
+    repo.upsertFile(record);
+
+    expect(chain['values']).toHaveBeenCalledWith(
+      expect.objectContaining({ lineCount: null }),
+    );
+  });
+
+  // 4. [ED] upsertFile with lineCount=1 (minimum valid)
+  it('should pass lineCount=1 in insert values when upsertFile is called with lineCount=1', () => {
+    const { db, chain } = makeDbMock();
+    const record = makeFileRecord({ lineCount: 1 } as any);
+
+    const repo = new FileRepository(db);
+    repo.upsertFile(record);
+
+    expect(chain['values']).toHaveBeenCalledWith(
+      expect.objectContaining({ lineCount: 1 }),
+    );
+  });
+
+  // 5. [HP] upsertFile with lineCount in both values and set
+  it('should include lineCount in both values and onConflictDoUpdate set in a single upsertFile call', () => {
+    const { db, chain } = makeDbMock();
+    const record = makeFileRecord({ lineCount: 7 } as any);
+
+    const repo = new FileRepository(db);
+    repo.upsertFile(record);
+
+    expect(chain['values']).toHaveBeenCalledWith(expect.objectContaining({ lineCount: 7 }));
+    expect(chain['onConflictDoUpdate']).toHaveBeenCalledWith(
+      expect.objectContaining({ set: expect.objectContaining({ lineCount: 7 }) }),
+    );
+  });
+
+  // 6. [OR] second upsertFile call with different lineCount carries updated value
+  it('should pass updated lineCount in second upsertFile call when lineCount changes from 5 to 10', () => {
+    const { db, chain } = makeDbMock();
+    const repo = new FileRepository(db);
+
+    repo.upsertFile(makeFileRecord({ lineCount: 5 } as any));
+    repo.upsertFile(makeFileRecord({ lineCount: 10 } as any));
+
+    const calls = chain['values']!.mock.calls as any[][];
+    expect(calls[1]![0]).toEqual(expect.objectContaining({ lineCount: 10 }));
+  });
+
+  // 7. [ID] upsertFile twice with same lineCount → both calls have same lineCount
+  it('should pass same lineCount in both calls when upsertFile is invoked twice with lineCount=5', () => {
+    const { db, chain } = makeDbMock();
+    const repo = new FileRepository(db);
+
+    repo.upsertFile(makeFileRecord({ lineCount: 5 } as any));
+    repo.upsertFile(makeFileRecord({ lineCount: 5 } as any));
+
+    const calls = chain['values']!.mock.calls as any[][];
+    expect(calls[0]![0]).toEqual(expect.objectContaining({ lineCount: 5 }));
+    expect(calls[1]![0]).toEqual(expect.objectContaining({ lineCount: 5 }));
+  });
 });

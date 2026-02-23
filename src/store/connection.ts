@@ -45,6 +45,23 @@ export class DbConnection {
       for (const sql of FTS_SETUP_SQL) {
         this.client.run(sql);
       }
+
+      // bun:sqlite Database.function() is not available in all Bun versions.
+      // Regex filtering falls back to JS-layer post-processing when this is absent.
+      const clientAny = this.client as unknown as Record<string, unknown>;
+      if (typeof clientAny['function'] === 'function') {
+        (clientAny['function'] as Function).call(
+          this.client,
+          'regexp',
+          (pattern: string, value: string): number => {
+            try {
+              return new RegExp(pattern).test(value) ? 1 : 0;
+            } catch {
+              return 0;
+            }
+          },
+        );
+      }
     } catch (e) {
       if (this.isCorruptionError(e) && existsSync(this.dbPath)) {
         this.closeClient();

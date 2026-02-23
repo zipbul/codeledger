@@ -258,4 +258,24 @@ describe('SymbolRepository', () => {
     expect(() => repo.searchByQuery({ limit: 10 })).not.toThrow();
     expect(chain['all']).toHaveBeenCalled();
   });
+
+  // ── LEG-1 / FR-19 ─────────────────────────────────────────────────────────
+
+  // [HP] decorator 있을 때 searchByQuery 체인 .all() 호출됨
+  it('should call all() without throwing when searchByQuery receives a decorator filter', () => {
+    const { db, chain } = makeDbMock();
+    const repo = new SymbolRepository(db);
+
+    expect(() => repo.searchByQuery({ decorator: 'Injectable', limit: 10 })).not.toThrow();
+    expect(chain['all']).toHaveBeenCalled();
+  });
+
+  // [HP] regex 있을 때 searchByQuery 체인 .all() 호출됨
+  it('should call all() without throwing when searchByQuery receives a regex filter', () => {
+    const { db, chain } = makeDbMock();
+    const repo = new SymbolRepository(db);
+
+    expect(() => repo.searchByQuery({ regex: '^get', limit: 10 })).not.toThrow();
+    expect(chain['all']).toHaveBeenCalled();
+  });
 });

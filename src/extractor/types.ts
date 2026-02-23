@@ -171,13 +171,15 @@ export interface ImportReference {
  * A relationship between two symbols/files extracted from source code.
  *
  * - `'imports'` — file A imports from file B
+ * - `'type-references'` — file A type-only imports from file B (`import type`)
+ * - `'re-exports'` — file A re-exports from file B (`export { ... } from`)
  * - `'calls'` — symbol in file A calls a symbol in file B
  * - `'extends'` — class/interface in file A extends one in file B
  * - `'implements'` — class in file A implements an interface in file B
  */
 export interface CodeRelation {
   /** The kind of relationship. */
-  type: 'imports' | 'calls' | 'extends' | 'implements';
+  type: 'imports' | 'type-references' | 're-exports' | 'calls' | 'extends' | 'implements';
   /** File path where the relationship originates. */
   srcFilePath: string;
   /** Source symbol name, or `null` for module-level relationships. */
@@ -188,6 +190,8 @@ export interface CodeRelation {
   dstSymbolName: string | null;
   /** Optional JSON-encoded metadata about the relation. */
   metaJson?: string;
+  /** Parsed metadata object derived from `metaJson`. */
+  meta?: Record<string, unknown>;
 }
 
 export type { SourcePosition, SourceSpan };

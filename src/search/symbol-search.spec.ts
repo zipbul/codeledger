@@ -280,4 +280,47 @@ describe('symbolSearch', () => {
     expect(opts.exactName).toBeUndefined();
     expect(opts.ftsQuery).toBeUndefined();
   });
+
+  // ── FR-19 / LEG-1 ─────────────────────────────────────────────────────────
+
+  // [HP] decorator 전달 → opts.decorator 설정됨
+  it('should pass decorator to searchByQuery when decorator is set in query', () => {
+    const query: SymbolSearchQuery = { decorator: 'Injectable' };
+    symbolSearch({ symbolRepo: mockRepo, query });
+    const opts = mockSearchByQuery.mock.calls[0]![0] as Record<string, unknown>;
+    expect(opts.decorator).toBe('Injectable');
+  });
+
+  // [HP] regex 전달 → opts.regex 설정됨
+  it('should pass regex to searchByQuery when regex is set in query', () => {
+    const query: SymbolSearchQuery = { regex: '^get' };
+    symbolSearch({ symbolRepo: mockRepo, query });
+    const opts = mockSearchByQuery.mock.calls[0]![0] as Record<string, unknown>;
+    expect(opts.regex).toBe('^get');
+  });
+
+  // [NE] decorator 미설정 → opts.decorator undefined
+  it('should not set decorator in opts when decorator is absent from query', () => {
+    const query: SymbolSearchQuery = { kind: 'function' };
+    symbolSearch({ symbolRepo: mockRepo, query });
+    const opts = mockSearchByQuery.mock.calls[0]![0] as Record<string, unknown>;
+    expect(opts.decorator).toBeUndefined();
+  });
+
+  // [NE] regex 미설정 → opts.regex undefined
+  it('should not set regex in opts when regex is absent from query', () => {
+    const query: SymbolSearchQuery = {};
+    symbolSearch({ symbolRepo: mockRepo, query });
+    const opts = mockSearchByQuery.mock.calls[0]![0] as Record<string, unknown>;
+    expect(opts.regex).toBeUndefined();
+  });
+
+  // [CO] decorator + kind 동시 → 두 필드 모두 opts에 설정됨
+  it('should pass both decorator and kind to searchByQuery when both are set', () => {
+    const query: SymbolSearchQuery = { decorator: 'Component', kind: 'class' };
+    symbolSearch({ symbolRepo: mockRepo, query });
+    const opts = mockSearchByQuery.mock.calls[0]![0] as Record<string, unknown>;
+    expect(opts.decorator).toBe('Component');
+    expect(opts.kind).toBe('class');
+  });
 });

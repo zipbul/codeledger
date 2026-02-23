@@ -39,10 +39,11 @@ export class DependencyGraph {
     this.adjacencyList = new Map();
     this.reverseAdjacencyList = new Map();
 
-    const relations = this.options.relationRepo.getByType(
-      this.options.project,
-      'imports',
-    );
+    const relations = [
+      ...this.options.relationRepo.getByType(this.options.project, 'imports'),
+      ...this.options.relationRepo.getByType(this.options.project, 'type-references'),
+      ...this.options.relationRepo.getByType(this.options.project, 're-exports'),
+    ];
 
     for (const rel of relations) {
       const { srcFilePath, dstFilePath } = rel;
@@ -51,6 +52,11 @@ export class DependencyGraph {
         this.adjacencyList.set(srcFilePath, new Set());
       }
       this.adjacencyList.get(srcFilePath)!.add(dstFilePath);
+
+      // ensure destination node also appears as a key (with no outgoing edges)
+      if (!this.adjacencyList.has(dstFilePath)) {
+        this.adjacencyList.set(dstFilePath, new Set());
+      }
 
       if (!this.reverseAdjacencyList.has(dstFilePath)) {
         this.reverseAdjacencyList.set(dstFilePath, new Set());
@@ -169,5 +175,94 @@ export class DependencyGraph {
     }
 
     return Array.from(allAffected);
+  }
+
+  /**
+   * Return the full import graph as an adjacency list.
+   *
+   * Each key is a file path (both source and destination files are included as keys).
+   * The associated value lists the files it directly imports.
+   *
+   * @returns A new `Map<filePath, importedFilePaths[]>`.
+   */
+  getAdjacencyList(): Map<string, string[]> {
+    const result = new Map<string, string[]>();
+    for (const [node, edges] of this.adjacencyList) {
+      result.set(node, Array.from(edges));
+    }
+    return result;
+  }
+
+  /**
+   * Return all files that `filePath` transitively imports
+   * (breadth-first forward walk).
+   *
+   * @param filePath - Absolute file path.
+   * @returns Paths of all transitively-imported files. Does not include `filePath` itself
+   *   unless a cycle exists.
+   */
+  getTransitiveDependencies(filePath: string): string[] {
+    const visited = new Set<string>();
+    const queue: string[] = [filePath];
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      for (const dep of this.adjacencyList.get(current) ?? []) {
+        if (!visited.has(dep)) {
+          visited.add(dep);
+          queue.push(dep);
+        }
+      }
+    }
+
+    return Array.from(visited);
+  }
+
+  /**
+   * Return the distinct cycle paths in the import graph.
+   *
+   * Each cycle is represented as a list of file paths in canonical form
+   * (rotated so the lexicographically smallest node comes first).
+   * Duplicate cycles are deduplicated.
+   *
+   * @returns An array of cycles, where each cycle is a `string[]` of file paths.
+   */
+  getCyclePaths(): string[][] {
+    const seenCycles = new Set<string>();
+    const cycles: string[][] = [];
+    const globalVisited = new Set<string>();
+    const inPath = new Map<string, number>();
+    const path: string[] = [];
+
+    const dfs = (node: string): void => {
+      if (globalVisited.has(node)) return;
+      if (inPath.has(node)) {
+        const cycleStart = inPath.get(node)!;
+        const cycle = path.slice(cycleStart);
+        const minNode = cycle.reduce((a, b) => (a <= b ? a : b));
+        const idx = cycle.indexOf(minNode);
+        const canonical = [...cycle.slice(idx), ...cycle.slice(0, idx)];
+        const key = canonical.join('\0');
+        if (!seenCycles.has(key)) {
+          seenCycles.add(key);
+          cycles.push(canonical);
+        }
+        return;
+      }
+      inPath.set(node, path.length);
+      path.push(node);
+      for (const neighbor of this.adjacencyList.get(node) ?? []) {
+        dfs(neighbor);
+      }
+      path.pop();
+      inPath.delete(node);
+      globalVisited.add(node);
+    };
+
+    for (const startNode of this.adjacencyList.keys()) {
+      dfs(startNode);
+    }
+
+    return cycles;
   }
 }

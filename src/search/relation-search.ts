@@ -60,12 +60,23 @@ export function relationSearch(options: {
     limit,
   });
 
-  return records.map(r => ({
-    type: r.type as CodeRelation['type'],
-    srcFilePath: r.srcFilePath,
-    srcSymbolName: r.srcSymbolName,
-    dstFilePath: r.dstFilePath,
-    dstSymbolName: r.dstSymbolName,
-    metaJson: r.metaJson ?? undefined,
-  }));
+  return records.map(r => {
+    let meta: Record<string, unknown> | undefined;
+    if (r.metaJson) {
+      try {
+        meta = JSON.parse(r.metaJson) as Record<string, unknown>;
+      } catch {
+        console.error('[relationSearch] malformed metaJson:', r.metaJson);
+      }
+    }
+    return {
+      type: r.type as CodeRelation['type'],
+      srcFilePath: r.srcFilePath,
+      srcSymbolName: r.srcSymbolName,
+      dstFilePath: r.dstFilePath,
+      dstSymbolName: r.dstSymbolName,
+      metaJson: r.metaJson ?? undefined,
+      meta,
+    };
+  });
 }

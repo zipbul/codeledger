@@ -564,3 +564,68 @@ describe('DbConnection WatcherOwnerStore', () => {
     expect(() => db.deleteOwner(999)).not.toThrow();
   });
 });
+
+// ── SymbolRepository — decorator / regex 필터 (LEG-1 / FR-19) ──────────────
+
+describe('SymbolRepository — decorator and regex filters', () => {
+  // [HP] decorator='Injectable' → detailJson에 해당 decorator 가진 심볼만 반환
+  it('should return only symbols annotated with the given decorator when decorator filter is set', () => {
+    fileRepo.upsertFile(makeFileRecord({ filePath: 'src/a.ts', contentHash: 'h1' }));
+
+    const injectableSym = makeSymbolRecord({
+      name: 'ServiceA',
+      filePath: 'src/a.ts',
+      detailJson: JSON.stringify({ decorators: [{ name: 'Injectable' }] }),
+    });
+    const plainSym = makeSymbolRecord({
+      name: 'ServiceB',
+      filePath: 'src/a.ts',
+      detailJson: null,
+    });
+    symbolRepo.replaceFileSymbols('test-project', 'src/a.ts', 'h1', [injectableSym, plainSym]);
+
+    const results = symbolRepo.searchByQuery({ decorator: 'Injectable', project: 'test-project', limit: 100 });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.name).toBe('ServiceA');
+  });
+
+  // [HP] regex='^get' → 이름이 'get'으로 시작하는 심볼만 반환
+  it('should return only symbols whose name matches the regex when regex filter is set', () => {
+    fileRepo.upsertFile(makeFileRecord({ filePath: 'src/b.ts', contentHash: 'h2' }));
+
+    const getter = makeSymbolRecord({ name: 'getValue', filePath: 'src/b.ts' });
+    const setter = makeSymbolRecord({ name: 'setValue', filePath: 'src/b.ts' });
+    const other = makeSymbolRecord({ name: 'processData', filePath: 'src/b.ts' });
+    symbolRepo.replaceFileSymbols('test-project', 'src/b.ts', 'h2', [getter, setter, other]);
+
+    const results = symbolRepo.searchByQuery({ regex: '^get', project: 'test-project', limit: 100 });
+
+    expect(results.length).toBe(1);
+    expect(results[0]!.name).toBe('getValue');
+  });
+
+  // [NE] 없는 decorator → 빈 배열
+  it('should return an empty array when no symbol has the given decorator', () => {
+    fileRepo.upsertFile(makeFileRecord({ filePath: 'src/c.ts', contentHash: 'h3' }));
+    symbolRepo.replaceFileSymbols('test-project', 'src/c.ts', 'h3', [
+      makeSymbolRecord({ name: 'Fn', filePath: 'src/c.ts', detailJson: null }),
+    ]);
+
+    const results = symbolRepo.searchByQuery({ decorator: 'NonExistent', project: 'test-project', limit: 100 });
+
+    expect(results).toHaveLength(0);
+  });
+
+  // [ED] invalid regex → 크래시 없이 빈 배열
+  it('should return an empty array without throwing when regex is an invalid pattern', () => {
+    fileRepo.upsertFile(makeFileRecord({ filePath: 'src/d.ts', contentHash: 'h4' }));
+    symbolRepo.replaceFileSymbols('test-project', 'src/d.ts', 'h4', [
+      makeSymbolRecord({ name: 'myFn', filePath: 'src/d.ts' }),
+    ]);
+
+    expect(() => {
+      symbolRepo.searchByQuery({ regex: '(unclosed', project: 'test-project', limit: 100 });
+    }).not.toThrow();
+  });
+});

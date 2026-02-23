@@ -1,5 +1,5 @@
 export { Gildash } from "./gildash";
-export type { GildashOptions, Logger } from "./gildash";
+export type { GildashOptions, Logger, SymbolDiff, ModuleInterface, HeritageNode, FullSymbol, FileStats, FanMetrics, ResolvedSymbol } from "./gildash";
 
 export { gildashError } from "./errors";
 export type { GildashError, GildashErrorType } from "./errors";
@@ -9,6 +9,8 @@ export type { SymbolSearchQuery, SymbolSearchResult } from "./search/symbol-sear
 export { relationSearch } from "./search/relation-search";
 export type { RelationSearchQuery } from "./search/relation-search";
 export { DependencyGraph } from "./search/dependency-graph";
+export { patternSearch } from "./search/pattern-search";
+export type { PatternMatch, PatternSearchOptions } from "./search/pattern-search";
 
 export type { IndexResult } from "./indexer/index-coordinator";
 export type { ProjectBoundary } from "./common/project-discovery";

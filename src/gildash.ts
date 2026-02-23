@@ -4,10 +4,9 @@ import { existsSync } from 'node:fs';
 import type { ParsedFile } from './parser/types';
 import { parseSource as defaultParseSource } from './parser/parse-source';
 import { ParseCache } from './parser/parse-cache';
-import type { ExtractedSymbol } from './extractor/types';
+import type { ExtractedSymbol, SymbolKind, CodeRelation } from './extractor/types';
 import { extractSymbols as defaultExtractSymbols } from './extractor/symbol-extractor';
 import { extractRelations as defaultExtractRelations } from './extractor/relation-extractor';
-import type { CodeRelation } from './extractor/types';
 import { DbConnection } from './store/connection';
 import { FileRepository } from './store/repositories/file.repository';
 import type { FileRecord } from './store/repositories/file.repository';
@@ -30,6 +29,8 @@ import { relationSearch as defaultRelationSearch } from './search/relation-searc
 import type { RelationSearchQuery } from './search/relation-search';
 import type { SymbolStats } from './store/repositories/symbol.repository';
 import { DependencyGraph } from './search/dependency-graph';
+import { patternSearch as defaultPatternSearch } from './search/pattern-search';
+import type { PatternMatch } from './search/pattern-search';
 import { gildashError, type GildashError } from './errors';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -44,6 +45,115 @@ const MAX_HEALTHCHECK_RETRIES = 10;
 export interface Logger {
   /** Log one or more error-level messages. */
   error(...args: unknown[]): void;
+}
+
+/**
+ * Result of a {@link Gildash.diffSymbols} call.
+ */
+export interface SymbolDiff {
+  /** Symbols present in `after` but not in `before`. */
+  added: SymbolSearchResult[];
+  /** Symbols present in `before` but not in `after`. */
+  removed: SymbolSearchResult[];
+  /** Symbols present in both but with a different `fingerprint`. */
+  modified: Array<{ before: SymbolSearchResult; after: SymbolSearchResult }>;
+}
+
+/**
+ * Public interface of a module — its exported symbols with key metadata.
+ * Returned by {@link Gildash.getModuleInterface}.
+ */
+export interface ModuleInterface {
+  filePath: string;
+  exports: Array<{
+    name: string;
+    kind: SymbolKind;
+    parameters?: string;
+    returnType?: string;
+    jsDoc?: string;
+  }>;
+}
+
+/**
+ * A node in the heritage chain tree returned by {@link Gildash.getHeritageChain}.
+ */
+export interface HeritageNode {
+  symbolName: string;
+  filePath: string;
+  /** Relationship kind (`extends` or `implements`). Undefined for the root query node. */
+  kind?: 'extends' | 'implements';
+  children: HeritageNode[];
+}
+
+/**
+ * Full symbol detail including members, documentation, and type information.
+ * Returned by {@link Gildash.getFullSymbol}.
+ */
+export interface FullSymbol extends SymbolSearchResult {  /** Class/interface members (methods, properties, constructors, accessors). */
+  members?: Array<{
+    name: string;
+    kind: string;
+    type?: string;
+    visibility?: string;
+    isStatic?: boolean;
+    isReadonly?: boolean;
+  }>;
+  /** JSDoc comment attached to the symbol. */
+  jsDoc?: string;
+  /** Stringified parameter list (functions/methods). */
+  parameters?: string;
+  /** Stringified return type (functions/methods). */
+  returnType?: string;
+  /** Superclass/interface names (classes/interfaces with heritage). */
+  heritage?: string[];
+  /** Decorators applied to the symbol. */
+  decorators?: Array<{ name: string; arguments?: string }>;
+  /** Stringified type parameters (generic symbols). */
+  typeParameters?: string;
+}
+
+/**
+ * File-level statistics for an indexed file.
+ * Returned by {@link Gildash.getFileStats}.
+ */
+export interface FileStats {
+  /** Absolute file path. */
+  filePath: string;
+  /** Number of lines in the file at the time of last indexing. */
+  lineCount: number;
+  /** Number of symbols indexed in the file. */
+  symbolCount: number;
+  /** Number of outgoing relations (imports, calls, etc.) from the file. */
+  relationCount: number;
+  /** File size in bytes at the time of last indexing. */
+  size: number;
+  /** Number of exported symbols in the file. */
+  exportedSymbolCount: number;
+}
+
+/**
+ * Import-graph fan metrics for a single file.
+ * Returned by {@link Gildash.getFanMetrics}.
+ */
+export interface FanMetrics {
+  /** Absolute file path queried. */
+  filePath: string;
+  /** Number of files that import this file (fan-in). */
+  fanIn: number;
+  /** Number of files this file imports (fan-out). */
+  fanOut: number;
+}
+
+/**
+ * Result of following a re-export chain to the original symbol definition.
+ */
+export interface ResolvedSymbol {
+  /** The name of the symbol at the end of the re-export chain (may differ from the queried name due to aliasing). */
+  originalName: string;
+  /** Absolute path of the file that originally defines the symbol. */
+  originalFilePath: string;
+  /** Ordered list of re-export hops between the queried file and the original definition. */
+  reExportChain: Array<{ filePath: string; exportedAs: string }>;
 }
 
 /**
@@ -76,6 +186,17 @@ export interface GildashOptions {
   parseCacheCapacity?: number;
   /** Logger for error output. Defaults to `console`. */
   logger?: Logger;
+  /**
+   * When `false`, disables the file watcher and runs in scan-only mode:
+   * ownership contention is skipped, heartbeat and signal handlers are not
+   * registered, and only the initial `fullIndex()` is performed.
+   *
+   * Set `cleanup: true` in {@link Gildash.close} to remove the database files
+   * after a one-shot scan.
+   *
+   * @default true
+   */
+  watchMode?: boolean;
 }
 
 interface GildashInternalOptions {
@@ -101,7 +222,11 @@ interface GildashInternalOptions {
   extractRelationsFn?: typeof defaultExtractRelations;
   symbolSearchFn?: typeof defaultSymbolSearch;
   relationSearchFn?: typeof defaultRelationSearch;
+  patternSearchFn?: (opts: { pattern: string; filePaths: string[] }) => Promise<PatternMatch[]>;
   loadTsconfigPathsFn?: typeof loadTsconfigPaths;
+  readFileFn?: (filePath: string) => Promise<string>;
+  unlinkFn?: (filePath: string) => Promise<void>;
+  makeExternalCoordinatorFn?: (packageDir: string, project: string) => { fullIndex(): Promise<IndexResult> };
 }
 
 /**
@@ -144,7 +269,7 @@ export class Gildash {
   private readonly db: Pick<DbConnection, 'open' | 'close' | 'transaction'> & WatcherOwnerStore;
   private readonly symbolRepo: SymbolRepository;
   private readonly relationRepo: RelationRepository;
-  private readonly fileRepo: Pick<FileRepository, 'getFile'>;
+  private readonly fileRepo: Pick<FileRepository, 'getFile' | 'getAllFiles'>;
   private readonly parseCache: Pick<ParseCache, 'set' | 'get' | 'invalidate'>;
   private coordinator: (Pick<IndexCoordinator, 'fullIndex' | 'shutdown' | 'onIndexed'> & {
     tsconfigPaths?: Promise<TsconfigPaths | null>;
@@ -157,6 +282,11 @@ export class Gildash {
   private readonly extractRelationsFn: typeof defaultExtractRelations;
   private readonly symbolSearchFn: typeof defaultSymbolSearch;
   private readonly relationSearchFn: typeof defaultRelationSearch;
+  private readonly patternSearchFn: (opts: { pattern: string; filePaths: string[] }) => Promise<PatternMatch[]>;
+  private readonly readFileFn: (filePath: string) => Promise<string>;
+  private readonly unlinkFn: (filePath: string) => Promise<void>;
+  private readonly existsSyncFn: (p: string) => boolean;
+  private readonly makeExternalCoordinatorFn?: (packageDir: string, project: string) => { fullIndex(): Promise<IndexResult> };
   private readonly logger: Logger;
   private readonly defaultProject: string;
   /** Current watcher role: `'owner'` (can reindex) or `'reader'` (read-only). */
@@ -167,13 +297,17 @@ export class Gildash {
   private tsconfigPaths: TsconfigPaths | null = null;
   private boundaries: ProjectBoundary[] = [];
   private readonly onIndexedCallbacks = new Set<(result: IndexResult) => void>();
+  /** Cached DependencyGraph — invalidated on each index run. */
+  private graphCache: DependencyGraph | null = null;
+  /** Project key of the cached graph (`project ?? '__cross__'`). */
+  private graphCacheKey: string | null = null;
 
   private constructor(opts: {
     projectRoot: string;
     db: Pick<DbConnection, 'open' | 'close' | 'transaction'> & WatcherOwnerStore;
     symbolRepo: SymbolRepository;
     relationRepo: RelationRepository;
-    fileRepo: Pick<FileRepository, 'getFile'>;
+    fileRepo: Pick<FileRepository, 'getFile' | 'getAllFiles'>;
     parseCache: Pick<ParseCache, 'set' | 'get' | 'invalidate'>;
     coordinator: (Pick<IndexCoordinator, 'fullIndex' | 'shutdown' | 'onIndexed'> & {
       tsconfigPaths?: Promise<TsconfigPaths | null>;
@@ -186,6 +320,11 @@ export class Gildash {
     extractRelationsFn: typeof defaultExtractRelations;
     symbolSearchFn: typeof defaultSymbolSearch;
     relationSearchFn: typeof defaultRelationSearch;
+    patternSearchFn: (opts: { pattern: string; filePaths: string[] }) => Promise<PatternMatch[]>;
+    readFileFn: (filePath: string) => Promise<string>;
+    unlinkFn: (filePath: string) => Promise<void>;
+    existsSyncFn: (p: string) => boolean;
+    makeExternalCoordinatorFn?: (packageDir: string, project: string) => { fullIndex(): Promise<IndexResult> };
     logger: Logger;
     defaultProject: string;
     role: 'owner' | 'reader';
@@ -204,6 +343,11 @@ export class Gildash {
     this.extractRelationsFn = opts.extractRelationsFn;
     this.symbolSearchFn = opts.symbolSearchFn;
     this.relationSearchFn = opts.relationSearchFn;
+    this.patternSearchFn = opts.patternSearchFn;
+    this.readFileFn = opts.readFileFn;
+    this.unlinkFn = opts.unlinkFn;
+    this.existsSyncFn = opts.existsSyncFn;
+    this.makeExternalCoordinatorFn = opts.makeExternalCoordinatorFn;
     this.logger = opts.logger;
     this.defaultProject = opts.defaultProject;
     this.role = opts.role;
@@ -250,7 +394,12 @@ export class Gildash {
       extractRelationsFn = defaultExtractRelations,
       symbolSearchFn = defaultSymbolSearch,
       relationSearchFn = defaultRelationSearch,
+      patternSearchFn = defaultPatternSearch,
       loadTsconfigPathsFn = loadTsconfigPaths,
+      makeExternalCoordinatorFn,
+      readFileFn = async (fp: string) => Bun.file(fp).text(),
+      unlinkFn = async (fp: string) => { await Bun.file(fp).unlink(); },
+      watchMode,
     } = options;
 
     if (!path.isAbsolute(projectRoot)) {
@@ -282,9 +431,15 @@ export class Gildash {
           };
         })();
 
-    const role = await Promise.resolve(
-      acquireWatcherRoleFn(db, process.pid, {}),
-    );
+    const isWatchMode = watchMode ?? true;
+    let role: 'owner' | 'reader';
+    if (isWatchMode) {
+      role = await Promise.resolve(
+        acquireWatcherRoleFn(db, process.pid, {}),
+      );
+    } else {
+      role = 'owner';
+    }
 
     let coordinator: (Pick<IndexCoordinator, 'fullIndex' | 'shutdown' | 'onIndexed'> & {
       tsconfigPaths?: Promise<TsconfigPaths | null>;
@@ -307,6 +462,11 @@ export class Gildash {
       extractRelationsFn: extractRelationsFn,
       symbolSearchFn: symbolSearchFn,
       relationSearchFn: relationSearchFn,
+      patternSearchFn: patternSearchFn,
+      readFileFn: readFileFn,
+      unlinkFn: unlinkFn,
+      existsSyncFn,
+      makeExternalCoordinatorFn,
       logger,
       defaultProject,
       role,
@@ -315,10 +475,6 @@ export class Gildash {
     instance.tsconfigPaths = await loadTsconfigPathsFn(projectRoot);
     instance.boundaries = boundaries;
     if (role === 'owner') {
-      const w = watcherFactory
-        ? watcherFactory()
-        : new ProjectWatcher({ projectRoot, ignorePatterns, extensions }, undefined, logger);
-
       const c = coordinatorFactory
         ? coordinatorFactory()
         : new IndexCoordinator({
@@ -335,16 +491,24 @@ export class Gildash {
           });
 
       instance.coordinator = c;
-      instance.watcher = w;
+      c.onIndexed(() => instance.invalidateGraphCache());
 
-      await w.start((event) => c.handleWatcherEvent?.(event)).then((startResult) => {
-        if (isErr(startResult)) throw startResult.data;
-      });
+      if (isWatchMode) {
+        const w = watcherFactory
+          ? watcherFactory()
+          : new ProjectWatcher({ projectRoot, ignorePatterns, extensions }, undefined, logger);
 
-      const timer = setInterval(() => {
-        updateHeartbeatFn(db, process.pid);
-      }, HEARTBEAT_INTERVAL_MS);
-      instance.timer = timer;
+        instance.watcher = w;
+
+        await w.start((event) => c.handleWatcherEvent?.(event)).then((startResult) => {
+          if (isErr(startResult)) throw startResult.data;
+        });
+
+        const timer = setInterval(() => {
+          updateHeartbeatFn(db, process.pid);
+        }, HEARTBEAT_INTERVAL_MS);
+        instance.timer = timer;
+      }
 
       await c.fullIndex();
     } else {
@@ -384,6 +548,7 @@ export class Gildash {
               for (const cb of instance.onIndexedCallbacks) {
                 promotedCoordinator.onIndexed(cb);
               }
+              promotedCoordinator.onIndexed(() => instance.invalidateGraphCache());
               await promotedWatcher.start((event) => promotedCoordinator?.handleWatcherEvent?.(event)).then((startResult) => {
                 if (isErr(startResult)) throw startResult.data;
               });
@@ -429,15 +594,17 @@ export class Gildash {
       instance.timer = timer;
     }
 
-    const signals: Array<NodeJS.Signals | 'beforeExit'> = ['SIGTERM', 'SIGINT', 'beforeExit'];
-    for (const sig of signals) {
-      const handler = () => { instance.close().catch(err => logger.error('[Gildash] close error during signal', sig, err)); };
-      if (sig === 'beforeExit') {
-        process.on('beforeExit', handler);
-      } else {
-        process.on(sig, handler);
+    if (isWatchMode) {
+      const signals: Array<NodeJS.Signals | 'beforeExit'> = ['SIGTERM', 'SIGINT', 'beforeExit'];
+      for (const sig of signals) {
+        const handler = () => { instance.close().catch(err => logger.error('[Gildash] close error during signal', sig, err)); };
+        if (sig === 'beforeExit') {
+          process.on('beforeExit', handler);
+        } else {
+          process.on(sig, handler);
+        }
+        instance.signalHandlers.push([sig, handler]);
       }
-      instance.signalHandlers.push([sig, handler]);
     }
 
     return instance;
@@ -467,7 +634,7 @@ export class Gildash {
    * }
    * ```
    */
-  async close(): Promise<Result<void, GildashError>> {
+  async close(opts?: { cleanup?: boolean }): Promise<Result<void, GildashError>> {
     if (this.closed) return;
     this.closed = true;
 
@@ -510,6 +677,14 @@ export class Gildash {
       this.db.close();
     } catch (err) {
       closeErrors.push(err instanceof Error ? err : new Error(String(err)));
+    }
+
+    if (opts?.cleanup) {
+      for (const ext of ['', '-wal', '-shm']) {
+        try {
+          await this.unlinkFn(path.join(this.projectRoot, '.zipbul', 'gildash.db' + ext));
+        } catch {}
+      }
     }
 
     if (closeErrors.length > 0) {
@@ -625,6 +800,33 @@ export class Gildash {
     );
   }
 
+  /** Invalidate the cached DependencyGraph (called after every index run). */
+  private invalidateGraphCache(): void {
+    this.graphCache = null;
+    this.graphCacheKey = null;
+  }
+
+  /**
+   * Return a cached or freshly-built {@link DependencyGraph} for the given project.
+   *
+   * Builds once per `project ?? '__cross__'` key; subsequent calls with the same key
+   * return the cached instance. Cache is invalidated by {@link invalidateGraphCache}.
+   */
+  private getOrBuildGraph(project?: string): DependencyGraph {
+    const key = project ?? '__cross__';
+    if (this.graphCache && this.graphCacheKey === key) {
+      return this.graphCache;
+    }
+    const g = new DependencyGraph({
+      relationRepo: this.relationRepo,
+      project: project ?? this.defaultProject,
+    });
+    g.build();
+    this.graphCache = g;
+    this.graphCacheKey = key;
+    return g;
+  }
+
   /**
    * Trigger a full re-index of all tracked files.
    *
@@ -651,7 +853,9 @@ export class Gildash {
       return err(gildashError('closed', 'Gildash: reindex() is not available for readers'));
     }
     try {
-      return await this.coordinator.fullIndex();
+      const result = await this.coordinator.fullIndex();
+      this.invalidateGraphCache();
+      return result;
     } catch (e) {
       return err(gildashError('index', 'Gildash: reindex failed', e));
     }
@@ -740,6 +944,116 @@ export class Gildash {
   }
 
   /**
+   * Search symbols across all projects (no project filter).
+   *
+   * @param query - Search filters (see {@link SymbolSearchQuery}). The `project` field is ignored.
+   * @returns An array of {@link SymbolSearchResult} entries, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if the query fails.
+   */
+  searchAllSymbols(query: Omit<SymbolSearchQuery, 'project'> & { project?: string }): Result<SymbolSearchResult[], GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      return this.symbolSearchFn({ symbolRepo: this.symbolRepo, project: undefined, query });
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: searchAllSymbols failed', e));
+    }
+  }
+
+  /**
+   * Search relations across all projects (no project filter).
+   *
+   * @param query - Search filters (see {@link RelationSearchQuery}). The `project` field is ignored.
+   * @returns An array of {@link CodeRelation} entries, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if the query fails.
+   */
+  searchAllRelations(query: RelationSearchQuery): Result<CodeRelation[], GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      return this.relationSearchFn({ relationRepo: this.relationRepo, project: undefined, query });
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: searchAllRelations failed', e));
+    }
+  }
+
+  /**
+   * List all files indexed for a given project.
+   *
+   * @param project - Project name. Defaults to the primary project.
+   * @returns An array of {@link FileRecord} entries, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='store'` if the repository query fails.
+   */
+  listIndexedFiles(project?: string): Result<FileRecord[], GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      return this.fileRepo.getAllFiles(project ?? this.defaultProject);
+    } catch (e) {
+      return err(gildashError('store', 'Gildash: listIndexedFiles failed', e));
+    }
+  }
+
+  /**
+   * Get all intra-file relations for a given file (relations where both source and destination
+   * are within the same file).
+   *
+   * @param filePath - Path of the file to query.
+   * @param project - Project name. Defaults to the primary project.
+   * @returns An array of {@link CodeRelation} entries, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if the query fails.
+   */
+  getInternalRelations(filePath: string, project?: string): Result<CodeRelation[], GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      return this.relationSearchFn({
+        relationRepo: this.relationRepo,
+        project: project ?? this.defaultProject,
+        query: { srcFilePath: filePath, dstFilePath: filePath, limit: 10_000 },
+      });
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getInternalRelations failed', e));
+    }
+  }
+
+  /**
+   * Compare two snapshots of symbol search results and return a structured diff.
+   *
+   * Symbols are keyed by `name::filePath`. A symbol is:
+   * - **added** if it appears only in `after`
+   * - **removed** if it appears only in `before`
+   * - **modified** if it appears in both but with a different `fingerprint`
+   * - **unchanged** otherwise
+   *
+   * @param before - Snapshot of symbols before the change.
+   * @param after - Snapshot of symbols after the change.
+   * @returns A {@link SymbolDiff} object.
+   */
+  diffSymbols(
+    before: SymbolSearchResult[],
+    after: SymbolSearchResult[],
+  ): SymbolDiff {
+    const beforeMap = new Map<string, SymbolSearchResult>(before.map(s => [`${s.name}::${s.filePath}`, s]));
+    const afterMap = new Map<string, SymbolSearchResult>(after.map(s => [`${s.name}::${s.filePath}`, s]));
+    const added: SymbolSearchResult[] = [];
+    const removed: SymbolSearchResult[] = [];
+    const modified: Array<{ before: SymbolSearchResult; after: SymbolSearchResult }> = [];
+    for (const [key, afterSym] of afterMap) {
+      const beforeSym = beforeMap.get(key);
+      if (!beforeSym) {
+        added.push(afterSym);
+      } else if (beforeSym.fingerprint !== afterSym.fingerprint) {
+        modified.push({ before: beforeSym, after: afterSym });
+      }
+    }
+    for (const [key, beforeSym] of beforeMap) {
+      if (!afterMap.has(key)) removed.push(beforeSym);
+    }
+    return { added, removed, modified };
+  }
+
+  /**
    * List the files that a given file directly imports.
    *
    * @param filePath - Absolute path of the source file.
@@ -819,11 +1133,7 @@ export class Gildash {
   async getAffected(changedFiles: string[], project?: string): Promise<Result<string[], GildashError>> {
     if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
     try {
-      const g = new DependencyGraph({
-        relationRepo: this.relationRepo,
-        project: project ?? this.defaultProject,
-      });
-      await g.build();
+      const g = this.getOrBuildGraph(project);
       return g.getAffectedByChange(changedFiles);
     } catch (e) {
       return err(gildashError('search', 'Gildash: getAffected failed', e));
@@ -852,14 +1162,513 @@ export class Gildash {
   async hasCycle(project?: string): Promise<Result<boolean, GildashError>> {
     if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
     try {
-      const g = new DependencyGraph({
-        relationRepo: this.relationRepo,
-        project: project ?? this.defaultProject,
-      });
-      await g.build();
+      const g = this.getOrBuildGraph(project);
       return g.hasCycle();
     } catch (e) {
       return err(gildashError('search', 'Gildash: hasCycle failed', e));
+    }
+  }
+
+  /**
+   * Return the full import graph for a project as an adjacency list.
+   *
+   * Builds a {@link DependencyGraph} and exposes its internal adjacency list.
+   * Each file appears as a key; its value lists the files it directly imports.
+   * Files that are imported but do not themselves import appear as keys with empty arrays.
+   *
+   * @param project - Project name. Defaults to the primary project.
+   * @returns A `Map<filePath, importedFilePaths[]>`, or `Err<GildashError>` with
+   *   `type='closed'` / `type='search'`.
+   */
+  async getImportGraph(project?: string): Promise<Result<Map<string, string[]>, GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const g = this.getOrBuildGraph(project);
+      return g.getAdjacencyList();
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getImportGraph failed', e));
+    }
+  }
+
+  /**
+   * Return all files that `filePath` transitively imports (forward BFS).
+   *
+   * @param filePath - Absolute path of the starting file.
+   * @param project - Project name. Defaults to the primary project.
+   * @returns An array of file paths that `filePath` directly or indirectly imports,
+   *   or `Err<GildashError>` with `type='closed'` / `type='search'`.
+   */
+  async getTransitiveDependencies(filePath: string, project?: string): Promise<Result<string[], GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const g = this.getOrBuildGraph(project);
+      return g.getTransitiveDependencies(filePath);
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getTransitiveDependencies failed', e));
+    }
+  }
+
+  /**
+   * Return all cycle paths in the import graph.
+   *
+   * Uses DFS with canonical form deduplication.
+   *
+   * @param project - Project name. Defaults to the primary project.
+   * @returns An array of cycle paths (`string[][]`), each starting at the lexicographically
+   *   smallest node in the cycle. Returns `[]` if no cycles exist.
+   *   Returns `Err<GildashError>` with `type='closed'` / `type='search'`.
+   */
+  async getCyclePaths(project?: string): Promise<Result<string[][], GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const g = this.getOrBuildGraph(project);
+      return g.getCyclePaths();
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getCyclePaths failed', e));
+    }
+  }
+
+  /**
+   * Find exported symbols that are never imported anywhere in the project.
+   *
+   * A symbol is considered "dead" if no `imports` or `re-exports` relation in the
+   * project references it by name (matching both `dstFilePath` and `dstSymbolName`).
+   * Exports from entry-point files are excluded by default.
+   *
+   * @param project - Project name. Defaults to the primary project.
+   * @param opts.entryPoints - File paths whose exports are excluded from dead-export detection.
+   *   Defaults to files named `index.ts`, `index.mts`, or `main.ts` anywhere in the project.
+   *   Pass `[]` to disable all entry-point filtering.
+   * @returns An array of `{ symbolName, filePath }` for dead exports,
+   *   or `Err<GildashError>` with `type='closed'` / `type='store'`.
+   */
+  getDeadExports(
+    project?: string,
+    opts?: { entryPoints?: string[] },
+  ): Result<Array<{ symbolName: string; filePath: string }>, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const effectiveProject = project ?? this.defaultProject;
+
+      // 1. Collect all exported symbols
+      const exports = this.symbolRepo.searchByQuery({
+        project: effectiveProject,
+        isExported: true,
+        limit: 100_000,
+      });
+
+      // 2. Collect (dstFilePath::dstSymbolName) from imports + re-exports relations
+      const importedSymbols = new Set<string>();
+      for (const relType of ['imports', 're-exports'] as const) {
+        const relations = this.relationRepo.getByType(effectiveProject, relType);
+        for (const rel of relations) {
+          if (rel.dstSymbolName != null) {
+            importedSymbols.add(`${rel.dstFilePath}::${rel.dstSymbolName}`);
+          }
+        }
+      }
+
+      // 3. Determine entry-point file paths to exclude
+      const entryPoints = opts?.entryPoints;
+      const defaultEntryBasenames = ['index.ts', 'index.mts', 'main.ts'];
+
+      // 4. Filter dead exports
+      const dead = exports
+        .filter((sym) => {
+          // Skip if already imported
+          if (importedSymbols.has(`${sym.filePath}::${sym.name}`)) return false;
+
+          // Skip if from an entry-point file
+          if (entryPoints !== undefined) {
+            // User-supplied list (may be empty → no exclusions)
+            return !entryPoints.includes(sym.filePath);
+          }
+          // Default: exclude files whose basename matches the default entry names
+          const basename = sym.filePath.split('/').pop() ?? sym.filePath;
+          return !defaultEntryBasenames.includes(basename);
+        })
+        .map((sym) => ({ symbolName: sym.name, filePath: sym.filePath }));
+
+      return dead;
+    } catch (e) {
+      return err(gildashError('store', 'Gildash: getDeadExports failed', e));
+    }
+  }
+
+  /**
+   * Retrieve full details for a named symbol in a specific file,
+   * including members, documentation, and type information.
+   *
+   * @param symbolName - Exact symbol name to look up.
+   * @param filePath   - Absolute path of the file containing the symbol.
+   * @param project    - Project scope override (defaults to `defaultProject`).
+   * @returns A {@link FullSymbol} on success, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if the symbol is not found or the query fails.
+   */
+  getFullSymbol(
+    symbolName: string,
+    filePath: string,
+    project?: string,
+  ): Result<FullSymbol, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const effectiveProject = project ?? this.defaultProject;
+      const results = this.symbolSearchFn({
+        symbolRepo: this.symbolRepo,
+        project: effectiveProject,
+        query: { text: symbolName, exact: true, filePath, limit: 1 },
+      });
+      if (results.length === 0) {
+        return err(gildashError('search', `Gildash: symbol '${symbolName}' not found in '${filePath}'`));
+      }
+      const sym = results[0]!;
+      const d = sym.detail;
+      const full: FullSymbol = {
+        ...sym,
+        members: Array.isArray(d.members) ? (d.members as FullSymbol['members']) : undefined,
+        jsDoc: typeof d.jsDoc === 'string' ? d.jsDoc : undefined,
+        parameters: typeof d.parameters === 'string' ? d.parameters : undefined,
+        returnType: typeof d.returnType === 'string' ? d.returnType : undefined,
+        heritage: Array.isArray(d.heritage) ? (d.heritage as string[]) : undefined,
+        decorators: Array.isArray(d.decorators) ? (d.decorators as FullSymbol['decorators']) : undefined,
+        typeParameters: typeof d.typeParameters === 'string' ? d.typeParameters : undefined,
+      };
+      return full;
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getFullSymbol failed', e));
+    }
+  }
+
+  /**
+   * Retrieve statistics for an indexed file (line count, symbol count, etc.).
+   *
+   * @param filePath - Absolute path of the file to query.
+   * @param project  - Project scope override (defaults to `defaultProject`).
+   * @returns A {@link FileStats} on success, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if the file is not in the index,
+   *   `type='store'` if the query throws.
+   */
+  getFileStats(
+    filePath: string,
+    project?: string,
+  ): Result<FileStats, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const effectiveProject = project ?? this.defaultProject;
+      const fileRecord = this.fileRepo.getFile(effectiveProject, filePath);
+      if (!fileRecord) {
+        return err(gildashError('search', `Gildash: file '${filePath}' is not in the index`));
+      }
+      const symbols = this.symbolRepo.getFileSymbols(effectiveProject, filePath);
+      const relations = this.relationRepo.getOutgoing(effectiveProject, filePath);
+      return {
+        filePath: fileRecord.filePath,
+        lineCount: fileRecord.lineCount ?? 0,
+        size: fileRecord.size,
+        symbolCount: symbols.length,
+        exportedSymbolCount: symbols.filter((s) => s.isExported).length,
+        relationCount: relations.length,
+      };
+    } catch (e) {
+      return err(gildashError('store', 'Gildash: getFileStats failed', e));
+    }
+  }
+
+  /**
+   * Compute import-graph fan metrics (fan-in / fan-out) for a single file.
+   *
+   * Builds a full {@link DependencyGraph} each call (O(relations)).
+   * For repeated calls, consider caching the graph externally.
+   *
+   * @param filePath - Absolute path of the file to query.
+   * @param project  - Project scope override (defaults to `defaultProject`).
+   * @returns A {@link FanMetrics} on success, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if the graph build fails.
+   */
+  async getFanMetrics(
+    filePath: string,
+    project?: string,
+  ): Promise<Result<FanMetrics, GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const g = this.getOrBuildGraph(project);
+      return {
+        filePath,
+        fanIn: g.getDependents(filePath).length,
+        fanOut: g.getDependencies(filePath).length,
+      };
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getFanMetrics failed', e));
+    }
+  }
+
+  /**
+   * Resolve the original definition location of a symbol by following its re-export chain.
+   *
+   * Traverses `re-exports` relations iteratively until no further hop is found or a
+   * circular chain is detected.
+   *
+   * @param symbolName - The exported name to resolve.
+   * @param filePath   - The file from which the symbol is exported.
+   * @param project    - Project scope override (defaults to `defaultProject`).
+   * @returns A {@link ResolvedSymbol} on success, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if a circular re-export chain is detected.
+   */
+  resolveSymbol(
+    symbolName: string,
+    filePath: string,
+    project?: string,
+  ): Result<ResolvedSymbol, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    const effectiveProject = project ?? this.defaultProject;
+    const visited = new Set<string>();
+    const chain: Array<{ filePath: string; exportedAs: string }> = [];
+
+    let currentName = symbolName;
+    let currentFile = filePath;
+
+    for (;;) {
+      const key = `${currentFile}::${currentName}`;
+      if (visited.has(key)) {
+        return err(gildashError('search', 'Gildash: resolveSymbol detected circular re-export chain'));
+      }
+      visited.add(key);
+
+      const rels = this.relationSearchFn({
+        relationRepo: this.relationRepo,
+        project: effectiveProject,
+        query: { type: 're-exports', srcFilePath: currentFile, limit: 500 },
+      }) as CodeRelation[];
+
+      let nextFile: string | undefined;
+      let nextName: string | undefined;
+
+      for (const rel of rels) {
+        let specifiers: Array<{ local: string; exported: string }> | undefined;
+        if (rel.metaJson) {
+          try {
+            const meta = JSON.parse(rel.metaJson) as Record<string, unknown>;
+            if (Array.isArray(meta['specifiers'])) {
+              specifiers = meta['specifiers'] as Array<{ local: string; exported: string }>;
+            }
+          } catch { /* ignore malformed metaJson */ }
+        }
+        if (!specifiers) continue;
+        const match = specifiers.find((s) => s.exported === currentName);
+        if (!match) continue;
+        nextFile = rel.dstFilePath;
+        nextName = match.local;
+        break;
+      }
+
+      if (!nextFile || !nextName) {
+        return { originalName: currentName, originalFilePath: currentFile, reExportChain: chain };
+      }
+
+      chain.push({ filePath: currentFile, exportedAs: currentName });
+      currentFile = nextFile;
+      currentName = nextName;
+    }
+  }
+
+  /**
+   * Search for an AST structural pattern across indexed TypeScript files.
+   *
+   * Uses ast-grep's `findInFiles` under the hood. Provide `opts.filePaths` to
+   * limit search scope; otherwise all files tracked by the project index are searched.
+   *
+   * @param pattern   - ast-grep structural pattern (e.g. `'console.log($$$)'`).
+   * @param opts      - Optional scope: file paths and/or project override.
+   * @returns An array of {@link PatternMatch} on success, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if the underlying search fails.
+   */
+  async findPattern(
+    pattern: string,
+    opts?: { filePaths?: string[]; project?: string },
+  ): Promise<Result<PatternMatch[], GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const effectiveProject = opts?.project ?? this.defaultProject;
+      const filePaths: string[] = opts?.filePaths
+        ? opts.filePaths
+        : this.fileRepo.getAllFiles(effectiveProject).map((f) => f.filePath);
+
+      return await this.patternSearchFn({ pattern, filePaths });
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: findPattern failed', e));
+    }
+  }
+
+  /**
+   * Index the TypeScript type declarations (`.d.ts` files) of one or more
+   * `node_modules` packages.
+   *
+   * Each package is indexed under a dedicated `@external/<packageName>` project
+   * so it does not pollute the main project index. Subsequent calls re-index
+   * (incremental diff) the same package.
+   *
+   * @param packages - Package names as they appear in `node_modules/`
+   *   (e.g. `['react', 'typescript']`).
+   * @param opts     - Optional overrides (unused currently, reserved for future use).
+   * @returns An array of {@link IndexResult} — one per package — on success,
+   *   or `Err<GildashError>` with:
+   *   - `type='closed'` if the instance is closed or in reader mode,
+   *   - `type='validation'` if a requested package is not found in `node_modules/`,
+   *   - `type='store'` if indexing fails at runtime.
+   */
+  async indexExternalPackages(
+    packages: string[],
+    opts?: { project?: string },
+  ): Promise<Result<IndexResult[], GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    if (this.role !== 'owner') {
+      return err(gildashError('closed', 'Gildash: indexExternalPackages() is not available for readers'));
+    }
+    try {
+      const results: IndexResult[] = [];
+      for (const packageName of packages) {
+        const packageDir = path.resolve(this.projectRoot, 'node_modules', packageName);
+        if (!this.existsSyncFn(packageDir)) {
+          return err(gildashError('validation', `Gildash: package not found in node_modules: ${packageName}`));
+        }
+        const project = `@external/${packageName}`;
+        const coordinator = this.makeExternalCoordinatorFn
+          ? this.makeExternalCoordinatorFn(packageDir, project)
+          : new IndexCoordinator({
+              projectRoot: packageDir,
+              boundaries: [{ dir: '.', project }],
+              extensions: ['.d.ts'],
+              ignorePatterns: [],
+              dbConnection: this.db,
+              parseCache: this.parseCache,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              fileRepo: this.fileRepo as any,
+              symbolRepo: this.symbolRepo,
+              relationRepo: this.relationRepo,
+              logger: this.logger,
+            });
+        const result = await coordinator.fullIndex();
+        results.push(result);
+      }
+      return results;
+    } catch (e) {
+      return err(gildashError('store', 'Gildash: indexExternalPackages failed', e));
+    }
+  }
+
+  /**
+   * Parse multiple files concurrently and return a map of results.
+   *
+   * Files that fail to read or parse are silently excluded from the result map.
+   * The operation does not fail even if every file fails — it returns an empty `Map`.
+   *
+   * @param filePaths - Absolute paths of files to parse.
+   * @returns A `Map<filePath, ParsedFile>` for every successfully-parsed file,
+   *   or `Err<GildashError>` with `type='closed'` if the instance is closed.
+   */
+  async batchParse(filePaths: string[]): Promise<Result<Map<string, ParsedFile>, GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    const result = new Map<string, ParsedFile>();
+    await Promise.all(
+      filePaths.map(async (fp) => {
+        try {
+          const text = await this.readFileFn(fp);
+          const parsed = this.parseSourceFn(fp, text);
+          if (!isErr(parsed)) {
+            result.set(fp, parsed as ParsedFile);
+          }
+        } catch {
+          // silently exclude failed files
+        }
+      }),
+    );
+    return result;
+  }
+
+  /**
+   * Return the public interface of a module: all exported symbols with key metadata.
+   *
+   * @param filePath - Absolute path of the file.
+   * @param project - Project name. Defaults to the primary project.
+   * @returns A {@link ModuleInterface} object, or `Err<GildashError>` with
+   *   `type='closed'` / `type='search'`.
+   */
+  getModuleInterface(filePath: string, project?: string): Result<ModuleInterface, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const symbols = this.symbolSearchFn({
+        symbolRepo: this.symbolRepo,
+        project: project ?? this.defaultProject,
+        query: { filePath, isExported: true },
+      }) as SymbolSearchResult[];
+      const exports = symbols.map((s) => ({
+        name: s.name,
+        kind: s.kind,
+        parameters: (s.detail.parameters as string | undefined) ?? undefined,
+        returnType: (s.detail.returnType as string | undefined) ?? undefined,
+        jsDoc: (s.detail.jsDoc as string | undefined) ?? undefined,
+      }));
+      return { filePath, exports };
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getModuleInterface failed', e));
+    }
+  }
+
+  /**
+   * Recursively traverse `extends`/`implements` relations to build a heritage tree.
+   *
+   * The root node represents `symbolName`/`filePath`. Its `children` are the symbols
+   * it extends or implements, and so on transitively. A visited set prevents cycles.
+   *
+   * @param symbolName - Name of the starting symbol.
+   * @param filePath - Absolute path of the file containing the symbol.
+   * @param project - Project name. Defaults to the primary project.
+   * @returns A {@link HeritageNode} tree, or `Err<GildashError>` with
+   *   `type='closed'` / `type='search'`.
+   */
+  async getHeritageChain(
+    symbolName: string,
+    filePath: string,
+    project?: string,
+  ): Promise<Result<HeritageNode, GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const proj = project ?? this.defaultProject;
+      const visited = new Set<string>();
+
+      const buildNode = (symName: string, fp: string, kind?: 'extends' | 'implements'): HeritageNode => {
+        const key = `${symName}::${fp}`;
+        if (visited.has(key)) {
+          return { symbolName: symName, filePath: fp, kind, children: [] };
+        }
+        visited.add(key);
+
+        const rels = this.relationSearchFn({
+          relationRepo: this.relationRepo,
+          project: proj,
+          query: { srcFilePath: fp, srcSymbolName: symName, limit: 1000 },
+        }) as CodeRelation[];
+
+        const heritageRels = rels.filter(
+          (r): r is CodeRelation & { type: 'extends' | 'implements' } =>
+            r.type === 'extends' || r.type === 'implements',
+        );
+
+        const children = heritageRels
+          .filter((r) => r.dstSymbolName != null)
+          .map((r) => buildNode(r.dstSymbolName!, r.dstFilePath, r.type));
+
+        return { symbolName: symName, filePath: fp, kind, children };
+      };
+
+      return buildNode(symbolName, filePath);
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getHeritageChain failed', e));
     }
   }
 
