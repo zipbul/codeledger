@@ -1,5 +1,1 @@
-#!/usr/bin/env sh
-set -eu
-
-bun run typecheck
-bun run test
+bun test

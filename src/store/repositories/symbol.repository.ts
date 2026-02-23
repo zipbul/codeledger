@@ -145,6 +145,7 @@ export class SymbolRepository {
 
   searchByQuery(opts: {
     ftsQuery?: string;
+    exactName?: string;
     kind?: string;
     filePath?: string;
     isExported?: boolean;
@@ -159,6 +160,7 @@ export class SymbolRepository {
           opts.ftsQuery
             ? sql`${symbols.id} IN (SELECT rowid FROM symbols_fts WHERE symbols_fts MATCH ${opts.ftsQuery})`
             : undefined,
+          opts.exactName ? eq(symbols.name, opts.exactName) : undefined,
           opts.project !== undefined ? eq(symbols.project, opts.project) : undefined,
           opts.kind ? eq(symbols.kind, opts.kind) : undefined,
           opts.filePath !== undefined ? eq(symbols.filePath, opts.filePath) : undefined,

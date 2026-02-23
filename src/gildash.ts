@@ -10,6 +10,7 @@ import { extractRelations as defaultExtractRelations } from './extractor/relatio
 import type { CodeRelation } from './extractor/types';
 import { DbConnection } from './store/connection';
 import { FileRepository } from './store/repositories/file.repository';
+import type { FileRecord } from './store/repositories/file.repository';
 import { SymbolRepository } from './store/repositories/symbol.repository';
 import { RelationRepository } from './store/repositories/relation.repository';
 import { ProjectWatcher } from './watcher/project-watcher';
@@ -86,7 +87,7 @@ interface GildashInternalOptions {
     handleWatcherEvent?(event: FileChangeEvent): void;
   };
   repositoryFactory?: () => {
-    fileRepo: Pick<FileRepository, 'upsertFile' | 'getAllFiles' | 'getFilesMap' | 'deleteFile'>;
+    fileRepo: Pick<FileRepository, 'upsertFile' | 'getAllFiles' | 'getFilesMap' | 'deleteFile' | 'getFile'>;
     symbolRepo: SymbolRepository;
     relationRepo: RelationRepository;
     parseCache: Pick<ParseCache, 'set' | 'get' | 'invalidate'>;
@@ -143,6 +144,7 @@ export class Gildash {
   private readonly db: Pick<DbConnection, 'open' | 'close' | 'transaction'> & WatcherOwnerStore;
   private readonly symbolRepo: SymbolRepository;
   private readonly relationRepo: RelationRepository;
+  private readonly fileRepo: Pick<FileRepository, 'getFile'>;
   private readonly parseCache: Pick<ParseCache, 'set' | 'get' | 'invalidate'>;
   private coordinator: (Pick<IndexCoordinator, 'fullIndex' | 'shutdown' | 'onIndexed'> & {
     tsconfigPaths?: Promise<TsconfigPaths | null>;
@@ -171,6 +173,7 @@ export class Gildash {
     db: Pick<DbConnection, 'open' | 'close' | 'transaction'> & WatcherOwnerStore;
     symbolRepo: SymbolRepository;
     relationRepo: RelationRepository;
+    fileRepo: Pick<FileRepository, 'getFile'>;
     parseCache: Pick<ParseCache, 'set' | 'get' | 'invalidate'>;
     coordinator: (Pick<IndexCoordinator, 'fullIndex' | 'shutdown' | 'onIndexed'> & {
       tsconfigPaths?: Promise<TsconfigPaths | null>;
@@ -191,6 +194,7 @@ export class Gildash {
     this.db = opts.db;
     this.symbolRepo = opts.symbolRepo;
     this.relationRepo = opts.relationRepo;
+    this.fileRepo = opts.fileRepo;
     this.parseCache = opts.parseCache;
     this.coordinator = opts.coordinator;
     this.watcher = opts.watcher;
@@ -293,6 +297,7 @@ export class Gildash {
       db,
       symbolRepo: repos.symbolRepo,
       relationRepo: repos.relationRepo,
+      fileRepo: repos.fileRepo,
       parseCache: repos.parseCache,
       coordinator,
       watcher,
@@ -856,5 +861,51 @@ export class Gildash {
     } catch (e) {
       return err(gildashError('search', 'Gildash: hasCycle failed', e));
     }
+  }
+
+  /**
+   * Retrieve a previously-parsed AST from the internal LRU cache.
+   *
+   * Returns `undefined` if the file has not been parsed or was evicted from the cache.
+   * The returned object is shared with the internal cache — treat it as **read-only**.
+   *
+   * @param filePath - Absolute path of the file.
+   * @returns The cached {@link ParsedFile}, or `undefined` if not available.
+   */
+  getParsedAst(filePath: string): ParsedFile | undefined {
+    if (this.closed) return undefined;
+    return this.parseCache.get(filePath);
+  }
+
+  /**
+   * Retrieve metadata for an indexed file.
+   *
+   * Returns the stored {@link FileRecord} including content hash, mtime, and size.
+   * Returns `null` if the file has not been indexed yet.
+   *
+   * @param filePath - Relative path from project root (as stored in the index).
+   * @param project - Project name. Defaults to the primary project.
+   * @returns The {@link FileRecord}, or `null` if not found.
+   */
+  getFileInfo(filePath: string, project?: string): Result<FileRecord | null, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      return this.fileRepo.getFile(project ?? this.defaultProject, filePath);
+    } catch (e) {
+      return err(gildashError('store', 'Gildash: getFileInfo failed', e));
+    }
+  }
+
+  /**
+   * List all symbols declared in a specific file.
+   *
+   * Convenience wrapper around {@link searchSymbols} with a `filePath` filter.
+   *
+   * @param filePath - File path to query.
+   * @param project - Project name. Defaults to the primary project.
+   * @returns An array of {@link SymbolSearchResult} entries, or `Err<GildashError>`.
+   */
+  getSymbolsByFile(filePath: string, project?: string): Result<SymbolSearchResult[], GildashError> {
+    return this.searchSymbols({ filePath, project: project ?? undefined, limit: 10_000 });
   }
 }

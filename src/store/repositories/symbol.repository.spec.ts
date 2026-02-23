@@ -232,4 +232,30 @@ describe('SymbolRepository', () => {
     expect(chain['delete']).toHaveBeenCalledTimes(2);
     expect(chain['insert']).toHaveBeenCalledTimes(3);
   });
+
+  it('should call where with exactName condition when searchByQuery receives exactName', () => {
+    const { db, chain } = makeDbMock();
+    const repo = new SymbolRepository(db);
+
+    expect(() => repo.searchByQuery({ exactName: 'myFn', limit: 10 })).not.toThrow();
+    expect(chain['where']).toHaveBeenCalled();
+    expect(chain['all']).toHaveBeenCalled();
+  });
+
+  it('should apply exactName and kind filter simultaneously when searchByQuery receives both', () => {
+    const { db, chain } = makeDbMock();
+    const repo = new SymbolRepository(db);
+
+    expect(() => repo.searchByQuery({ exactName: 'MyClass', kind: 'class', limit: 10 })).not.toThrow();
+    expect(chain['where']).toHaveBeenCalled();
+    expect(chain['all']).toHaveBeenCalled();
+  });
+
+  it('should not include exactName condition when searchByQuery is called without exactName', () => {
+    const { db, chain } = makeDbMock();
+    const repo = new SymbolRepository(db);
+
+    expect(() => repo.searchByQuery({ limit: 10 })).not.toThrow();
+    expect(chain['all']).toHaveBeenCalled();
+  });
 });

@@ -21,6 +21,7 @@
       },
       "peerDependencies": {
         "@zipbul/result": "^0.0.3",
+        "oxc-parser": ">=0.114.0",
       },
     },
   },

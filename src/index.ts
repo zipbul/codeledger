@@ -15,3 +15,5 @@ export type { ProjectBoundary } from "./common/project-discovery";
 export type { CodeRelation, SymbolKind } from "./extractor/types";
 export type { SymbolStats } from "./store/repositories/symbol.repository";
 export type { WatcherRole } from "./watcher/types";
+export type { ParsedFile } from "./parser/types";
+export type { FileRecord } from "./store/repositories/file.repository";
