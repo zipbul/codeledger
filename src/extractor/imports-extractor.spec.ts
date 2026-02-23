@@ -154,7 +154,7 @@ describe('extractImports', () => {
     const relations = extractImports(ast, FILE, undefined, mockResolveImport);
 
     expect(relations).toHaveLength(1);
-    expect(relations[0]!.type).toBe('imports');
+    expect(relations[0]!.type).toBe('type-references');
     expect(relations[0]!.metaJson).toContain('"isType":true');
   });
 
@@ -521,5 +521,86 @@ describe('extractImports', () => {
     const r2 = extractImports(ast, FILE, undefined, mockResolveImport);
 
     expect(r1).toEqual(r2);
+  });
+
+  // --- IMP-E: type-references relation type ---
+
+  // 30. [HP] import type { Foo } → type: 'type-references'
+  it('should produce relation with type type-references when import declaration is statement-level type-only', () => {
+    const ast = fakeAst([
+      {
+        type: 'ImportDeclaration',
+        source: { value: './types' },
+        importKind: 'type',
+        specifiers: [
+          { type: 'ImportSpecifier', imported: { name: 'Foo' }, local: { name: 'Foo' }, importKind: 'value' },
+        ],
+      },
+    ]);
+    const relations = extractImports(ast, FILE, undefined, mockResolveImport);
+
+    expect(relations).toHaveLength(1);
+    expect(relations[0]!.type).toBe('type-references');
+    expect(relations[0]!.metaJson).toContain('"isType":true');
+  });
+
+  // 31. [HP] import { Foo } → type: 'imports' (regression)
+  it('should produce relation with type imports when import declaration is non-type named import', () => {
+    const ast = fakeAst([
+      {
+        type: 'ImportDeclaration',
+        source: { value: './bar' },
+        importKind: 'value',
+        specifiers: [
+          { type: 'ImportSpecifier', imported: { name: 'Foo' }, local: { name: 'Foo' }, importKind: 'value' },
+        ],
+      },
+    ]);
+    const relations = extractImports(ast, FILE, undefined, mockResolveImport);
+
+    expect(relations[0]!.type).toBe('imports');
+  });
+
+  // 32. [CO] import { type Foo, Bar } → Foo: 'type-references', Bar: 'imports'
+  it('should produce type-references for type specifier and imports for value specifier when mixed specifier-level types', () => {
+    const ast = fakeAst([
+      {
+        type: 'ImportDeclaration',
+        source: { value: './mixed' },
+        importKind: 'value',
+        specifiers: [
+          { type: 'ImportSpecifier', imported: { name: 'Foo' }, local: { name: 'Foo' }, importKind: 'type' },
+          { type: 'ImportSpecifier', imported: { name: 'Bar' }, local: { name: 'Bar' }, importKind: 'value' },
+        ],
+      },
+    ]);
+    const relations = extractImports(ast, FILE, undefined, mockResolveImport);
+
+    expect(relations).toHaveLength(2);
+    expect(relations[0]!.type).toBe('type-references');
+    expect(relations[0]!.dstSymbolName).toBe('Foo');
+    expect(relations[1]!.type).toBe('imports');
+    expect(relations[1]!.dstSymbolName).toBe('Bar');
+  });
+
+  // 33. [HP] export type { T } from './foo' → type: 'type-references' + isReExport
+  it('should produce type-references relation with isReExport true when re-export is type-only', () => {
+    const ast = fakeAst([
+      {
+        type: 'ExportNamedDeclaration',
+        source: { value: './types' },
+        exportKind: 'type',
+        specifiers: [
+          { type: 'ExportSpecifier', local: { name: 'T' }, exported: { name: 'T' } },
+        ],
+      },
+    ]);
+    const relations = extractImports(ast, FILE, undefined, mockResolveImport);
+
+    expect(relations).toHaveLength(1);
+    expect(relations[0]!.type).toBe('type-references');
+    const meta = JSON.parse(relations[0]!.metaJson!);
+    expect(meta.isReExport).toBe(true);
+    expect(meta.isType).toBe(true);
   });
 });

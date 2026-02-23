@@ -29,19 +29,22 @@ export function extractImports(
 
       if (specifiers.length === 0) {
         // side-effect import: import './foo'
+        const meta: Record<string, unknown> = {};
+        if (isType) meta.isType = true;
         relations.push({
-          type: 'imports',
+          type: isType ? 'type-references' : 'imports',
           srcFilePath: filePath,
           srcSymbolName: null,
           dstFilePath: resolved,
           dstSymbolName: null,
-          ...(isType ? { metaJson: JSON.stringify({ isType: true }) } : {}),
+          ...(Object.keys(meta).length > 0 ? { metaJson: JSON.stringify(meta) } : {}),
         });
       } else {
         for (const spec of specifiers) {
           const specType = spec.type as string;
+          const isSpecType = isType || (spec.importKind as string) === 'type';
           const meta: Record<string, unknown> = {};
-          if (isType) meta.isType = true;
+          if (isSpecType) meta.isType = true;
 
           let dstSymbolName: string;
           let srcSymbolName: string;
@@ -60,7 +63,7 @@ export function extractImports(
           }
 
           relations.push({
-            type: 'imports',
+            type: isSpecType ? 'type-references' : 'imports',
             srcFilePath: filePath,
             srcSymbolName,
             dstFilePath: resolved,
@@ -82,7 +85,7 @@ export function extractImports(
       const meta: Record<string, unknown> = { isReExport: true };
       if (isType) meta.isType = true;
       relations.push({
-        type: 'imports',
+        type: isType ? 'type-references' : 'imports',
         srcFilePath: filePath,
         srcSymbolName: null,
         dstFilePath: resolved,
@@ -109,7 +112,7 @@ export function extractImports(
       if (isType) meta.isType = true;
 
       relations.push({
-        type: 'imports',
+        type: isType ? 'type-references' : 'imports',
         srcFilePath: filePath,
         srcSymbolName: null,
         dstFilePath: resolved,

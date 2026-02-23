@@ -49,11 +49,38 @@ describe('DependencyGraph', () => {
     expect(graph.getDependents('src/a.ts')).toEqual([]);
   });
 
-  it('should only load relations of type "imports" when build() is called', async () => {
+  it('should call getByType for both imports and type-references when build() is called', async () => {
     await graph.build();
-    expect(mockGetByType).toHaveBeenCalledTimes(1);
-    const [, type] = mockGetByType.mock.calls[0]!;
-    expect(type).toBe('imports');
+    expect(mockGetByType).toHaveBeenCalledTimes(2);
+    const calledTypes = mockGetByType.mock.calls.map(([, t]: [string, string]) => t);
+    expect(calledTypes).toContain('imports');
+    expect(calledTypes).toContain('type-references');
+  });
+
+  it('should include type-references relation in getDependencies when build() loads it', async () => {
+    mockGetByType = mock((project: string, type: string) => {
+      if (type === 'type-references') {
+        return [{ project: 'test-project', type: 'type-references', srcFilePath: 'src/a.ts', dstFilePath: 'src/types.ts', srcSymbolName: null, dstSymbolName: null, metaJson: null }];
+      }
+      return [];
+    });
+    mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
+    graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
+    await graph.build();
+    expect(graph.getDependencies('src/a.ts')).toContain('src/types.ts');
+  });
+
+  it('should include imports relation in getDependencies when build() loads type-references as well', async () => {
+    mockGetByType = mock((project: string, type: string) => {
+      if (type === 'imports') {
+        return [makeImport('src/a.ts', 'src/b.ts')];
+      }
+      return [];
+    });
+    mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
+    graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
+    await graph.build();
+    expect(graph.getDependencies('src/a.ts')).toContain('src/b.ts');
   });
 
   it('should replace old graph data when build() is called a second time', async () => {

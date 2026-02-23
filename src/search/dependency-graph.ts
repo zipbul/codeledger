@@ -39,10 +39,10 @@ export class DependencyGraph {
     this.adjacencyList = new Map();
     this.reverseAdjacencyList = new Map();
 
-    const relations = this.options.relationRepo.getByType(
-      this.options.project,
-      'imports',
-    );
+    const relations = [
+      ...this.options.relationRepo.getByType(this.options.project, 'imports'),
+      ...this.options.relationRepo.getByType(this.options.project, 'type-references'),
+    ];
 
     for (const rel of relations) {
       const { srcFilePath, dstFilePath } = rel;
