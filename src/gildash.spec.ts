@@ -3226,4 +3226,118 @@ describe('Gildash', () => {
       await ledger.close();
     });
   });
+
+  // FR-12: getFanMetrics
+  describe('Gildash.getFanMetrics', () => {
+    // 1. [HP] 3 files import A → fanIn=3
+    it('should return fanIn=3 when three files import the target file', async () => {
+      const relationRepo = makeRelationRepoMock();
+      // 3 files (b, c, d) import src/a.ts
+      relationRepo.getByType.mockReturnValue([
+        { srcFilePath: 'src/b.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project' },
+        { srcFilePath: 'src/c.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project' },
+        { srcFilePath: 'src/d.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project' },
+      ]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).getFanMetrics('src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.fanIn).toBe(3);
+      await ledger.close();
+    });
+
+    // 2. [HP] A imports 2 files → fanOut=2
+    it('should return fanOut=2 when target file imports two other files', async () => {
+      const relationRepo = makeRelationRepoMock();
+      // a imports b and c
+      relationRepo.getByType.mockReturnValue([
+        { srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts', type: 'imports', project: 'test-project' },
+        { srcFilePath: 'src/a.ts', dstFilePath: 'src/c.ts', type: 'imports', project: 'test-project' },
+      ]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).getFanMetrics('src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.fanOut).toBe(2);
+      await ledger.close();
+    });
+
+    // 3. [HP] isolated file → fanIn=0, fanOut=0
+    it('should return fanIn=0 and fanOut=0 when file has no import relationships', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).getFanMetrics('src/isolated.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.fanIn).toBe(0);
+      expect(result.fanOut).toBe(0);
+      await ledger.close();
+    });
+
+    // 4. [NE] closed → Err('closed')
+    it('should return Err with closed type when getFanMetrics is called on a closed instance', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = await (ledger as any).getFanMetrics('src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    // 5. [NE] build throws → Err('search')
+    it('should return Err with search type when DependencyGraph build throws during getFanMetrics', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockImplementation(() => { throw new Error('db fail'); });
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).getFanMetrics('src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+
+    // 6. [ED] single incoming import → fanIn=1
+    it('should return fanIn=1 when exactly one file imports the target file', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockReturnValue([
+        { srcFilePath: 'src/b.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project' },
+      ]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).getFanMetrics('src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.fanIn).toBe(1);
+      await ledger.close();
+    });
+
+    // 7. [CO] import cycle: A↔B → both fanIn>0 and fanOut>0
+    it('should return both fanIn>0 and fanOut>0 when target file is in an import cycle', async () => {
+      const relationRepo = makeRelationRepoMock();
+      // a imports b, b imports a
+      relationRepo.getByType.mockReturnValue([
+        { srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts', type: 'imports', project: 'test-project' },
+        { srcFilePath: 'src/b.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project' },
+      ]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await (ledger as any).getFanMetrics('src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.fanIn).toBeGreaterThan(0);
+      expect(result.fanOut).toBeGreaterThan(0);
+      await ledger.close();
+    });
+  });
 });

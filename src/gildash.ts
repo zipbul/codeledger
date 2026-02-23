@@ -130,6 +130,19 @@ export interface FileStats {
 }
 
 /**
+ * Import-graph fan metrics for a single file.
+ * Returned by {@link Gildash.getFanMetrics}.
+ */
+export interface FanMetrics {
+  /** Absolute file path queried. */
+  filePath: string;
+  /** Number of files that import this file (fan-in). */
+  fanIn: number;
+  /** Number of files this file imports (fan-out). */
+  fanOut: number;
+}
+
+/**
  * Options for creating a {@link Gildash} instance via {@link Gildash.open}.
  *
  * @example
@@ -1315,6 +1328,40 @@ export class Gildash {
       };
     } catch (e) {
       return err(gildashError('store', 'Gildash: getFileStats failed', e));
+    }
+  }
+
+  /**
+   * Compute import-graph fan metrics (fan-in / fan-out) for a single file.
+   *
+   * Builds a full {@link DependencyGraph} each call (O(relations)).
+   * For repeated calls, consider caching the graph externally.
+   *
+   * @param filePath - Absolute path of the file to query.
+   * @param project  - Project scope override (defaults to `defaultProject`).
+   * @returns A {@link FanMetrics} on success, or `Err<GildashError>` with
+   *   `type='closed'` if the instance is closed,
+   *   `type='search'` if the graph build fails.
+   */
+  async getFanMetrics(
+    filePath: string,
+    project?: string,
+  ): Promise<Result<FanMetrics, GildashError>> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    try {
+      const effectiveProject = project ?? this.defaultProject;
+      const g = new DependencyGraph({
+        relationRepo: this.relationRepo,
+        project: effectiveProject,
+      });
+      await g.build();
+      return {
+        filePath,
+        fanIn: g.getDependents(filePath).length,
+        fanOut: g.getDependencies(filePath).length,
+      };
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getFanMetrics failed', e));
     }
   }
 
