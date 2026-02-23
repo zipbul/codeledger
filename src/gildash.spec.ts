@@ -96,6 +96,8 @@ function makeOptions(opts: {
   coordinator?: ReturnType<typeof makeCoordinatorMock>;
   symbolRepo?: ReturnType<typeof makeSymbolRepoMock>;
   relationRepo?: ReturnType<typeof makeRelationRepoMock>;
+  fileRepo?: ReturnType<typeof makeFileRepoMock>;
+  parseCache?: ReturnType<typeof makeParseCacheMock>;
   existsSync?: (p: string) => boolean;
   projectRoot?: string;
 } = {}) {
@@ -104,6 +106,8 @@ function makeOptions(opts: {
   const coordinator = opts.coordinator ?? makeCoordinatorMock();
   const symbolRepo = opts.symbolRepo ?? makeSymbolRepoMock();
   const relationRepo = opts.relationRepo ?? makeRelationRepoMock();
+  const fileRepo = opts.fileRepo ?? makeFileRepoMock();
+  const parseCache = opts.parseCache ?? makeParseCacheMock();
 
   return {
     projectRoot: opts.projectRoot ?? PROJECT_ROOT,
@@ -112,10 +116,10 @@ function makeOptions(opts: {
     watcherFactory: () => watcher,
     coordinatorFactory: () => coordinator,
     repositoryFactory: () => ({
-      fileRepo: makeFileRepoMock(),
+      fileRepo,
       symbolRepo,
       relationRepo,
-      parseCache: makeParseCacheMock(),
+      parseCache,
     }),
     acquireWatcherRoleFn: mock(async () => (opts.role ?? 'owner') as 'owner' | 'reader'),
     releaseWatcherRoleFn: mock(() => {}),
@@ -134,6 +138,8 @@ function makeOptions(opts: {
     coordinator: coordinator,
     symbolRepo: symbolRepo,
     relationRepo: relationRepo,
+    fileRepo: fileRepo,
+    parseCache: parseCache,
   } as any;
 }
 
@@ -1322,5 +1328,208 @@ describe('Gildash', () => {
 
     expect(ledger.role).toBe('reader');
     await ledger.close();
+  });
+
+  describe('Gildash.getParsedAst', () => {
+    it('should return ParsedFile from cache when getParsedAst is called for cached file', async () => {
+      const cachedFile = { filePath: '/project/src/a.ts', program: {}, errors: [], comments: [], sourceText: 'x' } as any;
+      const parseCache = makeParseCacheMock();
+      parseCache.get.mockReturnValue(cachedFile);
+      const opts = makeOptions({ parseCache });
+
+      const ledger = await openOrThrow(opts);
+      const result = (ledger as any).getParsedAst('/project/src/a.ts');
+
+      expect(result).toBe(cachedFile);
+      await ledger.close();
+    });
+
+    it('should return undefined when getParsedAst is called for uncached file', async () => {
+      const parseCache = makeParseCacheMock();
+      parseCache.get.mockReturnValue(undefined);
+      const opts = makeOptions({ parseCache });
+
+      const ledger = await openOrThrow(opts);
+      const result = (ledger as any).getParsedAst('/project/src/missing.ts');
+
+      expect(result).toBeUndefined();
+      await ledger.close();
+    });
+
+    it('should call parseCache.get with the provided filePath when getParsedAst is invoked', async () => {
+      const parseCache = makeParseCacheMock();
+      const opts = makeOptions({ parseCache });
+
+      const ledger = await openOrThrow(opts);
+      (ledger as any).getParsedAst('/project/src/target.ts');
+
+      expect(parseCache.get).toHaveBeenCalledTimes(1);
+      expect(parseCache.get).toHaveBeenCalledWith('/project/src/target.ts');
+      await ledger.close();
+    });
+
+    it('should return undefined and not call parseCache.get when getParsedAst is called after close', async () => {
+      const parseCache = makeParseCacheMock();
+      const opts = makeOptions({ parseCache });
+
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+      const result = (ledger as any).getParsedAst('/project/src/a.ts');
+
+      expect(result).toBeUndefined();
+      expect(parseCache.get).not.toHaveBeenCalled();
+    });
+
+    it('should call parseCache.get with empty string when filePath is empty string', async () => {
+      const parseCache = makeParseCacheMock();
+      const opts = makeOptions({ parseCache });
+
+      const ledger = await openOrThrow(opts);
+      (ledger as any).getParsedAst('');
+
+      expect(parseCache.get).toHaveBeenCalledWith('');
+      await ledger.close();
+    });
+
+    it('should return ParsedFile for first path when getParsedAst is called after two different parseSource calls', async () => {
+      const fileA = { filePath: '/project/src/a.ts', program: {}, errors: [], comments: [], sourceText: 'a' } as any;
+      const parseCache = makeParseCacheMock();
+      parseCache.get.mockImplementation((fp: string) => fp === '/project/src/a.ts' ? fileA : undefined);
+      const opts = makeOptions({ parseCache });
+
+      const ledger = await openOrThrow(opts);
+      const result = (ledger as any).getParsedAst('/project/src/a.ts');
+
+      expect(result).toBe(fileA);
+      await ledger.close();
+    });
+  });
+
+  describe('Gildash.getFileInfo', () => {
+    it('should return FileRecord when getFileInfo is called for indexed file', async () => {
+      const record = { project: 'test-project', filePath: 'src/a.ts', mtimeMs: 1000, size: 100, contentHash: 'abc', updatedAt: '2026-01-01' };
+      const fileRepo = makeFileRepoMock();
+      fileRepo.getFile.mockReturnValue(record);
+      const opts = makeOptions({ fileRepo });
+
+      const ledger = await openOrThrow(opts);
+      const result = (ledger as any).getFileInfo('src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual(record);
+      await ledger.close();
+    });
+
+    it('should return null when getFileInfo is called for non-indexed file', async () => {
+      const fileRepo = makeFileRepoMock();
+      fileRepo.getFile.mockReturnValue(null);
+      const opts = makeOptions({ fileRepo });
+
+      const ledger = await openOrThrow(opts);
+      const result = (ledger as any).getFileInfo('src/missing.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toBeNull();
+      await ledger.close();
+    });
+
+    it('should call fileRepo.getFile with provided project when getFileInfo is called with project', async () => {
+      const fileRepo = makeFileRepoMock();
+      const opts = makeOptions({ fileRepo });
+
+      const ledger = await openOrThrow(opts);
+      (ledger as any).getFileInfo('src/a.ts', 'custom-project');
+
+      expect(fileRepo.getFile).toHaveBeenCalledWith('custom-project', 'src/a.ts');
+      await ledger.close();
+    });
+
+    it('should use defaultProject when getFileInfo is called without project', async () => {
+      const fileRepo = makeFileRepoMock();
+      const opts = makeOptions({ fileRepo });
+
+      const ledger = await openOrThrow(opts);
+      (ledger as any).getFileInfo('src/a.ts');
+
+      expect(fileRepo.getFile).toHaveBeenCalledWith('test-project', 'src/a.ts');
+      await ledger.close();
+    });
+
+    it('should return closed error when getFileInfo is called after close', async () => {
+      const opts = makeOptions();
+
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+      const result = (ledger as any).getFileInfo('src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    it('should return store error when fileRepo.getFile throws', async () => {
+      const fileRepo = makeFileRepoMock();
+      fileRepo.getFile.mockImplementation(() => { throw new Error('db failure'); });
+      const opts = makeOptions({ fileRepo });
+
+      const ledger = await openOrThrow(opts);
+      const result = (ledger as any).getFileInfo('src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('store');
+      await ledger.close();
+    });
+
+    it('should call fileRepo.getFile with empty string project when project is empty string', async () => {
+      const fileRepo = makeFileRepoMock();
+      const opts = makeOptions({ fileRepo });
+
+      const ledger = await openOrThrow(opts);
+      (ledger as any).getFileInfo('src/a.ts', '');
+
+      expect(fileRepo.getFile).toHaveBeenCalledWith('', 'src/a.ts');
+      await ledger.close();
+    });
+
+    it('should return closed error when getFileInfo is called after close without project', async () => {
+      const fileRepo = makeFileRepoMock();
+      const opts = makeOptions({ fileRepo });
+
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+      const result = (ledger as any).getFileInfo('src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+      expect(fileRepo.getFile).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('Gildash.getSymbolsByFile', () => {
+    it('should delegate to searchSymbols with filePath filter and limit 10000 when getSymbolsByFile is called', async () => {
+      const symbolSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+
+      const ledger = await openOrThrow(opts);
+      (ledger as any).getSymbolsByFile('src/a.ts');
+
+      expect(symbolSearchFn).toHaveBeenCalledTimes(1);
+      const callOpts = symbolSearchFn.mock.calls[0]![0] as any;
+      expect(callOpts.query.filePath).toBe('src/a.ts');
+      expect(callOpts.query.limit).toBe(10_000);
+      await ledger.close();
+    });
+
+    it('should pass undefined project to searchSymbols when getSymbolsByFile is called without project', async () => {
+      const symbolSearchFn = mock((_opts: any) => []);
+      const opts = { ...makeOptions(), symbolSearchFn } as any;
+
+      const ledger = await openOrThrow(opts);
+      (ledger as any).getSymbolsByFile('src/a.ts');
+
+      expect(symbolSearchFn).toHaveBeenCalledTimes(1);
+      const callOpts = symbolSearchFn.mock.calls[0]![0] as any;
+      expect(callOpts.query.project).toBeUndefined();
+      await ledger.close();
+    });
   });
 });

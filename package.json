@@ -56,6 +56,7 @@
     "husky": "^9.1.7"
   },
   "peerDependencies": {
-    "@zipbul/result": "^0.0.3"
+    "@zipbul/result": "^0.0.3",
+    "oxc-parser": ">=0.114.0"
   }
 }

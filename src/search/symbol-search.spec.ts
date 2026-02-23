@@ -256,4 +256,28 @@ describe('symbolSearch', () => {
     const opts = mockSearchByQuery.mock.calls[0]![0] as Record<string, unknown>;
     expect(opts.project).toBe('');
   });
+
+  it('should pass exactName to searchByQuery when exact is true', () => {
+    const query: SymbolSearchQuery = { text: 'handle', exact: true };
+    symbolSearch({ symbolRepo: mockRepo, query });
+    const opts = mockSearchByQuery.mock.calls[0]![0] as Record<string, unknown>;
+    expect(opts.exactName).toBe('handle');
+    expect(opts.ftsQuery).toBeUndefined();
+  });
+
+  it('should not set ftsQuery when exact is true', () => {
+    const query: SymbolSearchQuery = { text: 'User', exact: true };
+    symbolSearch({ symbolRepo: mockRepo, query });
+    const opts = mockSearchByQuery.mock.calls[0]![0] as Record<string, unknown>;
+    expect(opts.ftsQuery).toBeUndefined();
+    expect(opts.exactName).toBe('User');
+  });
+
+  it('should ignore exact flag and set no filters when text is not provided and exact is true', () => {
+    const query: SymbolSearchQuery = { exact: true };
+    symbolSearch({ symbolRepo: mockRepo, query });
+    const opts = mockSearchByQuery.mock.calls[0]![0] as Record<string, unknown>;
+    expect(opts.exactName).toBeUndefined();
+    expect(opts.ftsQuery).toBeUndefined();
+  });
 });

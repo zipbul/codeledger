@@ -2,12 +2,24 @@ import { eq, and } from 'drizzle-orm';
 import { files } from '../schema';
 import type { DbConnection } from '../connection';
 
+/**
+ * Metadata record for an indexed source file.
+ *
+ * Stored and retrieved by {@link FileRepository}.
+ * Exposed via {@link Gildash.getFileInfo}.
+ */
 export interface FileRecord {
+  /** Project name this file belongs to. */
   project: string;
+  /** File path relative to the project root. */
   filePath: string;
+  /** Last-modified timestamp in milliseconds since epoch. */
   mtimeMs: number;
+  /** File size in bytes at the time of indexing. */
   size: number;
+  /** SHA-256 content hash of the file at the time of indexing. */
   contentHash: string;
+  /** ISO 8601 timestamp of the last index update. */
   updatedAt: string;
 }
 

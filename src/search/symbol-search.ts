@@ -10,6 +10,8 @@ import { toFtsPrefixQuery } from '../store/repositories/fts-utils';
 export interface SymbolSearchQuery {
   /** Full-text search on symbol names (prefix matching). */
   text?: string;
+  /** Exact symbol name match. When `true`, `text` is treated as an exact name (not FTS prefix). */
+  exact?: boolean;
   /** Restrict to a specific {@link SymbolKind}. */
   kind?: SymbolKind;
   /** Restrict to symbols declared in this file path. */
@@ -49,6 +51,7 @@ export interface SymbolSearchResult {
 export interface ISymbolRepo {
   searchByQuery(opts: {
     ftsQuery?: string;
+    exactName?: string;
     kind?: string;
     filePath?: string;
     isExported?: boolean;
@@ -81,8 +84,12 @@ export function symbolSearch(options: {
   };
 
   if (query.text) {
-    const ftsQuery = toFtsPrefixQuery(query.text);
-    if (ftsQuery) opts.ftsQuery = ftsQuery;
+    if (query.exact) {
+      opts.exactName = query.text;
+    } else {
+      const ftsQuery = toFtsPrefixQuery(query.text);
+      if (ftsQuery) opts.ftsQuery = ftsQuery;
+    }
   }
 
   const records = symbolRepo.searchByQuery(opts);
