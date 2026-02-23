@@ -93,32 +93,4 @@ export const watcherOwner = sqliteTable(
   (table) => [check('watcher_owner_singleton', sql`${table.id} = 1`)],
 );
 
-export const FTS_SETUP_SQL: readonly string[] = [
-  `CREATE VIRTUAL TABLE IF NOT EXISTS symbols_fts USING fts5(
-     name,
-     file_path,
-     kind,
-     content=symbols,
-     content_rowid=id
-   )`,
 
-  `CREATE TRIGGER IF NOT EXISTS symbols_ai
-   AFTER INSERT ON symbols BEGIN
-     INSERT INTO symbols_fts(rowid, name, file_path, kind)
-     VALUES (new.id, new.name, new.file_path, new.kind);
-   END`,
-
-  `CREATE TRIGGER IF NOT EXISTS symbols_ad
-   AFTER DELETE ON symbols BEGIN
-     INSERT INTO symbols_fts(symbols_fts, rowid, name, file_path, kind)
-     VALUES ('delete', old.id, old.name, old.file_path, old.kind);
-   END`,
-
-  `CREATE TRIGGER IF NOT EXISTS symbols_au
-   AFTER UPDATE ON symbols BEGIN
-     INSERT INTO symbols_fts(symbols_fts, rowid, name, file_path, kind)
-     VALUES ('delete', old.id, old.name, old.file_path, old.kind);
-     INSERT INTO symbols_fts(rowid, name, file_path, kind)
-     VALUES (new.id, new.name, new.file_path, new.kind);
-   END`,
-];
