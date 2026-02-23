@@ -50,10 +50,20 @@ const ledger = await Gildash.open({
 // 심볼 검색
 const hits = ledger.searchSymbols({ text: 'UserService', kind: 'class' });
 
+// 정확한 이름 매칭
+const exact = ledger.searchSymbols({ text: 'UserService', exact: true });
+
 // 의존성 그래프 조회
 const deps     = ledger.getDependencies('src/app.ts');
 const affected = await ledger.getAffected(['src/utils.ts']);
 const cyclic   = await ledger.hasCycle();
+
+// 파일 정보 및 심볼 조회
+const fileInfo = ledger.getFileInfo('src/app.ts');
+const symbols  = ledger.getSymbolsByFile('src/app.ts');
+
+// 캐시된 AST 조회
+const ast = ledger.getParsedAst('/absolute/path/to/src/app.ts');
 
 await ledger.close();
 ```
@@ -64,7 +74,7 @@ await ledger.close();
 
 | 메서드 | 반환 타입 | 설명 |
 |--------|-----------|------|
-| `searchSymbols(query)` | `SymbolSearchResult[]` | FTS5 전문 검색 + 필터 조합 |
+| `searchSymbols(query)` | `SymbolSearchResult[]` | FTS5 전문 검색 + 필터 조합. `exact` 옵션 지원 |
 | `searchRelations(query)` | `CodeRelation[]` | 파일/심볼/관계 유형 필터 |
 | `getDependencies(filePath, project?)` | `string[]` | 이 파일이 import하는 파일 목록 |
 | `getDependents(filePath, project?)` | `string[]` | 이 파일을 import하는 파일 목록 |
@@ -75,6 +85,9 @@ await ledger.close();
 | `parseSource(filePath, src)` | `ParsedFile` | 파일 파싱 후 AST 캐시 |
 | `extractSymbols(parsed)` | `ExtractedSymbol[]` | 파싱된 파일에서 심볼 추출 |
 | `extractRelations(parsed)` | `CodeRelation[]` | 파싱된 파일에서 관계 추출 |
+| `getParsedAst(filePath)` | `ParsedFile \| undefined` | 캐시된 AST 조회 |
+| `getFileInfo(filePath, project?)` | `FileRecord \| null` | 인덱싱된 파일 메타데이터 조회 |
+| `getSymbolsByFile(filePath, project?)` | `SymbolSearchResult[]` | 특정 파일의 모든 심볼 조회 |
 | `projects` | `ProjectBoundary[]` | 감지된 프로젝트 경계 (모노레포) |
 | `getStats(project?)` | `SymbolStats` | 심볼 통계 |
 | `close()` | `Promise<void>` | 인덱서 종료 |
@@ -128,6 +141,9 @@ await ledger.close();
 // 이름으로 검색
 const results = ledger.searchSymbols({ text: 'handleClick' });
 
+// 정확한 이름 매칭 (FTS prefix가 아닌 완전 일치)
+const exact = ledger.searchSymbols({ text: 'UserService', exact: true });
+
 // 종류 + export 여부 필터
 const classes = ledger.searchSymbols({
   kind: 'class',
@@ -144,6 +160,7 @@ const inFile = ledger.searchSymbols({
 | 필드 | 타입 | 설명 |
 |------|------|------|
 | `text` | `string?` | FTS5 전문 검색 쿼리 |
+| `exact` | `boolean?` | `true`이면 `text`를 정확한 이름으로 매칭 (FTS prefix 아님) |
 | `kind` | `SymbolKind?` | `'function'` \| `'method'` \| `'class'` \| `'variable'` \| `'type'` \| `'interface'` \| `'enum'` \| `'property'` |
 | `filePath` | `string?` | 특정 파일 경로 필터 |
 | `isExported` | `boolean?` | export 여부 필터 |
@@ -356,6 +373,59 @@ const relations = ledger.extractRelations(parsed);
 
 **반환**: `CodeRelation[]`
 
+---
+
+### `ledger.getParsedAst(filePath)`
+
+내부 LRU 캐시에서 이전에 파싱된 AST를 조회합니다.
+
+파일이 아직 파싱되지 않았거나 캐시에서 제거된 경우 `undefined`를 반환합니다.
+반환된 객체는 내부 캐시와 공유됩니다 — **읽기 전용**으로 취급하세요.
+
+```ts
+const ast = ledger.getParsedAst('/absolute/path/to/src/app.ts');
+if (ast) {
+  console.log(ast.program.body.length, '개의 AST 노드');
+}
+```
+
+**반환**: `ParsedFile | undefined`
+
+---
+
+### `ledger.getFileInfo(filePath, project?)`
+
+인덱싱된 파일의 메타데이터를 조회합니다.
+
+content hash, mtime, size 등이 포함된 `FileRecord`를 반환합니다.
+파일이 아직 인덱싱되지 않은 경우 `null`을 반환합니다.
+
+```ts
+const info = ledger.getFileInfo('src/app.ts');
+if (!isErr(info) && info !== null) {
+  console.log(`해시: ${info.contentHash}, 크기: ${info.size}`);
+}
+```
+
+**반환**: `Result<FileRecord | null, GildashError>`
+
+---
+
+### `ledger.getSymbolsByFile(filePath, project?)`
+
+특정 파일에 선언된 모든 심볼을 조회합니다. `searchSymbols`에 `filePath` 필터를 적용한 편의 래퍼입니다.
+
+```ts
+const symbols = ledger.getSymbolsByFile('src/app.ts');
+if (!isErr(symbols)) {
+  for (const sym of symbols) {
+    console.log(`${sym.kind}: ${sym.name}`);
+  }
+}
+```
+
+**반환**: `Result<SymbolSearchResult[], GildashError>`
+
 <br>
 
 ## 🏗 아키텍처
@@ -379,8 +449,6 @@ Gildash (파사드)
 
 <br>
 
-##  라이선스
+## 📄 라이선스
 
 [MIT](./LICENSE) © [zipbul](https://github.com/zipbul)
-
-

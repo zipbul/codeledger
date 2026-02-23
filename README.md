@@ -52,6 +52,9 @@ const hits = ledger.searchSymbols({
   isExported: true,
 });
 
+// Exact name match (not FTS prefix)
+const exact = ledger.searchSymbols({ text: 'UserService', exact: true });
+
 // Find what a file imports
 const deps = ledger.getDependencies('src/app.ts');
 
@@ -62,6 +65,13 @@ const affected = await ledger.getAffected(['src/utils.ts']);
 if (await ledger.hasCycle()) {
   console.warn('Circular dependency detected');
 }
+
+// File metadata & symbols
+const fileInfo = ledger.getFileInfo('src/app.ts');
+const symbols  = ledger.getSymbolsByFile('src/app.ts');
+
+// Cached AST lookup
+const ast = ledger.getParsedAst('/absolute/path/to/src/app.ts');
 
 // Subscribe to index-complete events
 const unsubscribe = ledger.onIndexed((result) => {
@@ -129,6 +139,9 @@ Search symbols by name (FTS5 full-text), kind, file path, and/or export status.
 // Full-text search
 const results = ledger.searchSymbols({ text: 'handleClick' });
 
+// Exact name match (not FTS prefix)
+const exact = ledger.searchSymbols({ text: 'UserService', exact: true });
+
 // Filter by kind + export status
 const classes = ledger.searchSymbols({
   kind: 'class',
@@ -147,6 +160,7 @@ const inFile = ledger.searchSymbols({
 | Field | Type | Description |
 |-------|------|-------------|
 | `text` | `string?` | FTS5 full-text search query |
+| `exact` | `boolean?` | When `true`, `text` is treated as an exact name match (not FTS prefix) |
 | `kind` | `SymbolKind?` | `'function'` \| `'method'` \| `'class'` \| `'variable'` \| `'type'` \| `'interface'` \| `'enum'` \| `'property'` |
 | `filePath` | `string?` | Filter by file path |
 | `isExported` | `boolean?` | Filter by export status |
@@ -388,6 +402,57 @@ const relations = ledger.extractRelations(parsed);
 ```
 
 Returns `CodeRelation[]`
+
+---
+
+### `ledger.getParsedAst(filePath)`
+
+Retrieves a previously-parsed AST from the internal LRU cache.
+
+Returns `undefined` if the file has not been parsed or was evicted from the cache.
+The returned object is shared with the internal cache — treat it as **read-only**.
+
+```ts
+const ast = ledger.getParsedAst('/absolute/path/to/src/app.ts');
+if (ast) {
+  console.log(ast.program.body.length, 'AST nodes');
+}
+```
+
+Returns `ParsedFile | undefined`
+
+---
+
+### `ledger.getFileInfo(filePath, project?)`
+
+Retrieves metadata for an indexed file, including content hash, mtime, and size.
+Returns `null` if the file has not been indexed yet.
+
+```ts
+const info = ledger.getFileInfo('src/app.ts');
+if (!isErr(info) && info !== null) {
+  console.log(`Hash: ${info.contentHash}, Size: ${info.size}`);
+}
+```
+
+Returns `Result<FileRecord | null, GildashError>`
+
+---
+
+### `ledger.getSymbolsByFile(filePath, project?)`
+
+Lists all symbols declared in a specific file. Convenience wrapper around `searchSymbols` with a `filePath` filter.
+
+```ts
+const symbols = ledger.getSymbolsByFile('src/app.ts');
+if (!isErr(symbols)) {
+  for (const sym of symbols) {
+    console.log(`${sym.kind}: ${sym.name}`);
+  }
+}
+```
+
+Returns `Result<SymbolSearchResult[], GildashError>`
 
 ---
 
