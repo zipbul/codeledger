@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Gildash } from '../src/gildash';
 import type { FullSymbol } from '../src/gildash';
+import { DATA_DIR, DB_FILE } from '../src/constants';
 
 // ── Fixture Helpers ────────────────────────────────────────────────────────
 
@@ -202,7 +203,7 @@ describe('Gildash integration', () => {
       await createRichProject(tmpDir);
 
       const g = await openGildash(tmpDir);
-      const dbPath = join(tmpDir, '.zipbul', 'gildash.db');
+      const dbPath = join(tmpDir, DATA_DIR, DB_FILE);
       expect(existsSync(dbPath)).toBe(true);
 
       await g.close({ cleanup: true });

@@ -554,14 +554,22 @@ describe('IndexCoordinator', () => {
     expect(onIndexed).toHaveBeenCalled();
   });
 
-  it('should delete all files across all project boundaries when fullIndex runs in multi-boundary project', async () => {
+  it('should delete changed files across all project boundaries when fullIndex runs in multi-boundary project', async () => {
     const fileRepo = makeFileRepo();
-    // getAllFiles is called twice per boundary: once for before-snapshot and once inside the transaction
+    // getAllFiles is called once per boundary for before-snapshot
     fileRepo.getAllFiles
       .mockReturnValueOnce([{ project: 'pkg-a', filePath: 'packages/a/src/a.ts' }] as unknown as FileRecord[]) // before snapshot: pkg-a
-      .mockReturnValueOnce([{ project: 'pkg-b', filePath: 'packages/b/src/b.ts' }] as unknown as FileRecord[]) // before snapshot: pkg-b
-      .mockReturnValueOnce([{ project: 'pkg-a', filePath: 'packages/a/src/a.ts' }] as unknown as FileRecord[]) // transaction delete: pkg-a
-      .mockReturnValueOnce([{ project: 'pkg-b', filePath: 'packages/b/src/b.ts' }] as unknown as FileRecord[]); // transaction delete: pkg-b
+      .mockReturnValueOnce([{ project: 'pkg-b', filePath: 'packages/b/src/b.ts' }] as unknown as FileRecord[]); // before snapshot: pkg-b
+    // Both files are returned as changed by detectChanges
+    mockDetectChanges.mockResolvedValue({
+      changed: [
+        { filePath: 'packages/a/src/a.ts', contentHash: 'h-a', mtimeMs: 1000, size: 100 },
+        { filePath: 'packages/b/src/b.ts', contentHash: 'h-b', mtimeMs: 1000, size: 100 },
+      ],
+      unchanged: [],
+      deleted: [],
+    });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'code', lastModified: 1000, size: 100 } as any);
     const dbConnection = makeDbConnection();
     const coordinator = new IndexCoordinator({
       projectRoot: PROJECT_ROOT,
@@ -581,18 +589,49 @@ describe('IndexCoordinator', () => {
 
     await coordinator.fullIndex();
 
-    expect(fileRepo.deleteFile).toHaveBeenCalledWith('pkg-a', 'packages/a/src/a.ts');
-    expect(fileRepo.deleteFile).toHaveBeenCalledWith('pkg-b', 'packages/b/src/b.ts');
+    expect(fileRepo.deleteFile).toHaveBeenCalledWith('test-project', 'packages/a/src/a.ts');
+    expect(fileRepo.deleteFile).toHaveBeenCalledWith('test-project', 'packages/b/src/b.ts');
   });
 
-  it('should delete files for the single project boundary when fullIndex runs in single-boundary project', async () => {
+  it('should delete changed files for the single project boundary when fullIndex runs in single-boundary project', async () => {
     const fileRepo = makeFileRepo();
     fileRepo.getAllFiles.mockReturnValue([{ project: 'test-project', filePath: 'src/a.ts' }] as unknown as FileRecord[]);
+    mockDetectChanges.mockResolvedValue({
+      changed: [{ filePath: 'src/a.ts', contentHash: 'h-a', mtimeMs: 1000, size: 100 }],
+      unchanged: [],
+      deleted: [],
+    });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'code', lastModified: 1000, size: 100 } as any);
     const coordinator = makeCoordinator({ fileRepo });
 
     await coordinator.fullIndex();
 
     expect(fileRepo.deleteFile).toHaveBeenCalledWith('test-project', 'src/a.ts');
+  });
+
+  it('should preserve unchanged file records and not delete them when fullIndex runs with changed and unchanged files', async () => {
+    const fileRepo = makeFileRepo();
+    // Before snapshot: DB has two files
+    fileRepo.getAllFiles.mockReturnValue([
+      { project: 'test-project', filePath: 'src/a.ts' } as unknown as FileRecord,
+      { project: 'test-project', filePath: 'src/b.ts' } as unknown as FileRecord,
+    ]);
+    // detectChanges: a.ts changed, b.ts unchanged
+    mockDetectChanges.mockResolvedValue({
+      changed: [{ filePath: 'src/a.ts', contentHash: 'hash-a', mtimeMs: 1000, size: 100 }],
+      unchanged: [{ filePath: 'src/b.ts', contentHash: 'hash-b', mtimeMs: 900, size: 80 }],
+      deleted: [],
+    });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'import { b } from "./b"', lastModified: 1000, size: 100 } as any);
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.fullIndex();
+
+    // Changed file (a.ts) should be deleted and re-inserted
+    expect(fileRepo.deleteFile).toHaveBeenCalledWith('test-project', 'src/a.ts');
+    // Unchanged file (b.ts) should NOT be deleted — its file record must persist for FK constraints
+    const deleteArgs = (fileRepo.deleteFile.mock.calls as any[][]).map(c => c[1]);
+    expect(deleteArgs).not.toContain('src/b.ts');
   });
 
   it('should return actual totalSymbols count in IndexResult when symbol repository returns per-file counts', async () => {

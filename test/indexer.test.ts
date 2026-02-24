@@ -188,4 +188,69 @@ describe('IndexCoordinator.fullIndex()', () => {
     expect(result.totalSymbols).toBe(0);
     expect(result.totalRelations).toBe(0);
   });
+
+  // [ED/ID] fullIndex() 두 번 순차 실행, 변경 없음 → 파일·relation 레코드 보존
+  it('should preserve all indexed records when fullIndex is called a second time without any file changes', async () => {
+    const projectDir = join(tmpDir, 'two-run-proj');
+    await mkdir(join(projectDir, 'src'), { recursive: true });
+    await writeFile(join(projectDir, 'src', 'a.ts'), `import { foo } from './b';`);
+    await writeFile(join(projectDir, 'src', 'b.ts'), `export function foo(): void {}`);
+
+    const coordinator = new IndexCoordinator({
+      projectRoot: projectDir,
+      boundaries: [{ dir: '.', project: 'two-run' }],
+      extensions: ['.ts'],
+      ignorePatterns: [],
+      dbConnection: db,
+      parseCache: new ParseCache(10),
+      fileRepo,
+      symbolRepo,
+      relationRepo,
+    });
+
+    const result1 = await coordinator.fullIndex();
+    expect(result1.indexedFiles).toBe(2);
+
+    // 두 번째 실행 — 파일 변경 없음
+    const result2 = await coordinator.fullIndex();
+    expect(result2.indexedFiles).toBe(0); // 변경분 없음
+
+    // 파일 레코드가 사라지지 않았어야 한다
+    const files = fileRepo.getAllFiles('two-run');
+    expect(files.length).toBe(2);
+  });
+
+  // [CO] A imports B + A만 변경 → fullIndex() → FK constraint 충돌 없음
+  it('should not throw FK constraint error when only the importing file changes and the imported file remains unchanged', async () => {
+    const projectDir = join(tmpDir, 'fk-proj');
+    await mkdir(join(projectDir, 'src'), { recursive: true });
+    await writeFile(join(projectDir, 'src', 'a.ts'), `import { foo } from './b';`);
+    await writeFile(join(projectDir, 'src', 'b.ts'), `export function foo(): void {}`);
+
+    const coordinator = new IndexCoordinator({
+      projectRoot: projectDir,
+      boundaries: [{ dir: '.', project: 'fk-test' }],
+      extensions: ['.ts'],
+      ignorePatterns: [],
+      dbConnection: db,
+      parseCache: new ParseCache(10),
+      fileRepo,
+      symbolRepo,
+      relationRepo,
+    });
+
+    await coordinator.fullIndex();
+
+    // A만 변경 (내용 추가)
+    await writeFile(join(projectDir, 'src', 'a.ts'), `import { foo } from './b';\n// changed`);
+
+    // 두 번째 fullIndex() — B는 unchanged, A만 re-index → FK 충돌 없어야 함
+    let thrownError: unknown = null;
+    try {
+      await coordinator.fullIndex();
+    } catch (e) {
+      thrownError = e;
+    }
+    expect(thrownError).toBeNull();
+  });
 });

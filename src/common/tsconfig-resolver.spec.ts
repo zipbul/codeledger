@@ -9,7 +9,7 @@ const JSCONFIG_PATH = join(PROJECT_ROOT, "jsconfig.json");
 function makeBunFile(content: Record<string, unknown> | null): ReturnType<typeof Bun.file> {
   return {
     exists: async () => content !== null,
-    json: async () => content,
+    text: async () => content !== null ? JSON.stringify(content) : '',
   } as ReturnType<typeof Bun.file>;
 }
 
@@ -206,5 +206,80 @@ describe("loadTsconfigPaths", () => {
 
     expect(refreshedA?.paths.get("@/*")).toEqual(["new/*"]);
     expect(refreshedB?.paths.size).toBe(0);
+  });
+
+  it("should parse JSONC with line comments successfully", async () => {
+    const jsonc = `{
+      // This is a line comment
+      "compilerOptions": {
+        "baseUrl": ".",
+        "paths": { "@/*": ["src/*"] }
+      }
+    }`;
+    spyOn(Bun, "file").mockImplementation((p) => {
+      if (String(p) === TSCONFIG_PATH) {
+        return { exists: async () => true, text: async () => jsonc } as ReturnType<typeof Bun.file>;
+      }
+      return makeBunFile(null);
+    });
+
+    const result = await loadTsconfigPaths(PROJECT_ROOT);
+
+    expect(result).not.toBeNull();
+    expect(result?.paths.get("@/*")).toEqual(["src/*"]);
+  });
+
+  it("should parse JSONC with block comments successfully", async () => {
+    const jsonc = `{
+      /* block comment */
+      "compilerOptions": {
+        "baseUrl": ".",
+        "paths": { "@/*": ["src/*"] }
+      }
+    }`;
+    spyOn(Bun, "file").mockImplementation((p) => {
+      if (String(p) === TSCONFIG_PATH) {
+        return { exists: async () => true, text: async () => jsonc } as ReturnType<typeof Bun.file>;
+      }
+      return makeBunFile(null);
+    });
+
+    const result = await loadTsconfigPaths(PROJECT_ROOT);
+
+    expect(result).not.toBeNull();
+    expect(result?.paths.get("@/*")).toEqual(["src/*"]);
+  });
+
+  it("should parse JSONC with trailing commas successfully", async () => {
+    const jsonc = `{
+      "compilerOptions": {
+        "baseUrl": ".",
+        "paths": { "@/*": ["src/*",], },
+      },
+    }`;
+    spyOn(Bun, "file").mockImplementation((p) => {
+      if (String(p) === TSCONFIG_PATH) {
+        return { exists: async () => true, text: async () => jsonc } as ReturnType<typeof Bun.file>;
+      }
+      return makeBunFile(null);
+    });
+
+    const result = await loadTsconfigPaths(PROJECT_ROOT);
+
+    expect(result).not.toBeNull();
+    expect(result?.paths.get("@/*")).toEqual(["src/*"]);
+  });
+
+  it("should return null when file content is invalid JSONC", async () => {
+    spyOn(Bun, "file").mockImplementation((p) => {
+      if (String(p) === TSCONFIG_PATH) {
+        return { exists: async () => true, text: async () => "not valid json at all {{{" } as ReturnType<typeof Bun.file>;
+      }
+      return makeBunFile(null);
+    });
+
+    const result = await loadTsconfigPaths(PROJECT_ROOT);
+
+    expect(result).toBeNull();
   });
 });

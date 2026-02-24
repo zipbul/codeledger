@@ -1,5 +1,6 @@
 import path from "node:path";
 import { promises as fs } from "node:fs";
+import { DATA_DIR } from "../constants";
 
 /**
  * A discovered sub-project within the indexed project root.
@@ -13,7 +14,7 @@ export interface ProjectBoundary {
   project: string;
 }
 
-const DISCOVERY_EXCLUDE = ["**/node_modules/**", "**/.git/**", "**/.zipbul/**", "**/dist/**"];
+const DISCOVERY_EXCLUDE = ["**/node_modules/**", "**/.git/**", `**/${DATA_DIR}/**`, "**/dist/**"];
 
 export async function discoverProjects(projectRoot: string): Promise<ProjectBoundary[]> {
   const boundaries: ProjectBoundary[] = [];

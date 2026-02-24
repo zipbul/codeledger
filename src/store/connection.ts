@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { drizzle, type BunSQLiteDatabase } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { gildashError, type GildashError } from '../errors';
+import { DATA_DIR, DB_FILE } from '../constants';
 import * as schema from './schema';
 
 
@@ -19,7 +20,7 @@ export class DbConnection {
   private txDepth = 0;
 
   constructor(opts: DbConnectionOptions) {
-    this.dbPath = join(opts.projectRoot, '.zipbul', 'gildash.db');
+    this.dbPath = join(opts.projectRoot, DATA_DIR, DB_FILE);
   }
 
   get drizzleDb(): BunSQLiteDatabase<typeof schema> {
