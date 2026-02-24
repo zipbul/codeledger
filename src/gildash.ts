@@ -1211,18 +1211,19 @@ export class Gildash {
   /**
    * Return all cycle paths in the import graph.
    *
-   * Uses DFS with canonical form deduplication.
+   * Tarjan SCC + Johnson's circuits. Finds all elementary circuits.
    *
    * @param project - Project name. Defaults to the primary project.
+   * @param options.maxCycles - Maximum number of cycles to return. Defaults to no limit.
    * @returns An array of cycle paths (`string[][]`), each starting at the lexicographically
    *   smallest node in the cycle. Returns `[]` if no cycles exist.
    *   Returns `Err<GildashError>` with `type='closed'` / `type='search'`.
    */
-  async getCyclePaths(project?: string): Promise<Result<string[][], GildashError>> {
+  async getCyclePaths(project?: string, options?: { maxCycles?: number }): Promise<Result<string[][], GildashError>> {
     if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
     try {
       const g = this.getOrBuildGraph(project);
-      return g.getCyclePaths();
+      return g.getCyclePaths(options);
     } catch (e) {
       return err(gildashError('search', 'Gildash: getCyclePaths failed', e));
     }
