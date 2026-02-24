@@ -225,11 +225,13 @@ export class DependencyGraph {
    * (rotated so the lexicographically smallest node comes first).
    * Duplicate cycles are deduplicated.
    *
-   * Tarjan SCC + Johnson's circuits. Finds all elementary circuits.
+   * Tarjan SCC + Johnson's circuits — 모든 elementary circuit 보장.
+   * `maxCycles` 옵션으로 반환 개수를 제한할 수 있습니다.
    *
    * @param options.maxCycles - Maximum number of cycles to return. Defaults to `Infinity`.
    * @returns An array of cycles, where each cycle is a `string[]` of file paths
    *   in canonical form (lexicographic rotation, smallest node first).
+   *   Returns an empty array when no cycles exist.
    */
   getCyclePaths(options?: { maxCycles?: number }): string[][] {
     const maxCycles = options?.maxCycles ?? Infinity;

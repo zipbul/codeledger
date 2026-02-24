@@ -1212,13 +1212,15 @@ export class Gildash {
   /**
    * Return all cycle paths in the import graph.
    *
-   * Tarjan SCC + Johnson's circuits. Finds all elementary circuits.
+   * Tarjan SCC + Johnson's circuits — 모든 elementary circuit 보장.
+   * 단순한 사이클 유무(`hasCycle`)와 달리 중복 없는 정규화된 경로 전체를 반환합니다.
+   * `maxCycles` 옵션으로 반환 개수를 제한할 수 있습니다.
    *
    * @param project - Project name. Defaults to the primary project.
    * @param options.maxCycles - Maximum number of cycles to return. Defaults to no limit.
-   * @returns An array of cycle paths (`string[][]`), each starting at the lexicographically
-   *   smallest node in the cycle. Returns `[]` if no cycles exist.
-   *   Returns `Err<GildashError>` with `type='closed'` / `type='search'`.
+   * @returns An array of cycle paths (`string[][]`), each path starting at the
+   *   lexicographically smallest node (canonical rotation). Returns `[]` if no cycles exist.
+   *   Returns `Err<GildashError>` with `type='closed'` (instance closed) or `type='search'` (graph error).
    */
   async getCyclePaths(project?: string, options?: { maxCycles?: number }): Promise<Result<string[][], GildashError>> {
     if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));

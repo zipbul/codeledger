@@ -137,7 +137,8 @@ const transitive = await ledger.getTransitiveDependencies('src/app.ts');
 
 // 순환 의존성 감지
 const hasCycles = await ledger.hasCycle();
-const cyclePaths = await ledger.getCyclePaths();
+const cyclePaths = await ledger.getCyclePaths();                           // 모든 elementary circuit
+const limited   = await ledger.getCyclePaths(undefined, { maxCycles: 100 }); // undefined = 기본 프로젝트 사용
 ```
 
 ---
@@ -254,7 +255,7 @@ if (isErr(result)) {
 | `getDependents(filePath)` | `Result<string[]>` | `filePath`를 import하는 파일 목록 |
 | `getAffected(changedFiles)` | `Promise<Result<string[]>>` | 전이적 영향 범위 |
 | `hasCycle(project?)` | `Promise<Result<boolean>>` | 순환 의존성 감지 |
-| `getCyclePaths(project?)` | `Promise<Result<string[][]>>` | 모든 순환 경로 |
+| `getCyclePaths(project?, opts?)` | `Promise<Result<string[][]>>` | 모든 순환 경로 (Tarjan SCC + Johnson's). `opts.maxCycles`로 개수 제한 가능. |
 | `getImportGraph(project?)` | `Promise<Result<Map>>` | 전체 인접 리스트 |
 | `getTransitiveDependencies(filePath)` | `Promise<Result<string[]>>` | 전방 전이적 BFS |
 

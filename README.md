@@ -137,7 +137,8 @@ const transitive = await ledger.getTransitiveDependencies('src/app.ts');
 
 // Circular dependency detection
 const hasCycles = await ledger.hasCycle();
-const cyclePaths = await ledger.getCyclePaths();
+const cyclePaths = await ledger.getCyclePaths();          // all elementary circuits
+const limited   = await ledger.getCyclePaths(undefined, { maxCycles: 100 }); // undefined = use default project
 ```
 
 ---
@@ -254,7 +255,7 @@ Returns `Promise<Gildash>` (wrapped in `Result`).
 | `getDependents(filePath)` | `Result<string[]>` | Files that import `filePath` |
 | `getAffected(changedFiles)` | `Promise<Result<string[]>>` | Transitive impact set |
 | `hasCycle(project?)` | `Promise<Result<boolean>>` | Circular dependency check |
-| `getCyclePaths(project?)` | `Promise<Result<string[][]>>` | All cycle paths |
+| `getCyclePaths(project?, opts?)` | `Promise<Result<string[][]>>` | All cycle paths (Tarjan SCC + Johnson's). `opts.maxCycles` limits results. |
 | `getImportGraph(project?)` | `Promise<Result<Map>>` | Full adjacency list |
 | `getTransitiveDependencies(filePath)` | `Promise<Result<string[]>>` | Forward transitive BFS |
 
