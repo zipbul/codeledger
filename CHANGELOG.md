@@ -2,6 +2,23 @@
 
 ## 0.5.0
 
+### Minor Changes
+
+- [#24](https://github.com/zipbul/gildash/pull/24) [`5b532ad`](https://github.com/zipbul/gildash/commit/5b532adee1f4cf29be7171485f9ea9ce65706e48) Thanks [@parkrevil](https://github.com/parkrevil)! - ### Breaking Changes
+
+  - **Remove `getDeadExports` API** — This feature embedded project-specific policies (entry point definitions, build configuration, test file inclusion) that vary per consumer. Use `searchSymbols({ isExported: true })` + `searchRelations({ type: 'imports' })` to build custom dead-export detection in your own code.
+
+  ### New Features
+
+  - **Replace `getCyclePaths` algorithm with Tarjan SCC + Johnson's circuits** — The previous DFS-based implementation could miss cycles sharing common nodes. The new algorithm exhaustively detects every elementary circuit in the import graph. Use the `maxCycles` option to cap the number of returned cycles.
+  - **Add `ParserOptions` passthrough to `parseSource` / `batchParse`** — Forward oxc-parser's `ParserOptions` (e.g. `sourceType`, `lang`) directly, allowing explicit control over parser behavior regardless of file extension.
+
+  ### Chores
+
+  - Upgrade `oxc-parser` from 0.114.0 to 0.115.0
+
+## 0.5.0
+
 ### Breaking Changes
 
 - **`getDeadExports` 제거** — `Gildash.getDeadExports(project?, opts?)` API가 삭제되었습니다. 이 기능은 진입점(entry point) 정의, 빌드 설정, 테스트 파일 포함 여부 등 프로젝트 정책에 따라 결과가 근본적으로 달라지므로 라이브러리 레벨의 단일 구현으로 제공하기 어렵습니다. 대신 `getImportGraph()` + `getDependents()`를 조합하여 프로젝트 정책에 맞는 dead export 탐지 로직을 직접 구현하세요.
