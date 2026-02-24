@@ -32,6 +32,11 @@ export interface SymbolSearchQuery {
    * Requires the `REGEXP` SQL function to be registered in the DB connection.
    */
   regex?: string;
+  /**
+   * Filter by the resolved (inferred) type text.
+   * Requires the semantic layer (`semantic: true`) to have populated this field.
+   */
+  resolvedType?: string;
 }
 
 /**
@@ -69,6 +74,7 @@ export interface ISymbolRepo {
     limit: number;
     decorator?: string;
     regex?: string;
+    resolvedType?: string;
   }): (SymbolRecord & { id: number })[];
 }
 
@@ -93,6 +99,7 @@ export function symbolSearch(options: {
     isExported: query.isExported,
     project: effectiveProject,
     limit,
+    resolvedType: query.resolvedType,
   };
 
   if (query.text) {

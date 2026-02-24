@@ -33,6 +33,8 @@ import { DependencyGraph } from './search/dependency-graph';
 import { patternSearch as defaultPatternSearch } from './search/pattern-search';
 import type { PatternMatch } from './search/pattern-search';
 import { gildashError, type GildashError } from './errors';
+import { SemanticLayer } from './semantic/index';
+import type { ResolvedType, SemanticReference, Implementation, SemanticModuleInterface } from './semantic/types';
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEALTHCHECK_INTERVAL_MS = 60_000;
@@ -111,6 +113,8 @@ export interface FullSymbol extends SymbolSearchResult {  /** Class/interface me
   decorators?: Array<{ name: string; arguments?: string }>;
   /** Stringified type parameters (generic symbols). */
   typeParameters?: string;
+  /** Resolved type from the Semantic Layer (available when `semantic: true`). */
+  resolvedType?: ResolvedType;
 }
 
 /**
@@ -198,6 +202,14 @@ export interface GildashOptions {
    * @default true
    */
   watchMode?: boolean;
+  /**
+   * Enable the Semantic Layer (tsc-based type analysis).
+   * When `true`, creates a `SemanticLayer` backed by the TypeScript compiler.
+   * Requires a `tsconfig.json` in `projectRoot`.
+   *
+   * @default false
+   */
+  semantic?: boolean;
 }
 
 interface GildashInternalOptions {
@@ -228,6 +240,7 @@ interface GildashInternalOptions {
   readFileFn?: (filePath: string) => Promise<string>;
   unlinkFn?: (filePath: string) => Promise<void>;
   makeExternalCoordinatorFn?: (packageDir: string, project: string) => { fullIndex(): Promise<IndexResult> };
+  semanticLayerFactory?: (tsconfigPath: string) => Result<SemanticLayer, GildashError>;
 }
 
 /**
@@ -302,6 +315,8 @@ export class Gildash {
   private graphCache: DependencyGraph | null = null;
   /** Project key of the cached graph (`project ?? '__cross__'`). */
   private graphCacheKey: string | null = null;
+  /** Semantic Layer (tsc-backed) — `null` when `semantic` option is `false` (default). */
+  private semanticLayer: Pick<SemanticLayer, 'collectTypeAt' | 'collectFileTypes' | 'findReferences' | 'findImplementations' | 'getModuleInterface' | 'getSymbolNode' | 'notifyFileChanged' | 'dispose' | 'isDisposed' | 'lineColumnToPosition'> | null = null;
 
   private constructor(opts: {
     projectRoot: string;
@@ -401,6 +416,8 @@ export class Gildash {
       readFileFn = async (fp: string) => Bun.file(fp).text(),
       unlinkFn = async (fp: string) => { await Bun.file(fp).unlink(); },
       watchMode,
+      semantic,
+      semanticLayerFactory,
     } = options;
 
     if (!path.isAbsolute(projectRoot)) {
@@ -475,6 +492,19 @@ export class Gildash {
     clearTsconfigPathsCache(projectRoot);
     instance.tsconfigPaths = await loadTsconfigPathsFn(projectRoot);
     instance.boundaries = boundaries;
+
+    if (semantic) {
+      const tsconfigPath = path.join(projectRoot, 'tsconfig.json');
+      const semanticResult = semanticLayerFactory
+        ? semanticLayerFactory(tsconfigPath)
+        : SemanticLayer.create(tsconfigPath);
+      if (isErr(semanticResult)) {
+        db.close();
+        return semanticResult;
+      }
+      instance.semanticLayer = semanticResult;
+    }
+
     if (role === 'owner') {
       const c = coordinatorFactory
         ? coordinatorFactory()
@@ -501,7 +531,14 @@ export class Gildash {
 
         instance.watcher = w;
 
-        await w.start((event) => c.handleWatcherEvent?.(event)).then((startResult) => {
+        await w.start((event) => {
+          c.handleWatcherEvent?.(event);
+          if (instance.semanticLayer && event.eventType !== 'delete') {
+            readFileFn(event.filePath).then(content => {
+              instance.semanticLayer?.notifyFileChanged(event.filePath, content);
+            }).catch(() => {});
+          }
+        }).then((startResult) => {
           if (isErr(startResult)) throw startResult.data;
         });
 
@@ -550,7 +587,14 @@ export class Gildash {
                 promotedCoordinator.onIndexed(cb);
               }
               promotedCoordinator.onIndexed(() => instance.invalidateGraphCache());
-              await promotedWatcher.start((event) => promotedCoordinator?.handleWatcherEvent?.(event)).then((startResult) => {
+              await promotedWatcher.start((event) => {
+                promotedCoordinator?.handleWatcherEvent?.(event);
+                if (instance.semanticLayer && event.eventType !== 'delete') {
+                  readFileFn(event.filePath).then(content => {
+                    instance.semanticLayer?.notifyFileChanged(event.filePath, content);
+                  }).catch(() => {});
+                }
+              }).then((startResult) => {
                 if (isErr(startResult)) throw startResult.data;
               });
               const hbTimer = setInterval(() => {
@@ -649,6 +693,15 @@ export class Gildash {
       }
     }
     this.signalHandlers = [];
+
+    if (this.semanticLayer) {
+      try {
+        this.semanticLayer.dispose();
+      } catch (err) {
+        closeErrors.push(err instanceof Error ? err : new Error(String(err)));
+      }
+      this.semanticLayer = null;
+    }
 
     if (this.coordinator) {
       try {
@@ -1272,6 +1325,21 @@ export class Gildash {
         decorators: Array.isArray(d.decorators) ? (d.decorators as FullSymbol['decorators']) : undefined,
         typeParameters: typeof d.typeParameters === 'string' ? d.typeParameters : undefined,
       };
+      if (this.semanticLayer) {
+        try {
+          const pos = this.semanticLayer.lineColumnToPosition(
+            filePath, sym.span.start.line, sym.span.start.column,
+          );
+          if (pos !== null) {
+            const resolvedType = this.semanticLayer.collectTypeAt(filePath, pos);
+            if (resolvedType) {
+              full.resolvedType = resolvedType;
+            }
+          }
+        } catch {
+          // semantic enrichment is best-effort — don't fail the whole call
+        }
+      }
       return full;
     } catch (e) {
       return err(gildashError('search', 'Gildash: getFullSymbol failed', e));
@@ -1655,5 +1723,134 @@ export class Gildash {
    */
   getSymbolsByFile(filePath: string, project?: string): Result<SymbolSearchResult[], GildashError> {
     return this.searchSymbols({ filePath, project: project ?? undefined, limit: 10_000 });
+  }
+
+  // ─── Semantic Layer APIs ──────────────────────────────────────────────
+
+  /**
+   * Look up a symbol's position for semantic queries.
+   * Returns `null` when the symbol is not indexed or position cannot be resolved.
+   */
+  private resolveSymbolPosition(
+    symbolName: string,
+    filePath: string,
+    project?: string,
+  ): { sym: SymbolSearchResult; position: number } | null {
+    const effectiveProject = project ?? this.defaultProject;
+    const results = this.symbolSearchFn({
+      symbolRepo: this.symbolRepo,
+      project: effectiveProject,
+      query: { text: symbolName, exact: true, filePath, limit: 1 },
+    });
+    if (results.length === 0) return null;
+    const sym = results[0]!;
+    const position = this.semanticLayer!.lineColumnToPosition(
+      filePath,
+      sym.span.start.line,
+      sym.span.start.column,
+    );
+    if (position === null) return null;
+    return { sym, position };
+  }
+
+  /**
+   * Retrieve the resolved type of a symbol using the Semantic Layer (tsc TypeChecker).
+   *
+   * Requires `semantic: true` at {@link Gildash.open} time.
+   *
+   * @param symbolName - Exact symbol name.
+   * @param filePath   - Absolute path of the file containing the symbol.
+   * @param project    - Project scope override (defaults to `defaultProject`).
+   * @returns A {@link ResolvedType} on success, `null` when the type cannot be resolved,
+   *   or `Err<GildashError>` with `type='closed'` / `type='semantic'` / `type='search'`.
+   */
+  getResolvedType(
+    symbolName: string,
+    filePath: string,
+    project?: string,
+  ): Result<ResolvedType | null, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    if (!this.semanticLayer) return err(gildashError('semantic', 'Gildash: semantic layer is not enabled'));
+    try {
+      const resolved = this.resolveSymbolPosition(symbolName, filePath, project);
+      if (!resolved) {
+        return err(gildashError('search', `Gildash: symbol '${symbolName}' not found in '${filePath}'`));
+      }
+      return this.semanticLayer.collectTypeAt(filePath, resolved.position);
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getResolvedType failed', e));
+    }
+  }
+
+  /**
+   * Find all semantic references to a symbol using the Semantic Layer (tsc findReferences).
+   *
+   * @param symbolName - Exact symbol name.
+   * @param filePath   - Absolute path of the file containing the symbol.
+   * @param project    - Project scope override (defaults to `defaultProject`).
+   * @returns An array of {@link SemanticReference} entries, or `Err<GildashError>`.
+   */
+  getSemanticReferences(
+    symbolName: string,
+    filePath: string,
+    project?: string,
+  ): Result<SemanticReference[], GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    if (!this.semanticLayer) return err(gildashError('semantic', 'Gildash: semantic layer is not enabled'));
+    try {
+      const resolved = this.resolveSymbolPosition(symbolName, filePath, project);
+      if (!resolved) {
+        return err(gildashError('search', `Gildash: symbol '${symbolName}' not found in '${filePath}'`));
+      }
+      return this.semanticLayer.findReferences(filePath, resolved.position);
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getSemanticReferences failed', e));
+    }
+  }
+
+  /**
+   * Find implementations of an interface/abstract class using the Semantic Layer.
+   *
+   * Includes both explicit (`implements`) and structural (duck-typing) matches.
+   *
+   * @param symbolName - Exact symbol name.
+   * @param filePath   - Absolute path of the file containing the symbol.
+   * @param project    - Project scope override (defaults to `defaultProject`).
+   * @returns An array of {@link Implementation} entries, or `Err<GildashError>`.
+   */
+  getImplementations(
+    symbolName: string,
+    filePath: string,
+    project?: string,
+  ): Result<Implementation[], GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    if (!this.semanticLayer) return err(gildashError('semantic', 'Gildash: semantic layer is not enabled'));
+    try {
+      const resolved = this.resolveSymbolPosition(symbolName, filePath, project);
+      if (!resolved) {
+        return err(gildashError('search', `Gildash: symbol '${symbolName}' not found in '${filePath}'`));
+      }
+      return this.semanticLayer.findImplementations(filePath, resolved.position);
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getImplementations failed', e));
+    }
+  }
+
+  /**
+   * Retrieve the semantic module interface — exported symbols with resolved types.
+   *
+   * @param filePath - Absolute path of the file.
+   * @returns A {@link SemanticModuleInterface}, or `Err<GildashError>`.
+   */
+  getSemanticModuleInterface(
+    filePath: string,
+  ): Result<SemanticModuleInterface, GildashError> {
+    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+    if (!this.semanticLayer) return err(gildashError('semantic', 'Gildash: semantic layer is not enabled'));
+    try {
+      return this.semanticLayer.getModuleInterface(filePath);
+    } catch (e) {
+      return err(gildashError('search', 'Gildash: getSemanticModuleInterface failed', e));
+    }
   }
 }

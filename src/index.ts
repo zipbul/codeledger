@@ -19,3 +19,5 @@ export type { SymbolStats } from "./store/repositories/symbol.repository";
 export type { WatcherRole } from "./watcher/types";
 export type { ParsedFile } from "./parser/types";
 export type { FileRecord } from "./store/repositories/file.repository";
+
+export type { ResolvedType, SemanticReference, Implementation, SemanticModuleInterface } from "./semantic/types";

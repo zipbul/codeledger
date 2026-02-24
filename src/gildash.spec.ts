@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock, spyOn } from 'bun:test';
-import { isErr } from '@zipbul/result';
+import { err, isErr } from '@zipbul/result';
 import { Gildash } from './gildash';
-import type { GildashError } from './errors';
+import { gildashError, type GildashError } from './errors';
+import type { ResolvedType, SemanticReference, Implementation } from './semantic/types';
+import type { SemanticModuleInterface } from './semantic/types';
 import type { ExtractedSymbol, CodeRelation } from './extractor/types';
 import type { RelationRecord } from './store/repositories/relation.repository';
 import type { FileRecord } from './store/repositories/file.repository';
@@ -3577,6 +3579,390 @@ describe('Gildash', () => {
 
       expect(relationRepo.getByType.mock.calls.length).toBeGreaterThan(afterFirst);
       await ledger.close();
+    });
+  });
+
+  // ─── Semantic Layer integration ───
+
+  describe('Semantic Layer integration', () => {
+    function makeSemanticLayerMock() {
+      return {
+        collectTypeAt: mock((_fp: string, _pos: number) => null as ResolvedType | null),
+        findReferences: mock((_fp: string, _pos: number) => [] as SemanticReference[]),
+        findImplementations: mock((_fp: string, _pos: number) => [] as Implementation[]),
+        getModuleInterface: mock((fp: string) => ({ filePath: fp, exports: [] } as SemanticModuleInterface)),
+        notifyFileChanged: mock((_fp: string, _content: string) => {}),
+        dispose: mock(() => {}),
+        isDisposed: false,
+        lineColumnToPosition: mock((_fp: string, _line: number, _col: number) => 42 as number | null),
+      };
+    }
+
+    function makeSemanticOpts(overrides: Parameters<typeof makeOptions>[0] = {}) {
+      const sl = makeSemanticLayerMock();
+      const base = makeOptions(overrides);
+      return {
+        ...base,
+        semantic: true,
+        semanticLayerFactory: mock((_path: string) => sl),
+        _sl: sl,
+      } as any;
+    }
+
+    const SAMPLE_SYMBOL = {
+      id: 1, name: 'Foo', filePath: '/project/src/a.ts', kind: 'function',
+      span: { start: { line: 5, column: 10 }, end: { line: 8, column: 1 } },
+      isExported: true, signature: null, fingerprint: 'fp1', detail: {},
+    };
+
+    const SAMPLE_TYPE: ResolvedType = {
+      text: 'string', flags: 1, isUnion: false, isIntersection: false, isGeneric: false,
+    };
+
+    // 1. [HP] open({semantic:true}) creates SemanticLayer
+    it('should create SemanticLayer when open() is called with semantic: true', async () => {
+      const opts = makeSemanticOpts();
+
+      const ledger = await openOrThrow(opts);
+
+      expect(opts.semanticLayerFactory).toHaveBeenCalledTimes(1);
+      await ledger.close();
+    });
+
+    // 2. [NE] open({semantic:true}) SemanticLayer.create fails → Err
+    it('should return Err when SemanticLayer factory fails during open()', async () => {
+      const db = makeDbMock();
+      const base = makeOptions({ db });
+      const opts = {
+        ...base,
+        semantic: true,
+        semanticLayerFactory: mock(() => err(gildashError('semantic', 'tsconfig not found'))),
+      } as any;
+
+      const result = await Gildash.open(opts);
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('semantic');
+    });
+
+    // 3. [HP] getResolvedType → symbol found + collectTypeAt returns type
+    it('should return ResolvedType when getResolvedType finds symbol and collectTypeAt succeeds', async () => {
+      const opts = makeSemanticOpts();
+      opts.symbolSearchFn.mockReturnValue([SAMPLE_SYMBOL]);
+      opts._sl.collectTypeAt.mockReturnValue(SAMPLE_TYPE);
+      opts._sl.lineColumnToPosition.mockReturnValue(42);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getResolvedType('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual(SAMPLE_TYPE);
+      expect(opts._sl.lineColumnToPosition).toHaveBeenCalledWith('/project/src/a.ts', 5, 10);
+      expect(opts._sl.collectTypeAt).toHaveBeenCalledWith('/project/src/a.ts', 42);
+      await ledger.close();
+    });
+
+    // 4. [HP] getResolvedType → collectTypeAt returns null
+    it('should return null when getResolvedType finds symbol but collectTypeAt returns null', async () => {
+      const opts = makeSemanticOpts();
+      opts.symbolSearchFn.mockReturnValue([SAMPLE_SYMBOL]);
+      opts._sl.collectTypeAt.mockReturnValue(null);
+      opts._sl.lineColumnToPosition.mockReturnValue(42);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getResolvedType('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toBeNull();
+      await ledger.close();
+    });
+
+    // 5. [HP] getSemanticReferences → success
+    it('should return SemanticReference array when getSemanticReferences finds symbol', async () => {
+      const refs: SemanticReference[] = [
+        { filePath: '/project/src/b.ts', position: 100, line: 10, column: 5, isDefinition: false, isWrite: false },
+      ];
+      const opts = makeSemanticOpts();
+      opts.symbolSearchFn.mockReturnValue([SAMPLE_SYMBOL]);
+      opts._sl.findReferences.mockReturnValue(refs);
+      opts._sl.lineColumnToPosition.mockReturnValue(42);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getSemanticReferences('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual(refs);
+      expect(opts._sl.findReferences).toHaveBeenCalledWith('/project/src/a.ts', 42);
+      await ledger.close();
+    });
+
+    // 6. [HP] getImplementations → success
+    it('should return Implementation array when getImplementations finds symbol', async () => {
+      const impls: Implementation[] = [
+        { filePath: '/project/src/c.ts', symbolName: 'FooImpl', position: 200, kind: 'class', isExplicit: true },
+      ];
+      const opts = makeSemanticOpts();
+      opts.symbolSearchFn.mockReturnValue([SAMPLE_SYMBOL]);
+      opts._sl.findImplementations.mockReturnValue(impls);
+      opts._sl.lineColumnToPosition.mockReturnValue(42);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getImplementations('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual(impls);
+      expect(opts._sl.findImplementations).toHaveBeenCalledWith('/project/src/a.ts', 42);
+      await ledger.close();
+    });
+
+    // 7. [HP] getSemanticModuleInterface → delegates
+    it('should delegate to semanticLayer.getModuleInterface when getSemanticModuleInterface is called', async () => {
+      const moduleIface: SemanticModuleInterface = {
+        filePath: '/project/src/a.ts',
+        exports: [{ name: 'Foo', kind: 'function', resolvedType: SAMPLE_TYPE }],
+      };
+      const opts = makeSemanticOpts();
+      opts._sl.getModuleInterface.mockReturnValue(moduleIface);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getSemanticModuleInterface('/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result).toEqual(moduleIface);
+      expect(opts._sl.getModuleInterface).toHaveBeenCalledWith('/project/src/a.ts');
+      await ledger.close();
+    });
+
+    // 8. [HP] getFullSymbol + semantic → resolvedType included
+    it('should include resolvedType in FullSymbol when semantic is enabled and type is available', async () => {
+      const opts = makeSemanticOpts();
+      opts.symbolSearchFn.mockReturnValue([{
+        ...SAMPLE_SYMBOL,
+        detail: { parameters: 'x: number' },
+      }]);
+      opts._sl.lineColumnToPosition.mockReturnValue(42);
+      opts._sl.collectTypeAt.mockReturnValue(SAMPLE_TYPE);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.resolvedType).toEqual(SAMPLE_TYPE);
+      expect(result.parameters).toBe('x: number');
+      await ledger.close();
+    });
+
+    // 9. [HP] getFullSymbol - semantic → no resolvedType
+    it('should not include resolvedType in FullSymbol when semantic is disabled', async () => {
+      const opts = makeOptions();
+      opts.symbolSearchFn.mockReturnValue([{
+        ...SAMPLE_SYMBOL,
+        detail: { parameters: 'x: number' },
+      }]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getFullSymbol('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(false);
+      expect(result.resolvedType).toBeUndefined();
+      await ledger.close();
+    });
+
+    // 10. [HP] close() calls dispose
+    it('should call semanticLayer.dispose() when close() is called with semantic enabled', async () => {
+      const opts = makeSemanticOpts();
+      const ledger = await openOrThrow(opts);
+
+      await ledger.close();
+
+      expect(opts._sl.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    // 11. [HP] watcher event → notifyFileChanged
+    it('should call semanticLayer.notifyFileChanged when watcher event fires with semantic enabled', async () => {
+      const watcher = makeWatcherMock();
+      let capturedCb: ((event: any) => void) | null = null;
+      watcher.start = mock(async (cb: any) => { capturedCb = cb; });
+      const opts = makeSemanticOpts({ watcher });
+      opts.readFileFn = mock(async () => 'const x = 1;');
+      const ledger = await openOrThrow(opts);
+
+      capturedCb!({ eventType: 'change', filePath: '/project/src/a.ts' });
+      for (let j = 0; j < 10; j++) await Promise.resolve();
+
+      expect(opts.readFileFn).toHaveBeenCalledWith('/project/src/a.ts');
+      expect(opts._sl.notifyFileChanged).toHaveBeenCalledWith('/project/src/a.ts', 'const x = 1;');
+      await ledger.close();
+    });
+
+    // 12. [NE] semantic APIs after close → Err 'closed'
+    it('should return Err with closed type when semantic APIs are called after close()', async () => {
+      const opts = makeSemanticOpts();
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const r1 = (ledger as any).getResolvedType('Foo', '/project/src/a.ts');
+      const r2 = (ledger as any).getSemanticReferences('Foo', '/project/src/a.ts');
+      const r3 = (ledger as any).getImplementations('Foo', '/project/src/a.ts');
+      const r4 = (ledger as any).getSemanticModuleInterface('/project/src/a.ts');
+
+      for (const r of [r1, r2, r3, r4]) {
+        expect(isErr(r)).toBe(true);
+        expect((r as any).data.type).toBe('closed');
+      }
+    });
+
+    // 13. [NE] semantic APIs without semantic → Err 'semantic'
+    it('should return Err with semantic type when semantic APIs are called without semantic enabled', async () => {
+      const opts = makeOptions();
+      const ledger = await openOrThrow(opts);
+
+      const r1 = (ledger as any).getResolvedType('Foo', '/project/src/a.ts');
+      const r2 = (ledger as any).getSemanticReferences('Foo', '/project/src/a.ts');
+      const r3 = (ledger as any).getImplementations('Foo', '/project/src/a.ts');
+      const r4 = (ledger as any).getSemanticModuleInterface('/project/src/a.ts');
+
+      for (const r of [r1, r2, r3, r4]) {
+        expect(isErr(r)).toBe(true);
+        expect((r as any).data.type).toBe('semantic');
+      }
+      await ledger.close();
+    });
+
+    // 14. [NE] getResolvedType symbol not found → Err 'search'
+    it('should return Err with search type when getResolvedType cannot find the symbol', async () => {
+      const opts = makeSemanticOpts();
+      opts.symbolSearchFn.mockReturnValue([]);
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getResolvedType('NonExistent', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+
+    // 15. [NE] getResolvedType throws → Err 'search'
+    it('should return Err with search type when symbolSearchFn throws inside getResolvedType', async () => {
+      const opts = makeSemanticOpts();
+      opts.symbolSearchFn.mockImplementation(() => { throw new Error('db error'); });
+      const ledger = await openOrThrow(opts);
+
+      const result = (ledger as any).getResolvedType('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('search');
+      await ledger.close();
+    });
+
+    // 16. [NE] close() → dispose throws → error aggregated
+    it('should aggregate error when semanticLayer.dispose() throws during close()', async () => {
+      const opts = makeSemanticOpts();
+      opts._sl.dispose.mockImplementation(() => { throw new Error('dispose failed'); });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.close();
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('close');
+    });
+
+    // 17. [CO] closed check > semantic check priority
+    it('should return Err with closed type rather than semantic type when both closed and no semantic', async () => {
+      const opts = makeOptions(); // no semantic
+      const ledger = await openOrThrow(opts);
+      await ledger.close();
+
+      const result = (ledger as any).getResolvedType('Foo', '/project/src/a.ts');
+
+      expect(isErr(result)).toBe(true);
+      expect((result as any).data.type).toBe('closed');
+    });
+
+    // 18. [OR] SemanticLayer created before fullIndex
+    it('should create SemanticLayer before calling coordinator.fullIndex() during open()', async () => {
+      const callOrder: string[] = [];
+      const sl = makeSemanticLayerMock();
+      const coordinator = makeCoordinatorMock();
+      coordinator.fullIndex = mock(async () => {
+        callOrder.push('fullIndex');
+        return {
+          indexedFiles: 0, removedFiles: 0,
+          totalSymbols: 0, totalRelations: 0,
+          durationMs: 0, changedFiles: [], deletedFiles: [],
+        };
+      });
+      const base = makeOptions({ coordinator });
+      const opts = {
+        ...base,
+        semantic: true,
+        semanticLayerFactory: mock((_path: string) => {
+          callOrder.push('semanticLayerFactory');
+          return sl;
+        }),
+      } as any;
+
+      const ledger = await openOrThrow(opts);
+
+      expect(callOrder).toEqual(['semanticLayerFactory', 'fullIndex']);
+      await ledger.close();
+    });
+
+    // 19. [HP] getResolvedType uses defaultProject
+    it('should pass defaultProject to symbolSearchFn when getResolvedType is called without project', async () => {
+      const opts = makeSemanticOpts();
+      opts.symbolSearchFn.mockReturnValue([SAMPLE_SYMBOL]);
+      opts._sl.lineColumnToPosition.mockReturnValue(42);
+      opts._sl.collectTypeAt.mockReturnValue(null);
+      const ledger = await openOrThrow(opts);
+
+      (ledger as any).getResolvedType('Foo', '/project/src/a.ts');
+
+      const lastCall = opts.symbolSearchFn.mock.calls[opts.symbolSearchFn.mock.calls.length - 1];
+      expect(lastCall[0].project).toBe('test-project');
+      await ledger.close();
+    });
+
+    // 20. [HP] watcher event + no semantic → no semantic notification
+    it('should not attempt semantic file read when watcher event fires without semantic enabled', async () => {
+      const watcher = makeWatcherMock();
+      let capturedCb: ((event: any) => void) | null = null;
+      watcher.start = mock(async (cb: any) => { capturedCb = cb; });
+      const readFileMock = mock(async (_fp: string) => '// content');
+      const opts = makeOptions({ watcher, readFileFn: readFileMock as any });
+      const ledger = await openOrThrow(opts);
+
+      const callsBefore = readFileMock.mock.calls.length;
+      capturedCb!({ eventType: 'change', filePath: '/project/src/a.ts' });
+      for (let j = 0; j < 10; j++) await Promise.resolve();
+
+      expect(readFileMock.mock.calls.length).toBe(callsBefore);
+      await ledger.close();
+    });
+
+    // 21. [ED] close() → dispose before db.close
+    it('should call semanticLayer.dispose() before db.close() during close()', async () => {
+      const callOrder: string[] = [];
+      const db = makeDbMock();
+      db.close = mock(() => { callOrder.push('db.close'); });
+      const sl = makeSemanticLayerMock();
+      sl.dispose = mock(() => { callOrder.push('semantic.dispose'); });
+      const base = makeOptions({ db });
+      const opts = {
+        ...base,
+        semantic: true,
+        semanticLayerFactory: mock((_path: string) => sl),
+        _sl: sl,
+      } as any;
+      const ledger = await openOrThrow(opts);
+
+      await ledger.close();
+
+      const disposeIdx = callOrder.indexOf('semantic.dispose');
+      const dbCloseIdx = callOrder.indexOf('db.close');
+      expect(disposeIdx).not.toBe(-1);
+      expect(dbCloseIdx).not.toBe(-1);
+      expect(disposeIdx).toBeLessThan(dbCloseIdx);
     });
   });
 });

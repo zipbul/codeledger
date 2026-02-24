@@ -218,6 +218,23 @@ export class SemanticLayer {
     this.#symbolGraph.invalidate(filePath);
   }
 
+  // ── Position conversion ──────────────────────────────────────────────
+
+  /**
+   * Convert 1-based line + 0-based column to a byte offset using tsc SourceFile.
+   * Returns `null` when the file is not part of the program.
+   */
+  lineColumnToPosition(filePath: string, line: number, column: number): number | null {
+    this.#assertNotDisposed();
+    const sourceFile = this.#program.getProgram().getSourceFile(filePath);
+    if (!sourceFile) return null;
+    try {
+      return ts.getPositionOfLineAndCharacter(sourceFile, line - 1, column);
+    } catch {
+      return null;
+    }
+  }
+
   // ── Lifecycle ───────────────────────────────────────────────────────────
 
   dispose(): void {
