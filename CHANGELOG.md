@@ -1,5 +1,23 @@
 # @zipbul/gildash
 
+## 0.5.0
+
+### Breaking Changes
+
+- **`getDeadExports` 제거** — `Gildash.getDeadExports(project?, opts?)` API가 삭제되었습니다. 이 기능은 진입점(entry point) 정의, 빌드 설정, 테스트 파일 포함 여부 등 프로젝트 정책에 따라 결과가 근본적으로 달라지므로 라이브러리 레벨의 단일 구현으로 제공하기 어렵습니다. 대신 `getImportGraph()` + `getDependents()`를 조합하여 프로젝트 정책에 맞는 dead export 탐지 로직을 직접 구현하세요.
+
+### New Features
+
+- **`getCyclePaths` — 완전한 순환 탐지 알고리즘 교체 (Tarjan SCC + Johnson's circuits)** — 이전 구현은 DFS 기반으로 대표 경로만 반환했습니다. 이번 버전부터 Tarjan SCC로 강연결 컴포넌트를 먼저 식별한 뒤, Johnson's algorithm으로 각 SCC 내의 모든 elementary circuit을 열거합니다. 중복 없는 정규화된 경로(사전순 최솟값 노드 기준 rotation) 전체를 반환하며, `maxCycles` 옵션으로 반환 개수를 제한할 수 있습니다.
+
+- **`parseSource` / `batchParse` — `ParserOptions` passthrough** — `parseSource(filePath, source, options?)` 및 `batchParse(filePaths, options?)`에 `oxc-parser`의 `ParserOptions`를 직접 전달할 수 있습니다. `lang` 필드로 파서 언어(ts / tsx / js 등)를 명시적으로 지정할 수 있어, 파일 확장자와 실제 언어가 다른 경우나 JSX 지원이 필요한 파일 처리에 유용합니다.
+
+### Chores
+
+- `oxc-parser` 0.114.0 → 0.115.0
+
+---
+
 ## 0.4.1
 
 ### Patch Changes

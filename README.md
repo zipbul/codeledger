@@ -17,7 +17,6 @@ gildash indexes your TypeScript codebase into a local SQLite database, then lets
 | "Which files break if I change this module?" | Directed import graph with transitive impact analysis |
 | "Are there any circular dependencies?" | Cycle detection across the full import graph |
 | "Where is this symbol actually defined?" | Re-export chain resolution to the original source |
-| "Which exports are never imported?" | Dead-export detection across projects |
 | "Find every `console.log(...)` call" | AST-level structural pattern search via [ast-grep](https://ast-grep.github.io/) |
 
 <br>
@@ -137,19 +136,17 @@ const transitive = await ledger.getTransitiveDependencies('src/app.ts');
 
 // Circular dependency detection
 const hasCycles = await ledger.hasCycle();
-const cyclePaths = await ledger.getCyclePaths();
+const cyclePaths = await ledger.getCyclePaths();          // all elementary circuits
+const limited   = await ledger.getCyclePaths(undefined, { maxCycles: 100 }); // undefined = use default project
 ```
 
 ---
 
 ### Code Quality Analysis
 
-Detect dead exports, inspect module interfaces, and measure coupling.
+Inspect module interfaces and measure coupling.
 
 ```ts
-// Dead exports — exported symbols never imported anywhere
-const dead = ledger.getDeadExports();
-
 // File statistics — line count, symbol count, size
 const stats = ledger.getFileStats('src/app.ts');
 
@@ -257,7 +254,7 @@ Returns `Promise<Gildash>` (wrapped in `Result`).
 | `getDependents(filePath)` | `Result<string[]>` | Files that import `filePath` |
 | `getAffected(changedFiles)` | `Promise<Result<string[]>>` | Transitive impact set |
 | `hasCycle(project?)` | `Promise<Result<boolean>>` | Circular dependency check |
-| `getCyclePaths(project?)` | `Promise<Result<string[][]>>` | All cycle paths |
+| `getCyclePaths(project?, opts?)` | `Promise<Result<string[][]>>` | All cycle paths (Tarjan SCC + Johnson's). `opts.maxCycles` limits results. |
 | `getImportGraph(project?)` | `Promise<Result<Map>>` | Full adjacency list |
 | `getTransitiveDependencies(filePath)` | `Promise<Result<string[]>>` | Forward transitive BFS |
 
@@ -265,7 +262,6 @@ Returns `Promise<Gildash>` (wrapped in `Result`).
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `getDeadExports(project?, opts?)` | `Result<Array>` | Unused exported symbols |
 | `getFullSymbol(name, filePath)` | `Result<FullSymbol>` | Members, jsDoc, decorators, type info |
 | `getFileStats(filePath)` | `Result<FileStats>` | Line count, symbol count, size |
 | `getFanMetrics(filePath)` | `Promise<Result<FanMetrics>>` | Fan-in / fan-out coupling |
@@ -281,7 +277,7 @@ Returns `Promise<Gildash>` (wrapped in `Result`).
 | `resolveSymbol(name, filePath)` | `Result<ResolvedSymbol>` | Follow re-export chain to original |
 | `getHeritageChain(name, filePath)` | `Promise<Result<HeritageNode>>` | extends / implements tree |
 | `indexExternalPackages(packages)` | `Promise<Result<IndexResult[]>>` | Index `.d.ts` from `node_modules` |
-| `batchParse(filePaths)` | `Promise<Result<Map>>` | Concurrent multi-file parsing |
+| `batchParse(filePaths, opts?)` | `Promise<Result<Map>>` | Concurrent multi-file parsing. `opts`: oxc-parser `ParserOptions`. |
 
 ### Lifecycle & Low-level
 
@@ -289,7 +285,7 @@ Returns `Promise<Gildash>` (wrapped in `Result`).
 |--------|---------|-------------|
 | `reindex()` | `Promise<Result<IndexResult>>` | Force full re-index (owner only) |
 | `onIndexed(callback)` | `() => void` | Subscribe to index-complete events |
-| `parseSource(filePath, src)` | `Result<ParsedFile>` | Parse & cache a single file |
+| `parseSource(filePath, src, opts?)` | `Result<ParsedFile>` | Parse & cache a single file. `opts`: oxc-parser `ParserOptions`. |
 | `extractSymbols(parsed)` | `Result<ExtractedSymbol[]>` | Extract symbols from parsed AST |
 | `extractRelations(parsed)` | `Result<CodeRelation[]>` | Extract relations from parsed AST |
 | `getParsedAst(filePath)` | `ParsedFile \| undefined` | Cached AST lookup (read-only) |

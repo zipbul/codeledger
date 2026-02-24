@@ -597,4 +597,189 @@ describe('DependencyGraph', () => {
 
     expect(paths).toEqual([]);
   });
+
+  // ─── F-3: Tarjan SCC + Johnson's circuits ───
+
+  it('should find both elementary circuits when two cycles share a common node', async () => {
+    // A→B→A and B→C→B share node B → single SCC {A,B,C} → 2 circuits
+    mockGetByType = mock(() => [
+      makeImport('src/a.ts', 'src/b.ts'),
+      makeImport('src/b.ts', 'src/a.ts'),
+      makeImport('src/b.ts', 'src/c.ts'),
+      makeImport('src/c.ts', 'src/b.ts'),
+    ]);
+    mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
+    graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
+    await graph.build();
+
+    const paths = graph.getCyclePaths();
+
+    expect(paths).toHaveLength(2);
+    const flat = paths.map(p => p.join('->'));
+    expect(flat.some(s => s.includes('src/a.ts') && s.includes('src/b.ts'))).toBe(true);
+    expect(flat.some(s => s.includes('src/b.ts') && s.includes('src/c.ts'))).toBe(true);
+  });
+
+  it('should return canonical form with lexicographically smallest node first when cycle nodes are unordered', async () => {
+    // Z→A→M→Z cycle → canonical rotation starts with A
+    mockGetByType = mock(() => [
+      makeImport('src/z.ts', 'src/a.ts'),
+      makeImport('src/a.ts', 'src/m.ts'),
+      makeImport('src/m.ts', 'src/z.ts'),
+    ]);
+    mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
+    graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
+    await graph.build();
+
+    const paths = graph.getCyclePaths();
+
+    expect(paths).toHaveLength(1);
+    expect(paths[0]![0]).toBe('src/a.ts');
+  });
+
+  it('should find all elementary circuits in overlapping cycles within single SCC', async () => {
+    // A→B→C→A and A→B→A (shortcut) → same SCC, 2 distinct elementary circuits
+    mockGetByType = mock(() => [
+      makeImport('src/a.ts', 'src/b.ts'),
+      makeImport('src/b.ts', 'src/c.ts'),
+      makeImport('src/c.ts', 'src/a.ts'),
+      makeImport('src/b.ts', 'src/a.ts'),
+    ]);
+    mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
+    graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
+    await graph.build();
+
+    const paths = graph.getCyclePaths();
+
+    expect(paths.length).toBeGreaterThanOrEqual(2);
+    // Should have [A,B] and [A,B,C]
+    const lengths = paths.map(p => p.length).sort();
+    expect(lengths).toContain(2);
+    expect(lengths).toContain(3);
+  });
+
+  it('should limit result count when maxCycles option is provided', async () => {
+    // 3 independent cycles, maxCycles=1 → only 1 returned
+    mockGetByType = mock(() => [
+      makeImport('src/a.ts', 'src/b.ts'),
+      makeImport('src/b.ts', 'src/a.ts'),
+      makeImport('src/c.ts', 'src/d.ts'),
+      makeImport('src/d.ts', 'src/c.ts'),
+      makeImport('src/e.ts', 'src/f.ts'),
+      makeImport('src/f.ts', 'src/e.ts'),
+    ]);
+    mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
+    graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
+    await graph.build();
+
+    const paths = graph.getCyclePaths({ maxCycles: 1 });
+
+    expect(paths).toHaveLength(1);
+  });
+
+  it('should return all cycles when maxCycles is not specified', async () => {
+    mockGetByType = mock(() => [
+      makeImport('src/a.ts', 'src/b.ts'),
+      makeImport('src/b.ts', 'src/a.ts'),
+      makeImport('src/c.ts', 'src/d.ts'),
+      makeImport('src/d.ts', 'src/c.ts'),
+    ]);
+    mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
+    graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
+    await graph.build();
+
+    const paths = graph.getCyclePaths();
+
+    expect(paths).toHaveLength(2);
+  });
+
+  it('should return empty array when maxCycles is 0', async () => {
+    mockGetByType = mock(() => [
+      makeImport('src/a.ts', 'src/b.ts'),
+      makeImport('src/b.ts', 'src/a.ts'),
+    ]);
+    mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
+    graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
+    await graph.build();
+
+    const paths = graph.getCyclePaths({ maxCycles: 0 });
+
+    expect(paths).toEqual([]);
+  });
+
+  it('should return each self-loop as separate cycle when multiple nodes have self-loops', async () => {
+    mockGetByType = mock(() => [
+      makeImport('src/a.ts', 'src/a.ts'),
+      makeImport('src/b.ts', 'src/b.ts'),
+    ]);
+    mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
+    graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
+    await graph.build();
+
+    const paths = graph.getCyclePaths();
+
+    expect(paths).toHaveLength(2);
+    const flat = paths.flat();
+    expect(flat).toContain('src/a.ts');
+    expect(flat).toContain('src/b.ts');
+  });
+
+  it('should count self-loops toward maxCycles limit when both self-loops and multi-node cycles exist', async () => {
+    mockGetByType = mock(() => [
+      makeImport('src/a.ts', 'src/a.ts'),
+      makeImport('src/b.ts', 'src/c.ts'),
+      makeImport('src/c.ts', 'src/b.ts'),
+    ]);
+    mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
+    graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
+    await graph.build();
+
+    const paths = graph.getCyclePaths({ maxCycles: 1 });
+
+    expect(paths).toHaveLength(1);
+  });
+
+  it('should return same cycles regardless of relation insertion order', async () => {
+    // Order 1: A→B first, then B→A
+    mockGetByType = mock(() => [
+      makeImport('src/a.ts', 'src/b.ts'),
+      makeImport('src/b.ts', 'src/a.ts'),
+    ]);
+    mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
+    graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
+    await graph.build();
+    const paths1 = graph.getCyclePaths();
+
+    // Order 2: B→A first, then A→B
+    mockGetByType = mock(() => [
+      makeImport('src/b.ts', 'src/a.ts'),
+      makeImport('src/a.ts', 'src/b.ts'),
+    ]);
+    mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
+    graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
+    await graph.build();
+    const paths2 = graph.getCyclePaths();
+
+    expect(paths1).toEqual(paths2);
+  });
+
+  it('should find all elementary circuits in complete K3 graph', async () => {
+    // A↔B, B↔C, A↔C — complete graph of 3 nodes
+    mockGetByType = mock(() => [
+      makeImport('src/a.ts', 'src/b.ts'),
+      makeImport('src/b.ts', 'src/a.ts'),
+      makeImport('src/b.ts', 'src/c.ts'),
+      makeImport('src/c.ts', 'src/b.ts'),
+      makeImport('src/a.ts', 'src/c.ts'),
+      makeImport('src/c.ts', 'src/a.ts'),
+    ]);
+    mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
+    graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
+    await graph.build();
+
+    const paths = graph.getCyclePaths();
+
+    // K3 has: [A,B], [B,C], [A,C], [A,B,C], [A,C,B] = 5 elementary circuits
+    expect(paths).toHaveLength(5);
+  });
 });

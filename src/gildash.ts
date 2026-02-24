@@ -23,6 +23,7 @@ import { discoverProjects } from './common/project-discovery';
 import type { ProjectBoundary } from './common/project-discovery';
 import { loadTsconfigPaths, clearTsconfigPathsCache } from './common/tsconfig-resolver';
 import type { TsconfigPaths } from './common/tsconfig-resolver';
+import type { ParserOptions } from 'oxc-parser';
 import { symbolSearch as defaultSymbolSearch } from './search/symbol-search';
 import type { SymbolSearchQuery, SymbolSearchResult } from './search/symbol-search';
 import { relationSearch as defaultRelationSearch } from './search/relation-search';
@@ -727,6 +728,7 @@ export class Gildash {
    *
    * @param filePath - File path used as the cache key and for diagnostics.
    * @param sourceText - Raw TypeScript source code.
+   * @param options - Optional oxc-parser {@link ParserOptions} (e.g. `sourceType`, `lang`).
    * @returns A {@link ParsedFile}, or `Err<GildashError>` with `type='closed'` if the instance
    *   is closed, or `type='parse'` if the parser fails.
    *
@@ -741,9 +743,9 @@ export class Gildash {
    * const symbols = ledger.extractSymbols(parsed);
    * ```
    */
-  parseSource(filePath: string, sourceText: string): Result<ParsedFile, GildashError> {
+  parseSource(filePath: string, sourceText: string, options?: ParserOptions): Result<ParsedFile, GildashError> {
     if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
-    const result = this.parseSourceFn(filePath, sourceText);
+    const result = this.parseSourceFn(filePath, sourceText, options);
     if (isErr(result)) return result;
     this.parseCache.set(filePath, result);
     return result;
@@ -1211,87 +1213,23 @@ export class Gildash {
   /**
    * Return all cycle paths in the import graph.
    *
-   * Uses DFS with canonical form deduplication.
+   * Tarjan SCC + Johnson's circuits — 모든 elementary circuit 보장.
+   * 단순한 사이클 유무(`hasCycle`)와 달리 중복 없는 정규화된 경로 전체를 반환합니다.
+   * `maxCycles` 옵션으로 반환 개수를 제한할 수 있습니다.
    *
    * @param project - Project name. Defaults to the primary project.
-   * @returns An array of cycle paths (`string[][]`), each starting at the lexicographically
-   *   smallest node in the cycle. Returns `[]` if no cycles exist.
-   *   Returns `Err<GildashError>` with `type='closed'` / `type='search'`.
+   * @param options.maxCycles - Maximum number of cycles to return. Defaults to no limit.
+   * @returns An array of cycle paths (`string[][]`), each path starting at the
+   *   lexicographically smallest node (canonical rotation). Returns `[]` if no cycles exist.
+   *   Returns `Err<GildashError>` with `type='closed'` (instance closed) or `type='search'` (graph error).
    */
-  async getCyclePaths(project?: string): Promise<Result<string[][], GildashError>> {
+  async getCyclePaths(project?: string, options?: { maxCycles?: number }): Promise<Result<string[][], GildashError>> {
     if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
     try {
       const g = this.getOrBuildGraph(project);
-      return g.getCyclePaths();
+      return g.getCyclePaths(options);
     } catch (e) {
       return err(gildashError('search', 'Gildash: getCyclePaths failed', e));
-    }
-  }
-
-  /**
-   * Find exported symbols that are never imported anywhere in the project.
-   *
-   * A symbol is considered "dead" if no `imports` or `re-exports` relation in the
-   * project references it by name (matching both `dstFilePath` and `dstSymbolName`).
-   * Exports from entry-point files are excluded by default.
-   *
-   * @param project - Project name. Defaults to the primary project.
-   * @param opts.entryPoints - File paths whose exports are excluded from dead-export detection.
-   *   Defaults to files named `index.ts`, `index.mts`, or `main.ts` anywhere in the project.
-   *   Pass `[]` to disable all entry-point filtering.
-   * @returns An array of `{ symbolName, filePath }` for dead exports,
-   *   or `Err<GildashError>` with `type='closed'` / `type='store'`.
-   */
-  getDeadExports(
-    project?: string,
-    opts?: { entryPoints?: string[] },
-  ): Result<Array<{ symbolName: string; filePath: string }>, GildashError> {
-    if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
-    try {
-      const effectiveProject = project ?? this.defaultProject;
-
-      // 1. Collect all exported symbols
-      const exports = this.symbolRepo.searchByQuery({
-        project: effectiveProject,
-        isExported: true,
-        limit: 100_000,
-      });
-
-      // 2. Collect (dstFilePath::dstSymbolName) from imports + re-exports relations
-      const importedSymbols = new Set<string>();
-      for (const relType of ['imports', 're-exports'] as const) {
-        const relations = this.relationRepo.getByType(effectiveProject, relType);
-        for (const rel of relations) {
-          if (rel.dstSymbolName != null) {
-            importedSymbols.add(`${rel.dstFilePath}::${rel.dstSymbolName}`);
-          }
-        }
-      }
-
-      // 3. Determine entry-point file paths to exclude
-      const entryPoints = opts?.entryPoints;
-      const defaultEntryBasenames = ['index.ts', 'index.mts', 'main.ts'];
-
-      // 4. Filter dead exports
-      const dead = exports
-        .filter((sym) => {
-          // Skip if already imported
-          if (importedSymbols.has(`${sym.filePath}::${sym.name}`)) return false;
-
-          // Skip if from an entry-point file
-          if (entryPoints !== undefined) {
-            // User-supplied list (may be empty → no exclusions)
-            return !entryPoints.includes(sym.filePath);
-          }
-          // Default: exclude files whose basename matches the default entry names
-          const basename = sym.filePath.split('/').pop() ?? sym.filePath;
-          return !defaultEntryBasenames.includes(basename);
-        })
-        .map((sym) => ({ symbolName: sym.name, filePath: sym.filePath }));
-
-      return dead;
-    } catch (e) {
-      return err(gildashError('store', 'Gildash: getDeadExports failed', e));
     }
   }
 
@@ -1568,17 +1506,18 @@ export class Gildash {
    * The operation does not fail even if every file fails — it returns an empty `Map`.
    *
    * @param filePaths - Absolute paths of files to parse.
+   * @param options - Optional oxc-parser {@link ParserOptions} (e.g. `sourceType`, `lang`).
    * @returns A `Map<filePath, ParsedFile>` for every successfully-parsed file,
    *   or `Err<GildashError>` with `type='closed'` if the instance is closed.
    */
-  async batchParse(filePaths: string[]): Promise<Result<Map<string, ParsedFile>, GildashError>> {
+  async batchParse(filePaths: string[], options?: ParserOptions): Promise<Result<Map<string, ParsedFile>, GildashError>> {
     if (this.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
     const result = new Map<string, ParsedFile>();
     await Promise.all(
       filePaths.map(async (fp) => {
         try {
           const text = await this.readFileFn(fp);
-          const parsed = this.parseSourceFn(fp, text);
+          const parsed = this.parseSourceFn(fp, text, options);
           if (!isErr(parsed)) {
             result.set(fp, parsed as ParsedFile);
           }

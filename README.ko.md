@@ -17,7 +17,6 @@ gildash는 TypeScript 코드베이스를 로컬 SQLite 데이터베이스에 인
 | "이 모듈을 바꾸면 어디가 깨지지?" | 방향 import 그래프 + 전이적(transitive) 영향도 분석 |
 | "순환 의존성이 있나?" | 전체 import 그래프에서 순환 감지 |
 | "이 심볼이 실제로 어디서 정의된 거지?" | re-export 체인을 따라가 원본 소스까지 추적 |
-| "사용되지 않는 export는?" | 프로젝트 전체에서 미사용 export 탐지 |
 | "모든 `console.log(...)` 호출을 찾아줘" | [ast-grep](https://ast-grep.github.io/) 기반 AST 레벨 구조적 패턴 검색 |
 
 <br>
@@ -137,19 +136,17 @@ const transitive = await ledger.getTransitiveDependencies('src/app.ts');
 
 // 순환 의존성 감지
 const hasCycles = await ledger.hasCycle();
-const cyclePaths = await ledger.getCyclePaths();
+const cyclePaths = await ledger.getCyclePaths();                           // 모든 elementary circuit
+const limited   = await ledger.getCyclePaths(undefined, { maxCycles: 100 }); // undefined = 기본 프로젝트 사용
 ```
 
 ---
 
 ### 코드 품질 분석
 
-미사용 export 감지, 모듈 인터페이스 조회, 결합도 측정을 수행합니다.
+모듈 인터페이스 조회, 결합도 측정을 수행합니다.
 
 ```ts
-// 미사용 export — 어디에서도 import되지 않은 exported 심볼
-const dead = ledger.getDeadExports();
-
 // 파일 통계 — 라인 수, 심볼 수, 파일 크기
 const stats = ledger.getFileStats('src/app.ts');
 
@@ -257,7 +254,7 @@ if (isErr(result)) {
 | `getDependents(filePath)` | `Result<string[]>` | `filePath`를 import하는 파일 목록 |
 | `getAffected(changedFiles)` | `Promise<Result<string[]>>` | 전이적 영향 범위 |
 | `hasCycle(project?)` | `Promise<Result<boolean>>` | 순환 의존성 감지 |
-| `getCyclePaths(project?)` | `Promise<Result<string[][]>>` | 모든 순환 경로 |
+| `getCyclePaths(project?, opts?)` | `Promise<Result<string[][]>>` | 모든 순환 경로 (Tarjan SCC + Johnson's). `opts.maxCycles`로 개수 제한 가능. |
 | `getImportGraph(project?)` | `Promise<Result<Map>>` | 전체 인접 리스트 |
 | `getTransitiveDependencies(filePath)` | `Promise<Result<string[]>>` | 전방 전이적 BFS |
 
@@ -265,7 +262,6 @@ if (isErr(result)) {
 
 | 메서드 | 반환 타입 | 설명 |
 |--------|-----------|------|
-| `getDeadExports(project?, opts?)` | `Result<Array>` | 미사용 exported 심볼 |
 | `getFullSymbol(name, filePath)` | `Result<FullSymbol>` | 멤버, jsDoc, 데코레이터, 타입 정보 |
 | `getFileStats(filePath)` | `Result<FileStats>` | 라인 수, 심볼 수, 파일 크기 |
 | `getFanMetrics(filePath)` | `Promise<Result<FanMetrics>>` | fan-in/fan-out 결합도 |
@@ -281,7 +277,7 @@ if (isErr(result)) {
 | `resolveSymbol(name, filePath)` | `Result<ResolvedSymbol>` | re-export 체인을 따라 원본 추적 |
 | `getHeritageChain(name, filePath)` | `Promise<Result<HeritageNode>>` | extends/implements 트리 |
 | `indexExternalPackages(packages)` | `Promise<Result<IndexResult[]>>` | `node_modules`의 `.d.ts` 인덱싱 |
-| `batchParse(filePaths)` | `Promise<Result<Map>>` | 다중 파일 동시 파싱 |
+| `batchParse(filePaths, opts?)` | `Promise<Result<Map>>` | 다중 파일 동시 파싱. `opts`: oxc-parser `ParserOptions`. |
 
 ### 라이프사이클 & 저수준
 
@@ -289,7 +285,7 @@ if (isErr(result)) {
 |--------|-----------|------|
 | `reindex()` | `Promise<Result<IndexResult>>` | 강제 전체 재인덱싱 (owner만 가능) |
 | `onIndexed(callback)` | `() => void` | 인덱싱 완료 이벤트 구독 |
-| `parseSource(filePath, src)` | `Result<ParsedFile>` | 단일 파일 파싱 & 캐시 |
+| `parseSource(filePath, src, opts?)` | `Result<ParsedFile>` | 단일 파일 파싱 & 캐시. `opts`: oxc-parser `ParserOptions`. |
 | `extractSymbols(parsed)` | `Result<ExtractedSymbol[]>` | 파싱된 AST에서 심볼 추출 |
 | `extractRelations(parsed)` | `Result<CodeRelation[]>` | 파싱된 AST에서 관계 추출 |
 | `getParsedAst(filePath)` | `ParsedFile \| undefined` | 캐시된 AST 조회 (읽기 전용) |

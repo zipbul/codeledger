@@ -473,39 +473,6 @@ describe('Gildash integration', () => {
       await rm(tmpDir, { recursive: true, force: true });
     });
 
-    it('should detect dead exports that are never imported', () => {
-      const result = g.getDeadExports();
-      if (isErr(result)) throw (result as any).data;
-      const arr = result as Array<{ symbolName: string; filePath: string }>;
-      // dead.ts exports unused and DEAD_CONST — neither is imported
-      const deadNames = arr.map((d) => d.symbolName);
-      expect(deadNames).toContain('unused');
-      expect(deadNames).toContain('DEAD_CONST');
-    });
-
-    it('should exclude imported symbols from dead exports', () => {
-      const result = g.getDeadExports();
-      if (isErr(result)) throw (result as any).data;
-      const arr = result as Array<{ symbolName: string; filePath: string }>;
-      // helper is imported by app.ts → should NOT be dead
-      const deadNames = arr.map((d) => d.symbolName);
-      expect(deadNames).not.toContain('helper');
-    });
-
-    it('should include entry-point exports as dead when entryPoints is empty array', () => {
-      const withDefault = g.getDeadExports();
-      if (isErr(withDefault)) throw (withDefault as any).data;
-
-      const withEmptyEntryPoints = g.getDeadExports(undefined, { entryPoints: [] });
-      if (isErr(withEmptyEntryPoints)) throw (withEmptyEntryPoints as any).data;
-
-      // With entryPoints=[], index.ts exports are no longer excluded
-      // So the "with empty" list should be >= the default list
-      expect((withEmptyEntryPoints as any[]).length).toBeGreaterThanOrEqual(
-        (withDefault as any[]).length,
-      );
-    });
-
     it('should return full symbol details including members for a class', () => {
       const result = g.getFullSymbol('Base', 'src/models.ts');
       if (isErr(result)) throw (result as any).data;

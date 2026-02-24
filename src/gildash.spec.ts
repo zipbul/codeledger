@@ -412,7 +412,18 @@ describe('Gildash', () => {
     const result = ledger.parseSource('/project/src/a.ts', 'const x = 1;');
 
     expect(result).toMatchObject({ filePath: '/project/src/a.ts' });
-    expect(opts.parseSourceFn).toHaveBeenCalledWith('/project/src/a.ts', 'const x = 1;');
+    expect(opts.parseSourceFn).toHaveBeenCalledWith('/project/src/a.ts', 'const x = 1;', undefined);
+    await ledger.close();
+  });
+
+  it('should pass options to parseSourceFn when parseSource is called with options', async () => {
+    const opts = makeOptions();
+    const ledger = await openOrThrow(opts);
+    const options = { sourceType: 'script' as const };
+
+    ledger.parseSource('/project/src/a.ts', 'const x = 1;', options);
+
+    expect(opts.parseSourceFn).toHaveBeenCalledWith('/project/src/a.ts', 'const x = 1;', options);
     await ledger.close();
   });
 
@@ -2234,6 +2245,24 @@ describe('Gildash', () => {
       expect((result as any).data.type).toBe('search');
       await ledger.close();
     });
+
+    it('should pass options to graph getCyclePaths when maxCycles is provided', async () => {
+      const relationRepo = makeRelationRepoMock();
+      relationRepo.getByType.mockReturnValue([
+        { srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts', type: 'imports', project: 'test-project', srcSymbolName: null, dstSymbolName: null, metaJson: null },
+        { srcFilePath: 'src/b.ts', dstFilePath: 'src/a.ts', type: 'imports', project: 'test-project', srcSymbolName: null, dstSymbolName: null, metaJson: null },
+        { srcFilePath: 'src/c.ts', dstFilePath: 'src/d.ts', type: 'imports', project: 'test-project', srcSymbolName: null, dstSymbolName: null, metaJson: null },
+        { srcFilePath: 'src/d.ts', dstFilePath: 'src/c.ts', type: 'imports', project: 'test-project', srcSymbolName: null, dstSymbolName: null, metaJson: null },
+      ]);
+      const opts = makeOptions({ relationRepo });
+      const ledger = await openOrThrow(opts);
+
+      const result = await ledger.getCyclePaths(undefined, { maxCycles: 1 });
+
+      expect(isErr(result)).toBe(false);
+      expect(result as string[][]).toHaveLength(1);
+      await ledger.close();
+    });
   });
 
   // ─── FR-02: batchParse ───
@@ -2322,6 +2351,23 @@ describe('Gildash', () => {
 
       expect(isErr(result)).toBe(false);
       expect((result as Map<string, any>).size).toBe(1);
+      await ledger.close();
+    });
+
+    it('should pass options to parseSourceFn for each file when batchParse is called with options', async () => {
+      const readFileFn = mock(async (_fp: string) => '// content');
+      const parseSourceFn = mock((fp: string, text: string, _opts: any) => ({
+        filePath: fp, program: { body: [] }, errors: [], comments: [], sourceText: text,
+      })) as any;
+      const opts = { ...makeOptions({ readFileFn }), parseSourceFn };
+      const ledger = await openOrThrow(opts);
+      const options = { sourceType: 'module' as const };
+
+      await ledger.batchParse(['/project/src/a.ts', '/project/src/b.ts'], options);
+
+      for (const call of (parseSourceFn.mock.calls as any[])) {
+        expect(call[2]).toBe(options);
+      }
       await ledger.close();
     });
   });
@@ -2631,276 +2677,6 @@ describe('Gildash', () => {
     });
   });
 
-  // ─── FR-07: getDeadExports ───
-
-  describe('Gildash.getDeadExports', () => {
-    function makeExportedSymbol(name: string, filePath: string) {
-      return { name, filePath, kind: 'function', project: 'test-project', isExported: 1,
-        startLine: 1, startColumn: 0, endLine: 5, endColumn: 1,
-        signature: null, fingerprint: null, detailJson: null, contentHash: 'h1', indexedAt: '2024-01-01' };
-    }
-
-    function makeImportRelation(dstFilePath: string, dstSymbolName: string | null, type = 'imports') {
-      return { type, srcFilePath: 'src/other.ts', srcSymbolName: null,
-        dstFilePath, dstSymbolName, project: 'test-project', metaJson: null };
-    }
-
-    // [HP] all exports imported → returns []
-    it('should return empty array when all exported symbols are imported by other files', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Foo', 'src/a.ts')]) as any;
-      const relationRepo = makeRelationRepoMock();
-      relationRepo.getByType = mock((_p: string, type: string) =>
-        type === 'imports' ? [makeImportRelation('src/a.ts', 'Foo')] : []
-      ) as any;
-      const opts = makeOptions({ symbolRepo, relationRepo });
-      const ledger = await openOrThrow(opts);
-
-      const result = (ledger as any).getDeadExports();
-
-      expect(isErr(result)).toBe(false);
-      expect(result).toEqual([]);
-      await ledger.close();
-    });
-
-    // [HP] 1 export not imported → returns [{symbolName, filePath}]
-    it('should return one item when one exported symbol is not imported by any file', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Bar', 'src/b.ts')]) as any;
-      const relationRepo = makeRelationRepoMock();
-      relationRepo.getByType = mock(() => []) as any;
-      const opts = makeOptions({ symbolRepo, relationRepo });
-      const ledger = await openOrThrow(opts);
-
-      const result = (ledger as any).getDeadExports();
-
-      expect(isErr(result)).toBe(false);
-      expect(result).toEqual([{ symbolName: 'Bar', filePath: 'src/b.ts' }]);
-      await ledger.close();
-    });
-
-    // [HP] multiple dead exports → all returned
-    it('should return all dead exports when multiple exported symbols are not imported', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => [
-        makeExportedSymbol('A', 'src/utils.ts'),
-        makeExportedSymbol('B', 'src/utils.ts'),
-        makeExportedSymbol('C', 'src/utils.ts'),
-      ]) as any;
-      const relationRepo = makeRelationRepoMock();
-      relationRepo.getByType = mock(() => []) as any;
-      const opts = makeOptions({ symbolRepo, relationRepo });
-      const ledger = await openOrThrow(opts);
-
-      const result = (ledger as any).getDeadExports();
-
-      expect(isErr(result)).toBe(false);
-      expect(result).toHaveLength(3);
-      await ledger.close();
-    });
-
-    // [HP] dstSymbolName=null in relation → symbol still considered dead
-    it('should not consider a symbol imported when relation has null dstSymbolName', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Baz', 'src/c.ts')]) as any;
-      const relationRepo = makeRelationRepoMock();
-      relationRepo.getByType = mock((_p: string, type: string) =>
-        type === 'imports' ? [makeImportRelation('src/c.ts', null)] : []
-      ) as any;
-      const opts = makeOptions({ symbolRepo, relationRepo });
-      const ledger = await openOrThrow(opts);
-
-      const result = (ledger as any).getDeadExports();
-
-      expect(isErr(result)).toBe(false);
-      expect(result).toEqual([{ symbolName: 'Baz', filePath: 'src/c.ts' }]);
-      await ledger.close();
-    });
-
-    // [HP] entryPoints specified → excludes exports from those files
-    it('should exclude exports from entry point files when entryPoints option is specified', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Entry', 'src/index.ts')]) as any;
-      const relationRepo = makeRelationRepoMock();
-      relationRepo.getByType = mock(() => []) as any;
-      const opts = makeOptions({ symbolRepo, relationRepo });
-      const ledger = await openOrThrow(opts);
-
-      const result = (ledger as any).getDeadExports(undefined, { entryPoints: ['src/index.ts'] });
-
-      expect(isErr(result)).toBe(false);
-      expect(result).toEqual([]);
-      await ledger.close();
-    });
-
-    // [HP] entryPoints=[] → no exclusion, even default names not excluded
-    it('should not exclude any exports when entryPoints is an empty array', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Main', 'src/index.ts')]) as any;
-      const relationRepo = makeRelationRepoMock();
-      relationRepo.getByType = mock(() => []) as any;
-      const opts = makeOptions({ symbolRepo, relationRepo });
-      const ledger = await openOrThrow(opts);
-
-      const result = (ledger as any).getDeadExports(undefined, { entryPoints: [] });
-
-      expect(isErr(result)).toBe(false);
-      expect(result).toEqual([{ symbolName: 'Main', filePath: 'src/index.ts' }]);
-      await ledger.close();
-    });
-
-    // [HP] entryPoints not specified → default entry points applied
-    it('should exclude exports from index.ts by default when entryPoints is not specified', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Default', 'src/index.ts')]) as any;
-      const relationRepo = makeRelationRepoMock();
-      relationRepo.getByType = mock(() => []) as any;
-      const opts = makeOptions({ symbolRepo, relationRepo });
-      const ledger = await openOrThrow(opts);
-
-      const result = (ledger as any).getDeadExports();
-
-      expect(isErr(result)).toBe(false);
-      expect(result).toEqual([]);
-      await ledger.close();
-    });
-
-    // [HP] project not specified → defaultProject used
-    it('should pass defaultProject to symbolRepo when project is not specified', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => []) as any;
-      const opts = makeOptions({ symbolRepo });
-      const ledger = await openOrThrow(opts);
-
-      (ledger as any).getDeadExports();
-
-      expect(symbolRepo.searchByQuery).toHaveBeenCalledWith(
-        expect.objectContaining({ project: 'test-project' }),
-      );
-      await ledger.close();
-    });
-
-    // [HP] same name exported from 2 files, one imported → correct per-file distinction
-    it('should treat exports with same name from different files independently based on filePath', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => [
-        makeExportedSymbol('Shared', 'src/a.ts'),
-        makeExportedSymbol('Shared', 'src/b.ts'),
-      ]) as any;
-      const relationRepo = makeRelationRepoMock();
-      // only src/a.ts::Shared is imported
-      relationRepo.getByType = mock((_p: string, type: string) =>
-        type === 'imports' ? [makeImportRelation('src/a.ts', 'Shared')] : []
-      ) as any;
-      const opts = makeOptions({ symbolRepo, relationRepo });
-      const ledger = await openOrThrow(opts);
-
-      const result = (ledger as any).getDeadExports();
-
-      expect(isErr(result)).toBe(false);
-      expect(result).toEqual([{ symbolName: 'Shared', filePath: 'src/b.ts' }]);
-      await ledger.close();
-    });
-
-    // [HP] 're-exports' type relation included in imported determination
-    it('should not mark a symbol as dead when it is referenced via a re-exports relation', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => [makeExportedSymbol('Widget', 'src/widget.ts')]) as any;
-      const relationRepo = makeRelationRepoMock();
-      relationRepo.getByType = mock((_p: string, type: string) =>
-        type === 're-exports' ? [makeImportRelation('src/widget.ts', 'Widget', 're-exports')] : []
-      ) as any;
-      const opts = makeOptions({ symbolRepo, relationRepo });
-      const ledger = await openOrThrow(opts);
-
-      const result = (ledger as any).getDeadExports();
-
-      expect(isErr(result)).toBe(false);
-      expect(result).toEqual([]);
-      await ledger.close();
-    });
-
-    // [NE] closed → Err('closed')
-    it('should return Err with closed type when getDeadExports is called after close', async () => {
-      const opts = makeOptions();
-      const ledger = await openOrThrow(opts);
-      await ledger.close();
-
-      const result = (ledger as any).getDeadExports();
-
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
-    });
-
-    // [NE] symbolRepo.searchByQuery throws → Err
-    it('should return Err with store type when symbolRepo throws inside getDeadExports', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => { throw new Error('db error'); }) as any;
-      const opts = makeOptions({ symbolRepo });
-      const ledger = await openOrThrow(opts);
-
-      const result = (ledger as any).getDeadExports();
-
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('store');
-      await ledger.close();
-    });
-
-    // [NE] relationRepo.getByType throws → Err
-    it('should return Err with store type when relationRepo throws inside getDeadExports', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => []) as any;
-      const relationRepo = makeRelationRepoMock();
-      relationRepo.getByType = mock(() => { throw new Error('relation db error'); }) as any;
-      const opts = makeOptions({ symbolRepo, relationRepo });
-      const ledger = await openOrThrow(opts);
-
-      const result = (ledger as any).getDeadExports();
-
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('store');
-      await ledger.close();
-    });
-
-    // [ED] 0 import relations → all exports are dead
-    it('should return all exports as dead when there are no import relations in the project', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => [
-        makeExportedSymbol('X', 'src/x.ts'),
-        makeExportedSymbol('Y', 'src/y.ts'),
-      ]) as any;
-      const relationRepo = makeRelationRepoMock();
-      relationRepo.getByType = mock(() => []) as any;
-      const opts = makeOptions({ symbolRepo, relationRepo });
-      const ledger = await openOrThrow(opts);
-
-      const result = (ledger as any).getDeadExports();
-
-      expect(isErr(result)).toBe(false);
-      expect(result).toHaveLength(2);
-      await ledger.close();
-    });
-
-    // [ED] project specified → correct project passed to queries
-    it('should pass specified project to symbolRepo and relationRepo when project is given', async () => {
-      const symbolRepo = makeSymbolRepoMock();
-      symbolRepo.searchByQuery = mock(() => []) as any;
-      const relationRepo = makeRelationRepoMock();
-      relationRepo.getByType = mock(() => []) as any;
-      const opts = makeOptions({ symbolRepo, relationRepo });
-      const ledger = await openOrThrow(opts);
-
-      (ledger as any).getDeadExports('custom-project');
-
-      expect(symbolRepo.searchByQuery).toHaveBeenCalledWith(
-        expect.objectContaining({ project: 'custom-project' }),
-      );
-      expect(relationRepo.getByType).toHaveBeenCalledWith('custom-project', expect.any(String));
-      await ledger.close();
-    });
-  });
-
-  // FR-09: getFullSymbol
   describe('Gildash.getFullSymbol', () => {
     // 1. [HP] class with members → FullSymbol.members populated
     it('should return FullSymbol with members when searching for a class symbol with member data in detail', async () => {

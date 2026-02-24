@@ -225,44 +225,237 @@ export class DependencyGraph {
    * (rotated so the lexicographically smallest node comes first).
    * Duplicate cycles are deduplicated.
    *
-   * @returns An array of cycles, where each cycle is a `string[]` of file paths.
+   * Tarjan SCC + Johnson's circuits — 모든 elementary circuit 보장.
+   * `maxCycles` 옵션으로 반환 개수를 제한할 수 있습니다.
+   *
+   * @param options.maxCycles - Maximum number of cycles to return. Defaults to `Infinity`.
+   * @returns An array of cycles, where each cycle is a `string[]` of file paths
+   *   in canonical form (lexicographic rotation, smallest node first).
+   *   Returns an empty array when no cycles exist.
    */
-  getCyclePaths(): string[][] {
-    const seenCycles = new Set<string>();
-    const cycles: string[][] = [];
-    const globalVisited = new Set<string>();
-    const inPath = new Map<string, number>();
-    const path: string[] = [];
+  getCyclePaths(options?: { maxCycles?: number }): string[][] {
+    const maxCycles = options?.maxCycles ?? Infinity;
 
-    const dfs = (node: string): void => {
-      if (globalVisited.has(node)) return;
-      if (inPath.has(node)) {
-        const cycleStart = inPath.get(node)!;
-        const cycle = path.slice(cycleStart);
-        const minNode = cycle.reduce((a, b) => (a <= b ? a : b));
-        const idx = cycle.indexOf(minNode);
-        const canonical = [...cycle.slice(idx), ...cycle.slice(0, idx)];
-        const key = canonical.join('\0');
-        if (!seenCycles.has(key)) {
-          seenCycles.add(key);
-          cycles.push(canonical);
-        }
-        return;
-      }
-      inPath.set(node, path.length);
-      path.push(node);
-      for (const neighbor of this.adjacencyList.get(node) ?? []) {
-        dfs(neighbor);
-      }
-      path.pop();
-      inPath.delete(node);
-      globalVisited.add(node);
-    };
+    if (maxCycles <= 0) return [];
 
-    for (const startNode of this.adjacencyList.keys()) {
-      dfs(startNode);
+    // Build a Map<string, string[]> snapshot of the adjacencyList
+    const adjacency = new Map<string, ReadonlyArray<string>>();
+    for (const [node, edges] of this.adjacencyList) {
+      adjacency.set(node, Array.from(edges));
     }
 
-    return cycles;
+    return detectCycles(adjacency, maxCycles);
   }
+}
+
+// ─── Tarjan SCC + Johnson's circuits (module-level helpers) ───
+
+const compareStrings = (a: string, b: string): number => a.localeCompare(b);
+
+/**
+ * Normalize a cycle to canonical form:
+ * strip trailing duplicate, rotate so the lexicographically smallest node is first.
+ */
+function normalizeCycle(cycle: ReadonlyArray<string>): string[] {
+  const unique =
+    cycle.length > 1 && cycle[0] === cycle[cycle.length - 1]
+      ? cycle.slice(0, -1)
+      : [...cycle];
+
+  if (unique.length === 0) return [];
+
+  let best = unique;
+  for (let i = 1; i < unique.length; i++) {
+    const rotated = unique.slice(i).concat(unique.slice(0, i));
+    if (rotated.join('::') < best.join('::')) {
+      best = rotated;
+    }
+  }
+
+  return [...best];
+}
+
+/**
+ * Record a cycle into the result set, deduplicating by canonical key.
+ * Returns true if the cycle was new (added), false if duplicate.
+ */
+function recordCyclePath(
+  cycleKeys: Set<string>,
+  cycles: string[][],
+  path: ReadonlyArray<string>,
+): boolean {
+  const normalized = normalizeCycle(path);
+  if (normalized.length === 0) return false;
+
+  const key = normalized.join('->');
+  if (cycleKeys.has(key)) return false;
+
+  cycleKeys.add(key);
+  cycles.push(normalized);
+  return true;
+}
+
+interface SccResult {
+  readonly components: ReadonlyArray<ReadonlyArray<string>>;
+}
+
+/**
+ * Tarjan's SCC algorithm. Returns all strongly connected components.
+ */
+function tarjanScc(graph: Map<string, ReadonlyArray<string>>): SccResult {
+  let index = 0;
+  const stack: string[] = [];
+  const onStack = new Set<string>();
+  const indices = new Map<string, number>();
+  const lowlinks = new Map<string, number>();
+  const components: string[][] = [];
+
+  const strongConnect = (node: string): void => {
+    indices.set(node, index);
+    lowlinks.set(node, index);
+    index += 1;
+
+    stack.push(node);
+    onStack.add(node);
+
+    for (const next of graph.get(node) ?? []) {
+      if (!indices.has(next)) {
+        strongConnect(next);
+        lowlinks.set(node, Math.min(lowlinks.get(node) ?? 0, lowlinks.get(next) ?? 0));
+      } else if (onStack.has(next)) {
+        lowlinks.set(node, Math.min(lowlinks.get(node) ?? 0, indices.get(next) ?? 0));
+      }
+    }
+
+    if (lowlinks.get(node) === indices.get(node)) {
+      const component: string[] = [];
+      let current = '';
+      do {
+        current = stack.pop() ?? '';
+        onStack.delete(current);
+        component.push(current);
+      } while (current !== node && stack.length > 0);
+      components.push(component);
+    }
+  };
+
+  for (const node of graph.keys()) {
+    if (!indices.has(node)) {
+      strongConnect(node);
+    }
+  }
+
+  return { components };
+}
+
+/**
+ * Johnson's elementary circuit algorithm.
+ * Finds all elementary circuits within a single SCC sub-graph.
+ */
+function johnsonCircuits(
+  scc: ReadonlyArray<string>,
+  adjacency: Map<string, ReadonlyArray<string>>,
+  maxCircuits: number,
+): string[][] {
+  const cycles: string[][] = [];
+  const cycleKeys = new Set<string>();
+  const nodes = [...scc].sort(compareStrings);
+
+  const unblock = (node: string, blocked: Set<string>, blockMap: Map<string, Set<string>>): void => {
+    blocked.delete(node);
+    const blockedBy = blockMap.get(node);
+    if (!blockedBy) return;
+    for (const entry of blockedBy) {
+      if (blocked.has(entry)) {
+        unblock(entry, blocked, blockMap);
+      }
+    }
+    blockedBy.clear();
+  };
+
+  for (let i = 0; i < nodes.length && cycles.length < maxCircuits; i++) {
+    const start = nodes[i] ?? '';
+    const allowed = new Set(nodes.slice(i));
+    const blocked = new Set<string>();
+    const blockMap = new Map<string, Set<string>>();
+    const stack: string[] = [];
+
+    const neighbors = (v: string): ReadonlyArray<string> =>
+      (adjacency.get(v) ?? []).filter(e => allowed.has(e));
+
+    const circuit = (node: string): boolean => {
+      if (cycles.length >= maxCircuits) return true;
+
+      let found = false;
+      stack.push(node);
+      blocked.add(node);
+
+      for (const next of neighbors(node)) {
+        if (cycles.length >= maxCircuits) break;
+
+        if (next === start) {
+          recordCyclePath(cycleKeys, cycles, stack.concat(start));
+          found = true;
+        } else if (!blocked.has(next)) {
+          if (circuit(next)) {
+            found = true;
+          }
+        }
+      }
+
+      if (found) {
+        unblock(node, blocked, blockMap);
+      } else {
+        for (const next of neighbors(node)) {
+          const set = blockMap.get(next) ?? new Set<string>();
+          set.add(node);
+          blockMap.set(next, set);
+        }
+      }
+
+      stack.pop();
+      return found;
+    };
+
+    circuit(start);
+  }
+
+  return cycles;
+}
+
+/**
+ * Detect all elementary cycles using Tarjan SCC preprocessing + Johnson's circuits.
+ */
+function detectCycles(
+  adjacency: Map<string, ReadonlyArray<string>>,
+  maxCycles: number,
+): string[][] {
+  const { components } = tarjanScc(adjacency);
+  const cycles: string[][] = [];
+  const cycleKeys = new Set<string>();
+
+  for (const component of components) {
+    if (cycles.length >= maxCycles) break;
+
+    if (component.length === 0) continue;
+
+    if (component.length === 1) {
+      const node = component[0] ?? '';
+      const neighbors = adjacency.get(node) ?? [];
+      if (neighbors.includes(node)) {
+        recordCyclePath(cycleKeys, cycles, [node, node]);
+      }
+      continue;
+    }
+
+    const remaining = maxCycles - cycles.length;
+    const circuits = johnsonCircuits(component, adjacency, remaining);
+
+    for (const c of circuits) {
+      if (cycles.length >= maxCycles) break;
+      recordCyclePath(cycleKeys, cycles, c);
+    }
+  }
+
+  return cycles;
 }
