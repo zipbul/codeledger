@@ -8,6 +8,7 @@ import type { ExtractedSymbol, SymbolKind, CodeRelation } from './extractor/type
 import { extractSymbols as defaultExtractSymbols } from './extractor/symbol-extractor';
 import { extractRelations as defaultExtractRelations } from './extractor/relation-extractor';
 import { DbConnection } from './store/connection';
+import { DATA_DIR, DB_FILE } from './constants';
 import { FileRepository } from './store/repositories/file.repository';
 import type { FileRecord } from './store/repositories/file.repository';
 import { SymbolRepository } from './store/repositories/symbol.repository';
@@ -683,7 +684,7 @@ export class Gildash {
     if (opts?.cleanup) {
       for (const ext of ['', '-wal', '-shm']) {
         try {
-          await this.unlinkFn(path.join(this.projectRoot, '.zipbul', 'gildash.db' + ext));
+          await this.unlinkFn(path.join(this.projectRoot, DATA_DIR, DB_FILE + ext));
         } catch {}
       }
     }

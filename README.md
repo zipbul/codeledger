@@ -33,6 +33,7 @@ gildash indexes your TypeScript codebase into a local SQLite database, then lets
 - **Multi-process safe** — Owner/reader role separation guarantees a single writer per database
 - **Scan-only mode** — `watchMode: false` for one-shot indexing without file watcher overhead
 - **External package indexing** — Index `.d.ts` type declarations from `node_modules`
+- **tsconfig.json JSONC** — Path alias resolution parses comments and trailing commas in `tsconfig.json`
 
 <br>
 
@@ -482,7 +483,7 @@ interface GildashError {
 Gildash (Facade)
 ├── Parser      — oxc-parser-based TypeScript AST parsing
 ├── Extractor   — Symbol & relation extraction (imports, re-exports, type-refs, calls, heritage)
-├── Store       — bun:sqlite + drizzle-orm (files · symbols · relations · FTS5)
+├── Store       — bun:sqlite + drizzle-orm (files · symbols · relations · FTS5) at `.gildash/gildash.db`
 ├── Indexer     — File change → parse → extract → store pipeline, symbol-level diff
 ├── Search      — FTS + regex + decorator search, relation queries, dependency graph, ast-grep
 └── Watcher     — @parcel/watcher + owner/reader role management
@@ -494,6 +495,14 @@ When multiple processes share the same SQLite database, gildash enforces a singl
 
 - **Owner** — Runs the file watcher, performs indexing, sends a heartbeat every 30 s
 - **Reader** — Read-only access; polls owner health every 60 s and self-promotes if the owner goes stale
+
+<br>
+
+## ⬆️ Upgrading from 0.5.0
+
+The database directory was renamed from `.zipbul/` to `.gildash/`. The database is now stored at `<projectRoot>/.gildash/gildash.db`.
+
+Existing `.zipbul/` data is **not** migrated automatically. On first run, a fresh database is created at `.gildash/gildash.db`. Delete `.zipbul/` manually after upgrading.
 
 <br>
 

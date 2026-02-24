@@ -346,11 +346,18 @@ export class IndexCoordinator {
       const parsedCacheEntries: Array<{ filePath: string; parsed: unknown }> = [];
 
       dbConnection.transaction(() => {
-        for (const boundary of boundaries) {
-          const projectFiles = fileRepo.getAllFiles(boundary.project);
-          for (const f of projectFiles) {
-            fileRepo.deleteFile(f.project, f.filePath);
-          }
+        // Only delete changed files (cascade removes their symbols + relations).
+        // Unchanged files are preserved so that FK constraints on
+        // relations.dstFilePath remain satisfiable.
+        for (const fd of preread) {
+          const project = resolveFileProject(fd.filePath, boundaries);
+          fileRepo.deleteFile(project, fd.filePath);
+        }
+        for (const filePath of deleted) {
+          const project = resolveFileProject(filePath, boundaries);
+          symbolRepo.deleteFileSymbols(project, filePath);
+          relationRepo.deleteFileRelations(project, filePath);
+          fileRepo.deleteFile(project, filePath);
         }
 
         // Pass 1: Insert all file records first so that FK constraints on

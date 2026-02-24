@@ -33,6 +33,7 @@ gildash는 TypeScript 코드베이스를 로컬 SQLite 데이터베이스에 인
 - **멀티 프로세스 안전** — owner/reader 역할 분리로 단일 writer 보장
 - **스캔 전용 모드** — `watchMode: false`로 파일 워처 없이 1회성 인덱싱
 - **외부 패키지 인덱싱** — `node_modules`의 `.d.ts` 타입 선언 인덱싱
+- **tsconfig.json JSONC** — `tsconfig.json`의 주석(`//`, `/* */`)과 트레일링 콤마를 지원하는 경로 별칭 파싱
 
 <br>
 
@@ -374,7 +375,7 @@ interface GildashError {
 Gildash (파사드)
 ├── Parser      — oxc-parser 기반 TypeScript AST 파싱
 ├── Extractor   — 심볼/관계 추출 (imports, re-exports, type-refs, calls, heritage)
-├── Store       — bun:sqlite + drizzle-orm (files · symbols · relations · FTS5)
+├── Store       — bun:sqlite + drizzle-orm (files · symbols · relations · FTS5), `.gildash/gildash.db`에 저장
 ├── Indexer     — 파일 변경 → 파싱 → 추출 → 저장 파이프라인, 심볼 레벨 diff
 ├── Search      — FTS + regex + decorator 검색, 관계 쿼리, 의존성 그래프, ast-grep
 └── Watcher     — @parcel/watcher + owner/reader 역할 관리
@@ -386,6 +387,14 @@ Gildash (파사드)
 
 - **Owner** — 파일 워처 실행, 인덱싱 수행, 30초 간격으로 heartbeat 전송
 - **Reader** — 읽기 전용 접근; 60초 간격으로 owner 상태 확인, owner가 stale 상태가 되면 reader 중 하나가 owner로 승격
+
+<br>
+
+## ⬆️ 0.5.0에서 업그레이드
+
+데이터베이스 디렉토리가 `.zipbul/`에서 `.gildash/`로 변경되었습니다. 데이터베이스는 `<projectRoot>/.gildash/gildash.db`에 저장됩니다.
+
+기존 `.zipbul/` 데이터는 자동으로 이전되지 않습니다. 최초 실행 시 `.gildash/gildash.db`에 새 데이터베이스가 생성됩니다. 업그레이드 후 `.zipbul/`을 수동으로 삭제하세요.
 
 <br>
 

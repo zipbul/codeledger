@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DbConnection } from '../src/store/connection';
+import { DATA_DIR } from '../src/constants';
 import { FileRepository } from '../src/store/repositories/file.repository';
 import { SymbolRepository } from '../src/store/repositories/symbol.repository';
 import { RelationRepository } from '../src/store/repositories/relation.repository';
@@ -91,9 +92,9 @@ afterEach(async () => {
 // ── DbConnection ───────────────────────────────────────────────────────────
 
 describe('DbConnection', () => {
-  it('should create .zipbul/ directory when it does not exist', async () => {
+  it(`should create ${DATA_DIR}/ directory when it does not exist`, async () => {
     const { existsSync } = await import('node:fs');
-    expect(existsSync(join(tmpDir, '.zipbul'))).toBe(true);
+    expect(existsSync(join(tmpDir, DATA_DIR))).toBe(true);
   });
 
   it('should enable WAL journal mode when db is opened', () => {

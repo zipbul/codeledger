@@ -13,8 +13,13 @@ async function readConfig(configPath: string): Promise<Record<string, unknown> |
     return null;
   }
 
-  const parsed = await file.json();
-  return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : null;
+  try {
+    const text = await file.text();
+    const parsed = Bun.JSONC.parse(text);
+    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function loadTsconfigPaths(projectRoot: string): Promise<TsconfigPaths | null> {

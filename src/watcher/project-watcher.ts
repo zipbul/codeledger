@@ -11,6 +11,7 @@ import path from "node:path";
 import { gildashError, type GildashError } from "../errors";
 import type { FileChangeEvent, FileChangeEventType, WatcherOptions } from "./types";
 import type { Logger } from "../gildash";
+import { DATA_DIR } from "../constants";
 
 type SubscribeFn = (
   directoryPath: string,
@@ -20,7 +21,7 @@ type SubscribeFn = (
 
 const WATCHER_IGNORE_GLOBS: readonly string[] = [
   "**/.git/**",
-  "**/.zipbul/**",
+  `**/${DATA_DIR}/**`,
   "**/dist/**",
   "**/node_modules/**",
 ];
