@@ -42,6 +42,7 @@ export const symbols = sqliteTable(
     detailJson: text('detail_json'),
     contentHash: text('content_hash').notNull(),
     indexedAt: text('indexed_at').notNull(),
+    resolvedType: text('resolved_type'),
   },
   (table) => [
     index('idx_symbols_project_file').on(table.project, table.filePath),

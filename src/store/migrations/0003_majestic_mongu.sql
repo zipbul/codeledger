@@ -1,0 +1,1 @@
+ALTER TABLE `symbols` ADD `resolved_type` text;

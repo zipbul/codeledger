@@ -278,4 +278,97 @@ describe('SymbolRepository', () => {
     expect(() => repo.searchByQuery({ regex: '^get', limit: 10 })).not.toThrow();
     expect(chain['all']).toHaveBeenCalled();
   });
+
+  // ── resolved_type ──────────────────────────────────────────────────────────
+
+  // 1. [HP] resolvedType 값 있을 때 → values()에 resolvedType 전달
+  it('should pass resolvedType value to insert when replaceFileSymbols receives a symbol with resolvedType set', () => {
+    // Arrange
+    const { db, chain } = makeDbMock();
+    const repo = new SymbolRepository(db);
+
+    // Act
+    repo.replaceFileSymbols('p', 'f.ts', 'h', [makeSymRecord({ resolvedType: 'string | undefined' })]);
+
+    // Assert
+    expect(chain['values']).toHaveBeenCalledWith(
+      expect.objectContaining({ resolvedType: 'string | undefined' }),
+    );
+  });
+
+  // 2. [HP] resolvedType undefined → null coalesce
+  it('should pass null resolvedType to insert when symbol has no resolvedType field', () => {
+    // Arrange
+    const { db, chain } = makeDbMock();
+    const repo = new SymbolRepository(db);
+
+    // Act
+    repo.replaceFileSymbols('p', 'f.ts', 'h', [makeSymRecord()]);
+
+    // Assert
+    expect(chain['values']).toHaveBeenCalledWith(
+      expect.objectContaining({ resolvedType: null }),
+    );
+  });
+
+  // 3. [HP] searchByQuery: resolvedType 필터 있을 때 → where + all 호출
+  it('should call where and all when searchByQuery receives a resolvedType filter', () => {
+    // Arrange
+    const { db, chain } = makeDbMock();
+    const repo = new SymbolRepository(db);
+
+    // Act
+    expect(() => repo.searchByQuery({ resolvedType: 'Promise<void>', limit: 10 })).not.toThrow();
+
+    // Assert
+    expect(chain['where']).toHaveBeenCalled();
+    expect(chain['all']).toHaveBeenCalled();
+  });
+
+  // 4. [HP] searchByQuery: resolvedType + kind 동시 → 정상 동작
+  it('should call where and all when searchByQuery receives resolvedType and kind simultaneously', () => {
+    // Arrange
+    const { db, chain } = makeDbMock();
+    const repo = new SymbolRepository(db);
+
+    // Act
+    expect(() =>
+      repo.searchByQuery({ resolvedType: 'string', kind: 'function', limit: 10 }),
+    ).not.toThrow();
+
+    // Assert
+    expect(chain['where']).toHaveBeenCalled();
+    expect(chain['all']).toHaveBeenCalled();
+  });
+
+  // 5. [NE] resolvedType="" → 빈 문자열 그대로 저장
+  it('should pass empty string resolvedType to insert when resolvedType is empty string', () => {
+    // Arrange
+    const { db, chain } = makeDbMock();
+    const repo = new SymbolRepository(db);
+
+    // Act
+    repo.replaceFileSymbols('p', 'f.ts', 'h', [makeSymRecord({ resolvedType: '' })]);
+
+    // Assert
+    expect(chain['values']).toHaveBeenCalledWith(
+      expect.objectContaining({ resolvedType: '' }),
+    );
+  });
+
+  // 6. [CO] searchByQuery: resolvedType + isExported + kind 동시
+  it('should call where and all when searchByQuery receives resolvedType, isExported, and kind together', () => {
+    // Arrange
+    const { db, chain } = makeDbMock();
+    const repo = new SymbolRepository(db);
+
+    // Act
+    expect(() =>
+      repo.searchByQuery({ resolvedType: 'number', isExported: true, kind: 'const', limit: 20 }),
+    ).not.toThrow();
+
+    // Assert
+    expect(chain['where']).toHaveBeenCalled();
+    expect(chain['all']).toHaveBeenCalled();
+  });
 });

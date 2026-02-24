@@ -22,6 +22,13 @@
       "when": 1771900800000,
       "tag": "0002_fts_setup",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1771949593329,
+      "tag": "0003_majestic_mongu",
+      "breakpoints": true
     }
   ]
 }

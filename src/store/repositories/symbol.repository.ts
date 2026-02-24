@@ -18,6 +18,7 @@ export interface SymbolRecord {
   detailJson: string | null;
   contentHash: string;
   indexedAt: string;
+  resolvedType?: string | null;
 }
 
 export interface SearchOptions {
@@ -70,6 +71,7 @@ export class SymbolRepository {
         detailJson: sym.detailJson ?? null,
         contentHash,
         indexedAt: sym.indexedAt ?? now,
+        resolvedType: sym.resolvedType ?? null,
       }).run();
     }
   }
@@ -153,6 +155,7 @@ export class SymbolRepository {
     limit: number;
     decorator?: string;
     regex?: string;
+    resolvedType?: string;
   }): (SymbolRecord & { id: number })[] {
     const results = this.db.drizzleDb
       .select()
@@ -172,6 +175,7 @@ export class SymbolRepository {
           opts.decorator
             ? sql`${symbols.id} IN (SELECT s.id FROM symbols s, json_each(s.detail_json, '$.decorators') je WHERE json_extract(je.value, '$.name') = ${opts.decorator})`
             : undefined,
+          opts.resolvedType !== undefined ? eq(symbols.resolvedType, opts.resolvedType) : undefined,
           // NOTE: regex is applied as a JS-layer post-filter below; no SQL condition here.
         ),
       )
