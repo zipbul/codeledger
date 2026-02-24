@@ -33,6 +33,7 @@ gildash indexes your TypeScript codebase into a local SQLite database, then lets
 - **Multi-process safe** — Owner/reader role separation guarantees a single writer per database
 - **Scan-only mode** — `watchMode: false` for one-shot indexing without file watcher overhead
 - **External package indexing** — Index `.d.ts` type declarations from `node_modules`
+- **Semantic layer (opt-in)** — tsc TypeChecker integration for resolved types, references, implementations, and module interface analysis
 
 <br>
 
@@ -228,8 +229,11 @@ if (isErr(result)) {
 | `parseCacheCapacity` | `number` | `500` | LRU parse-cache capacity |
 | `logger` | `Logger` | `console` | Custom logger (`{ error(...args): void }`) |
 | `watchMode` | `boolean` | `true` | `false` disables the file watcher (scan-only mode) |
+| `semantic` | `boolean` | `false` | Enable tsc TypeChecker-backed semantic analysis |
 
 Returns `Promise<Gildash>` (wrapped in `Result`).
+
+> **Note:** `semantic: true` requires a `tsconfig.json` in the project root. If not found, `Gildash.open()` returns a `GildashError`.
 
 <br>
 
@@ -268,6 +272,20 @@ Returns `Promise<Gildash>` (wrapped in `Result`).
 | `getModuleInterface(filePath)` | `Result<ModuleInterface>` | Public exports with metadata |
 | `getInternalRelations(filePath)` | `Result<CodeRelation[]>` | Intra-file relations |
 | `diffSymbols(before, after)` | `SymbolDiff` | Snapshot diff (added / removed / modified) |
+
+### Semantic (opt-in)
+
+Requires `semantic: true` at open time.
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getResolvedType(name, filePath)` | `Result<ResolvedType \| null>` | Resolved type via tsc TypeChecker |
+| `getSemanticReferences(name, filePath)` | `Result<SemanticReference[]>` | All references to a symbol |
+| `getImplementations(name, filePath)` | `Result<Implementation[]>` | Interface / abstract class implementations |
+| `getSemanticModuleInterface(filePath)` | `Result<SemanticModuleInterface>` | Module exports with resolved types |
+
+`getFullSymbol()` automatically enriches the result with a `resolvedType` field when semantic is enabled.
+`searchSymbols({ resolvedType })` filters symbols by their resolved type string.
 
 ### Advanced
 
@@ -471,6 +489,7 @@ interface GildashError {
 | `store` | Database operation failure |
 | `search` | Search query failure |
 | `closed` | Operation on a closed instance |
+| `semantic` | Semantic layer not enabled or tsc error |
 | `validation` | Invalid input (e.g. missing `node_modules` package) |
 | `close` | Error during shutdown |
 
@@ -485,6 +504,7 @@ Gildash (Facade)
 ├── Store       — bun:sqlite + drizzle-orm (files · symbols · relations · FTS5)
 ├── Indexer     — File change → parse → extract → store pipeline, symbol-level diff
 ├── Search      — FTS + regex + decorator search, relation queries, dependency graph, ast-grep
+├── Semantic    — tsc TypeChecker integration (opt-in): types, references, implementations
 └── Watcher     — @parcel/watcher + owner/reader role management
 ```
 

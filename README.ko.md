@@ -32,8 +32,7 @@ gildash는 TypeScript 코드베이스를 로컬 SQLite 데이터베이스에 인
 - **심볼 레벨 diff** — `IndexResult`의 `changedSymbols`로 인덱싱 사이클 당 추가/수정/삭제된 심볼 추적
 - **멀티 프로세스 안전** — owner/reader 역할 분리로 단일 writer 보장
 - **스캔 전용 모드** — `watchMode: false`로 파일 워처 없이 1회성 인덱싱
-- **외부 패키지 인덱싱** — `node_modules`의 `.d.ts` 타입 선언 인덱싱
-
+- **외부 패키지 인덱싱** — `node_modules`의 `.d.ts` 타입 선언 인덱싱- **시맨틱 레이어 (opt-in)** — tsc TypeChecker 통합으로 resolved type, 참조, 구현체, 모듈 인터페이스 분석
 <br>
 
 ## 📋 요구사항
@@ -228,8 +227,11 @@ if (isErr(result)) {
 | `parseCacheCapacity` | `number` | `500` | LRU 파싱 캐시 최대 크기 |
 | `logger` | `Logger` | `console` | 커스텀 로거 (`{ error(...args): void }`) |
 | `watchMode` | `boolean` | `true` | `false`이면 파일 워처 비활성화 (스캔 전용 모드) |
+| `semantic` | `boolean` | `false` | tsc TypeChecker 기반 시맨틱 분석 활성화 |
 
 **반환**: `Promise<Gildash>` (`Result`로 래핑됨)
+
+> **참고:** `semantic: true`는 프로젝트 루트에 `tsconfig.json`이 필요합니다. 없으면 `Gildash.open()`이 `GildashError`를 반환합니다.
 
 <br>
 
@@ -268,6 +270,20 @@ if (isErr(result)) {
 | `getModuleInterface(filePath)` | `Result<ModuleInterface>` | 공개 export와 메타데이터 |
 | `getInternalRelations(filePath)` | `Result<CodeRelation[]>` | 파일 내부 관계 |
 | `diffSymbols(before, after)` | `SymbolDiff` | 스냅샷 diff (추가/삭제/수정) |
+
+### 시맨틱 (opt-in)
+
+`semantic: true`로 열어야 사용 가능.
+
+| 메서드 | 반환 타입 | 설명 |
+|--------|-----------|------|
+| `getResolvedType(name, filePath)` | `Result<ResolvedType \| null>` | tsc TypeChecker로 resolved type 조회 |
+| `getSemanticReferences(name, filePath)` | `Result<SemanticReference[]>` | 심볼의 모든 참조 위치 |
+| `getImplementations(name, filePath)` | `Result<Implementation[]>` | 인터페이스/추상 클래스 구현체 |
+| `getSemanticModuleInterface(filePath)` | `Result<SemanticModuleInterface>` | 모듈 export 목록 + resolved type |
+
+`getFullSymbol()`은 semantic 활성 시 자동으로 `resolvedType` 필드를 보강합니다.
+`searchSymbols({ resolvedType })`로 resolved type 문자열 기반 필터링이 가능합니다.
 
 ### 고급
 
@@ -363,6 +379,7 @@ interface GildashError {
 | `store` | DB 연산 실패 |
 | `search` | 검색 쿼리 실패 |
 | `closed` | 종료된 인스턴스에서 연산 시도 |
+| `semantic` | 시맨틱 레이어 미활성화 또는 tsc 에러 |
 | `validation` | 잘못된 입력 (e.g. `node_modules`에 패키지 없음) |
 | `close` | 종료 중 에러 |
 
@@ -377,6 +394,7 @@ Gildash (파사드)
 ├── Store       — bun:sqlite + drizzle-orm (files · symbols · relations · FTS5)
 ├── Indexer     — 파일 변경 → 파싱 → 추출 → 저장 파이프라인, 심볼 레벨 diff
 ├── Search      — FTS + regex + decorator 검색, 관계 쿼리, 의존성 그래프, ast-grep
+├── Semantic    — tsc TypeChecker 통합 (opt-in): 타입, 참조, 구현체
 └── Watcher     — @parcel/watcher + owner/reader 역할 관리
 ```
 
