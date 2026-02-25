@@ -1,463 +1,943 @@
-# gildash 0.5.0 — Semantic Layer (tsc)
+# gildash — relations FK 근본 수정 + 크로스 프로젝트 관계
 
-## 정체성
+## 문제 정의
 
-> **gildash** = TypeScript code indexing and dependency graph engine
-> 파싱 · 추출 · 인덱싱 · 그래프 구축 · 정책 없는 기계적 가공
->
-> **gildash는 정책을 내장하지 않는다.** 알고리즘은 제공하되, 판정은 고객 영역이다.
+### 증상
+
+`fullIndex()` 실행 시 `SQLITE_CONSTRAINT_FOREIGNKEY` (errno 787) 발생. 소비자 블로커.
+
+### 근본 원인
+
+`relations` 테이블의 FK 구조가 세 가지 시나리오에서 위반된다:
+
+```sql
+-- 현재 FK 구조 (0000_soft_revanche.sql)
+FOREIGN KEY (project, src_file_path) REFERENCES files(project, file_path) ON DELETE CASCADE
+FOREIGN KEY (project, dst_file_path) REFERENCES files(project, file_path) ON DELETE CASCADE
+```
+
+`PRAGMA foreign_keys = ON` (connection.ts L39) 상태에서:
+
+| # | 시나리오 | 예시 | 원인 |
+|---|---------|------|------|
+| 1 | **디렉터리/배럴 임포트** | `import { x } from './store'` → `dstFilePath='store.ts'` (실제: `store/index.ts`) | `resolveImport`이 후보 배열의 첫 번째(`candidates[0]`)를 맹목적으로 선택. 해당 경로가 `files` 테이블에 없으면 FK 위반 |
+| 2 | **크로스 프로젝트 참조** | `default` 프로젝트에서 `@external/lodash`의 파일 참조 | `relations.project`가 단일 컬럼 — src/dst 모두 같은 project여야 함. 크로스 프로젝트 관계 구조적 불가 |
+| 3 | **비-TS 파일 임포트** | `import data from './config.json'` | `.json`은 인덱싱 대상이 아니므로 `files`에 없음 → FK 위반 |
+
+### 구조적 한계
+
+```
+relations.project ──┬── (project, srcFilePath) → files(project, filePath)  ← src FK
+                    └── (project, dstFilePath) → files(project, filePath)  ← dst FK (같은 project 강제)
+```
+
+`project` 컬럼이 하나이므로 src와 dst가 반드시 같은 project에 속해야 한다.
+`indexExternalPackages()` 로 외부 패키지를 인덱싱해도, 기본 프로젝트에서 그 패키지를 사용한다는 관계를 기록할 수 없다.
+
+### 크로스 프로젝트 범위
+
+이 PLAN의 크로스 프로젝트 범위: **monorepo 내 복수 `package.json` 프로젝트 간 참조만 해당.**
+`node_modules` 외부 패키지와의 관계는 `dstProject` 분리로 **구조적 기반만 마련**. 실제 외부 패키지 relation 생성에는 별도 `indexExternalPackages()` 구현이 필요하며, 이 PLAN의 범위가 아님.
+
+### 비-TS 파일 임포트 정책
+
+`.json`, `.css`, `.svg` 등 비-TypeScript 파일은 인덱싱 대상이 아님. 이들에 대한 import 구문은 `knownFiles` 검증에서 자동 필터링되어 relation 미생성. 의도적 설계:
+1. 비-TS 파일은 심볼 추출 불가
+2. FK 정합성 보장
+3. dependency graph는 코드 의존성 분석 목적
 
 ---
 
-## 배경
+## 수정 전략: Option F (resolver DI + knownFiles + dstProject 분리)
 
-gildash는 현재 **구문(Syntax) 계층**만 처리한다 — oxc-parser로 AST 파싱, ast-grep으로 패턴 검색, 구문 기반 심볼·관계 추출.
+### 핵심 변경 5가지
 
-구문만으로는 얻을 수 없는 데이터가 있다:
-
-| 데이터 | 구문 분석 | 시맨틱 분석 |
-|--------|----------|-----------|
-| `const x = foo()` 의 타입 | ❌ 알 수 없음 | ✅ `ReturnType<typeof foo>` |
-| 구조적 타이핑 구현체 | ❌ `implements` 키워드만 | ✅ 덕 타이핑 포함 |
-| 제네릭 해소 결과 | ❌ `T` 그대로 | ✅ `string` |
-| 심볼의 정확한 스코프·소유관계 | △ 휴리스틱 | ✅ 타입체커 기반 |
-| 시맨틱 참조 | △ 텍스트 매칭 | ✅ 심볼 identity 기반 |
-| 구조적 타이핑 구현체 탐색 | ❌ | ✅ `isTypeAssignableTo` |
-
-**Semantic Layer** = tsc(TypeScript Compiler API)의 타입체커 데이터를 gildash에 인덱싱하여 기존 구문 데이터를 보강하는 계층.
+1. **스키마**: `relations`에 `dstProject` 컬럼 추가 → dst FK를 `(dstProject, dstFilePath)` → `files`로 변경
+2. **경로 해석**: `resolveImport`에 `.d.ts` 후보 추가 + extractor DI 파이프라인으로 `knownFiles` 기반 정확한 후보 선택 + `resolveBareSpecifier` 추가
+3. **인덱싱**: `relation-indexer`에서 `dstProject` 독립 결정 + 커스텀 resolver 조립 + 증분 인덱싱 2-pass 구조
+4. **공개 API**: `CodeRelation` 타입에 `dstProject` 추가, `DependencyGraph` 크로스 프로젝트 지원
+5. **안전성**: migration FK 토글, `replaceFileRelations` 원자성 보장, AUTOINCREMENT 시퀀스 보존
 
 ---
 
-## tsc 선택 근거
+## 파일별 상세 변경사항
 
-### 전수 조사 결과 (2026-02-24)
+### 레이어 1: 스키마
 
-TypeScript 시맨틱 정보에 프로그래매틱으로 접근 가능한 도구를 8개 조사:
-
-| # | 도구 | 타입 API | references | implementations | assignability | 상태 |
-|---|------|---------|------------|-----------------|---------------|------|
-| 1 | **tsc** (`typescript`) | ✅ TypeChecker 완전 | ✅ `findReferences` | ✅ `findImplementations` | ✅ `isTypeAssignableTo` | **즉시 사용** |
-| 2 | ts-morph | ✅ tsc 래퍼 | ✅ | ✅ | ✅ | tsc 위 불필요 레이어 |
-| 3 | tsgo (`@typescript/api`) | ⚠️ 부분적 | ❌ | ❌ | ❌ | npm 미발행 (`private: true`) |
-| 4 | Biome v2 "Biotype" | ❌ lint 내부만 | ❌ | ❌ | ❌ | 75% detection, "100% 미목표" 공식 입장 |
-| 5 | Ezno | ❌ diagnostics만 | ❌ | ❌ | ❌ | v0.0.23, 극초기 |
-| 6 | stc (swc) | ❌ | ❌ | ❌ | ❌ | 프로젝트 중단 |
-| 7 | @flickfyi/tsgo | ❌ diagnostics만 | ❌ | ❌ | ❌ | v0.1.5, 주간 0 |
-| 8 | tsserver (LSP) | △ 텍스트 파싱 | △ | △ | ❌ | N+1 문제 |
-
-**결론: tsc만이 완전한 프로그래매틱 타입 API를 제공한다. 유일한 선택지.**
-
-### tsc 선택 이유
-
-1. **100% 정확도** — 덕 타이핑 구현체 탐색에 `isTypeAssignableTo` 사용 가능. AOT 컴파일러(baker)나 Reflect.metadata 대체 프로젝트에서 정확도는 협상 불가.
-2. **블로커 없음** — `typescript` 패키지는 npm에 즉시 사용 가능.
-3. **완전한 API** — `findReferences`, `findImplementations`, `TypeChecker` 전체.
-4. **추상화 레이어 불필요** — tsgo 언제 나올지 불확실. tsc API를 직접 사용한다.
-
-### tsc 한계 (인지하고 수용)
-
-| 항목 | 수치 |
-|------|------|
-| 성능 | tsgo 대비 ~10x 느림 (빌드 기준) |
-| 메모리 | in-process TypeChecker — 대규모 프로젝트 시 수백MB |
-| 의존성 크기 | typescript 패키지 ~30MB+ |
-| 방향성 | TypeScript 팀이 tsgo로 이동 중 |
-
-인덱싱 엔진의 초기 로드는 한 번 발생. 이후 증분 갱신. 정확도가 성능보다 우선.
-
----
-
-## 수집 대상 데이터
-
-### 수집하는 것
-
-| 데이터 | tsc API | 가치 |
-|--------|---------|------|
-| 심볼의 추론된 타입 | `checker.getTypeOfSymbolAtLocation(symbol, declaration)` | 명시적 타입 없는 심볼의 타입 해소 |
-| 타입 그래프 | `type.types` (union/intersection), `type.target`, `type.typeParameters` | union 분해, 제네릭 해소, 구조적 탐색 |
-| 심볼 그래프 | `symbol.parent`, `symbol.members`, `symbol.exports` | parent/member/export 관계 |
-| 타입의 문자열 표현 | `checker.typeToString(type)` | 사람 읽기용 타입 문자열 |
-| 선언된 타입 | `checker.getDeclaredTypeOfSymbol(symbol)` | 타입 별칭의 원래 정의 |
-| 위치 기반 타입 | `checker.getTypeAtLocation(node)` | 특정 위치의 narrowed 타입 |
-| 이름 해소 | `checker.resolveName(name, location, meaning, false)` | 스코프 기반 심볼 조회 |
-| 문맥적 타입 | `checker.getContextualType(node)` | 콜백 파라미터 등의 추론 타입 |
-| 시맨틱 참조 | `languageService.findReferences(fileName, position)` | 심볼 identity 기반 참조 위치 |
-| 구현체 탐색 | `languageService.getImplementationAtPosition(fileName, position)` | 인터페이스/추상 클래스의 구현체 |
-| 타입 호환성 | `checker.isTypeAssignableTo(source, target)` | 구조적 타이핑 판정 (100% 정확) |
-
-### 수집하지 않는 것
-
-| 데이터 | 이유 |
-|--------|------|
-| **diagnostics** | 컴파일러의 정책적 판단 결과. "정책 없는 기계적 가공" 정체성 위반. `tsc --noEmit`으로 누구나 직접 수집 가능. |
-| completion | IDE 인터랙티브 기능. 인덱싱 대상 아님. |
-| signatureHelp | 동일 |
-| rename | 동일 |
-| formatting | 동일 |
-| codeAction | 동일 |
-
----
-
-## 수집 전략
-
-### in-process 직접 호출
-
-tsc는 같은 프로세스에서 함수 호출로 동작한다. IPC, 배치, 직렬화 불필요.
-
-```
-인덱싱 시:
-  1. ts.createProgram(rootFiles, compilerOptions) → Program
-  2. program.getTypeChecker() → TypeChecker
-  3. ts.createLanguageService(host) → LanguageService
-  4. 파일별 구문 인덱싱 (기존 oxc 경로) → 심볼 위치 수집
-  5. 각 심볼의 AST 노드 획득 → checker.getTypeOfSymbolAtLocation(symbol, node)
-  6. checker.typeToString(type) → DB 저장
-  7. references/implementations 수집 → DB 저장
-
-조회 시 (lazy):
-  심볼 그래프 (parent/members/exports) → 첫 조회 시 수집 + LRU 캐시
-
-증분 갱신:
-  1. watcher 감지 → 기존 구문 인덱싱
-  2. LanguageServiceHost의 파일 버전 갱신
-  3. Program 자동 재생성 (LanguageService 내부)
-  4. 변경 파일 심볼만 타입 재수집
-  5. lazy 캐시: 변경 파일 관련 엔트리 무효화
-```
-
-### 성능 추정 (500파일, 10,000 심볼)
-
-| 시나리오 | tsc in-process |
-|---------|---------------|
-| 초기 Program 생성 | ~2–5초 |
-| 타입 수집 (10,000 심볼) | ~1–3초 (함수 호출, IPC 없음) |
-| references 수집 | ~2–5초 (LanguageService 내부 최적화) |
-| 증분 갱신 (1파일 변경) | ~100–500ms (Program 재생성 + 해당 심볼 타입 재수집) |
-| 메모리 (500파일) | ~100–300MB (TypeChecker in-process) |
-
----
-
-## 아키텍처
-
-### opt-in 활성화
-
-```ts
-const gildash = await Gildash.open({
-  projectRoot: './my-project',
-  semantic: true,  // opt-in. 기본값 false.
-});
-```
-
-`semantic: false` (기본값) → tsc 로드 안 함. 기존 동작 100% 동일.
-
-### 라이프사이클
-
-```
-Gildash.open({ semantic: true })
-  → tsconfig-resolver로 tsconfig 경로 탐색
-  → ts.createProgram(rootFiles, compilerOptions)
-  → program.getTypeChecker()
-  → ts.createLanguageService(host)
-  → 초기 타입 수집
-
-파일 변경 → watcher 감지
-  → 구문 인덱싱 (기존)
-  → LanguageServiceHost 파일 버전 갱신
-  → Program 재생성 (자동)
-  → 변경 심볼 타입 재수집
-
-Gildash.close()
-  → languageService.dispose()
-  → Program/Checker 참조 해제
-```
-
-### 디렉토리 구조
-
-tsc API를 직접 사용한다. 추상화 레이어 없음.
-
-```
-src/
-  semantic/
-    index.ts                  — SemanticLayer 클래스 (tsc Program/Checker/LanguageService 직접 관리)
-    tsc-program.ts            — Program 생성·재생성·해제 + LanguageServiceHost 구현
-    type-collector.ts         — 타입 수집 (checker 직접 호출)
-    symbol-graph.ts           — 심볼 그래프 (parent/members/exports) + LRU 캐시
-    reference-resolver.ts     — findReferences 기반 시맨틱 참조
-    implementation-finder.ts  — findImplementations + isTypeAssignableTo 기반 구현체 탐색
-    types.ts                  — ResolvedType, SemanticReference, Implementation 등
-```
-
-### 기존 모듈과의 관계
-
-```
-┌──────────────────────────────────────────────────┐
-│                     Gildash                      │
-│                                                  │
-│  ┌──────────┐   ┌────────────────────────────┐   │
-│  │ Syntax   │   │  Semantic (opt-in)         │   │
-│  │          │   │                            │   │
-│  │ Parser   │──→│  SemanticLayer             │   │
-│  │ Extractor│   │    ├─ TscProgram           │   │
-│  │ Indexer  │   │    ├─ TypeCollector         │   │
-│  │ Search   │   │    ├─ SymbolGraph           │   │
-│  │ Store    │   │    ├─ ReferenceResolver     │   │
-│  │ Watcher  │   │    └─ ImplementationFinder  │   │
-│  └──────────┘   └────────────────────────────┘   │
-│       ↕                     ↕                    │
-│    oxc-parser          typescript                │
-│    ast-grep         (in-process)                 │
-└──────────────────────────────────────────────────┘
-```
-
-Parser(구문)가 추출한 심볼 위치 → SemanticLayer에 전달 → 타입 수집 → Store에 저장.
-
----
-
-## Public API
-
-### 신규 API
-
-```ts
-// 심볼의 추론된 타입
-getResolvedType(symbolName: string, filePath: string): Result<ResolvedType | null>
-
-// 시맨틱 참조 (심볼 identity 기반 — tsc findReferences)
-getSemanticReferences(symbolName: string, filePath: string): Result<SemanticReference[]>
-
-// 구현체 (구조적 타이핑 포함 — tsc findImplementations + isTypeAssignableTo)
-getImplementations(symbolName: string, filePath: string): Result<Implementation[]>
-
-// 시맨틱 보강된 모듈 인터페이스
-getSemanticModuleInterface(filePath: string): Result<SemanticModuleInterface>
-```
-
-### 기존 API 확장 (non-breaking)
-
-| API | 추가 | 설명 |
-|-----|------|------|
-| `searchSymbols` | `resolvedType?: string` 쿼리 필터 | 추론된 타입으로 심볼 검색 |
-| `getFullSymbol` | `resolvedType` 반환 필드 | 기존 구문 정보 + 추론 타입 통합 |
-
-### 타입 정의
-
-```ts
-interface ResolvedType {
-  text: string;           // "string | undefined"
-  flags: number;          // TypeFlags
-  isUnion: boolean;
-  isIntersection: boolean;
-  isGeneric: boolean;
-  members?: ResolvedType[];       // union/intersection 구성원
-  typeArguments?: ResolvedType[]; // 제네릭 해소 결과 (e.g. Promise<string> → [string])
-}
-
-interface SemanticReference {
-  filePath: string;
-  position: number;
-  line: number;
-  column: number;
-  isDefinition: boolean;
-  isWrite: boolean;
-}
-
-interface Implementation {
-  filePath: string;
-  symbolName: string;
-  position: number;
-  kind: string;           // "class" | "object" | "function"
-  isExplicit: boolean;    // implements 키워드 사용 여부
-}
-
-interface SemanticModuleInterface {
-  exports: Array<{
-    name: string;
-    kind: string;
-    resolvedType: ResolvedType | null;
-  }>;
-}
-```
-
----
-
-## 에러 처리
-
-| 상황 | 대응 |
-|------|------|
-| `semantic: true`인데 tsconfig.json 없음 | `GildashError` 반환. |
-| Program 생성 실패 (tsconfig 파싱 에러 등) | `GildashError` 반환. silent fallback 없음. |
-| 특정 심볼 타입 해소 실패 | 해당 심볼의 시맨틱 데이터 null 반환. 구문 데이터는 정상. |
-| `semantic: false` (기본값) | tsc 로드 안 함. 시맨틱 API 호출 시 `GildashError` 반환. |
-
-모든 에러는 `Result<T, GildashError>` 패턴으로 투명하게 전파. silent fallback 금지.
-
----
-
-## 의존성 변경
+#### `src/store/schema.ts`
 
 ```diff
-  peerDependencies:
-+   "typescript": ">=5.0.0"
-
-  devDependencies:
-+   "typescript": "^5.8.0"
+ export const relations = sqliteTable(
+   'relations',
+   {
+     id: integer('id').primaryKey({ autoIncrement: true }),
+     project: text('project').notNull(),
+     type: text('type').notNull(),
+     srcFilePath: text('src_file_path').notNull(),
+     srcSymbolName: text('src_symbol_name'),
++    dstProject: text('dst_project').notNull(),
+     dstFilePath: text('dst_file_path').notNull(),
+     dstSymbolName: text('dst_symbol_name'),
+     metaJson: text('meta_json'),
+   },
+   (table) => [
+     index('idx_relations_src').on(table.project, table.srcFilePath),
+-    index('idx_relations_dst').on(table.project, table.dstFilePath),
++    index('idx_relations_dst').on(table.dstProject, table.dstFilePath),
+     index('idx_relations_type').on(table.project, table.type),
+     foreignKey({
+       columns: [table.project, table.srcFilePath],
+       foreignColumns: [files.project, files.filePath],
+     }).onDelete('cascade'),
+     foreignKey({
+-      columns: [table.project, table.dstFilePath],
++      columns: [table.dstProject, table.dstFilePath],
+       foreignColumns: [files.project, files.filePath],
+     }).onDelete('cascade'),
+   ],
+ );
 ```
 
-`typescript`는 peerDependency. 호스트 프로젝트의 typescript 버전을 사용한다.
-`semantic: false` (기본값) 시 typescript가 없어도 동작한다 — dynamic import로 로드.
+#### `src/store/migrations/0004_relations_dst_project.sql`
+
+SQLite는 `ALTER TABLE`로 FK를 변경할 수 없으므로 테이블 재생성.
+
+```sql
+-- 1. 새 테이블 생성 (dstProject 추가, dst FK 변경)
+CREATE TABLE `relations_new` (
+  `id` integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+  `project` text NOT NULL,
+  `type` text NOT NULL,
+  `src_file_path` text NOT NULL,
+  `src_symbol_name` text,
+  `dst_project` text NOT NULL,
+  `dst_file_path` text NOT NULL,
+  `dst_symbol_name` text,
+  `meta_json` text,
+  FOREIGN KEY (`project`,`src_file_path`) REFERENCES `files`(`project`,`file_path`) ON UPDATE no action ON DELETE cascade,
+  FOREIGN KEY (`dst_project`,`dst_file_path`) REFERENCES `files`(`project`,`file_path`) ON UPDATE no action ON DELETE cascade
+);
+--> statement-breakpoint
+
+-- 2. 데이터 마이그레이션 (기존 데이터: dstProject = project)
+INSERT INTO `relations_new` (`id`, `project`, `type`, `src_file_path`, `src_symbol_name`, `dst_project`, `dst_file_path`, `dst_symbol_name`, `meta_json`)
+  SELECT `id`, `project`, `type`, `src_file_path`, `src_symbol_name`, `project`, `dst_file_path`, `dst_symbol_name`, `meta_json` FROM `relations`;
+--> statement-breakpoint
+
+-- 3. 교체
+DROP TABLE `relations`;
+--> statement-breakpoint
+ALTER TABLE `relations_new` RENAME TO `relations`;
+--> statement-breakpoint
+
+-- 4. 인덱스 재생성
+CREATE INDEX `idx_relations_src` ON `relations` (`project`,`src_file_path`);
+--> statement-breakpoint
+CREATE INDEX `idx_relations_dst` ON `relations` (`dst_project`,`dst_file_path`);
+--> statement-breakpoint
+CREATE INDEX `idx_relations_type` ON `relations` (`project`,`type`);
+--> statement-breakpoint
+
+-- 5. AUTOINCREMENT 시퀀스 복원 (DROP TABLE 시 sqlite_sequence 엔트리 삭제됨)
+INSERT OR REPLACE INTO sqlite_sequence (name, seq)
+  SELECT 'relations', COALESCE(MAX(id), 0) FROM relations;
+```
+
+migration meta JSON도 함께 작성 필요 (`src/store/migrations/meta/`).
+
+**`_journal.json`에 추가할 엔트리:**
+
+```json
+{
+  "idx": 4,
+  "version": "6",
+  "when": <timestamp>,
+  "tag": "0004_relations_dst_project",
+  "breakpoints": true
+}
+```
+
+**`0004_snapshot.json`**: `drizzle-kit generate`로 자동 생성 후 검증. 수동 작성 금지 — drizzle 내부 형식이 버전별로 다름.
+
+#### `src/store/repositories/relation.repository.ts`
+
+```diff
+ export interface RelationRecord {
+   project: string;
+   type: string;
+   srcFilePath: string;
+   srcSymbolName: string | null;
++  dstProject: string;
+   dstFilePath: string;
+   dstSymbolName: string | null;
+   metaJson: string | null;
+ }
+```
+
+**모든 SELECT/INSERT/UPDATE 메서드에 `dstProject` 반영:**
+
+- `replaceFileRelations`: INSERT에 `dstProject` 추가. **fallback: `rel.dstProject ?? project`** (Partial 타입에서 undefined 방어). **DELETE+INSERT를 내부 트랜잭션으로 감싸 원자성 보장** (증분 인덱싱 시 외부 트랜잭션 없이 호출될 수 있으므로)
+
+```ts
+replaceFileRelations(project: string, srcFilePath: string, rels: ReadonlyArray<Partial<RelationRecord>>): void {
+  const exec = () => {
+    this.db.drizzleDb
+      .delete(relationsTable)
+      .where(and(eq(relationsTable.project, project), eq(relationsTable.srcFilePath, srcFilePath)))
+      .run();
+    if (!rels.length) return;
+    for (const rel of rels) {
+      this.db.drizzleDb.insert(relationsTable).values({
+        project,
+        type: rel.type ?? 'unknown',
+        srcFilePath: rel.srcFilePath ?? srcFilePath,
+        srcSymbolName: rel.srcSymbolName ?? null,
+        dstProject: rel.dstProject ?? project,  // fallback: 동일 프로젝트
+        dstFilePath: rel.dstFilePath ?? '',
+        dstSymbolName: rel.dstSymbolName ?? null,
+        metaJson: rel.metaJson ?? null,
+      }).run();
+    }
+  };
+  this.db.transaction(exec);  // DbConnection.txDepth로 중첩 안전
+}
+```
+
+- `getOutgoing`: SELECT에 `dstProject: relationsTable.dstProject` 추가 (두 개의 SELECT 쿼리 모두)
+- `getIncoming`: WHERE 조건 `dstProject` 기준으로 변경 (project + dstFilePath → **dstProject + dstFilePath**). SELECT에 `dstProject` 추가
+
+```ts
+getIncoming(dstProject: string, dstFilePath: string): RelationRecord[] {
+  return this.db.drizzleDb.select({ ... , dstProject: relationsTable.dstProject, ... })
+    .from(relationsTable)
+    .where(and(eq(relationsTable.dstProject, dstProject), eq(relationsTable.dstFilePath, dstFilePath)))
+    .all();
+}
+```
+
+**`getIncoming` 호출처 전파 필요:**
+
+| 파일 | 위치 | 수정 내용 |
+|------|------|----------|
+| `test/store.test.ts` | L429, L434, L461, L474 | 파라미터 의미 확인 (단일 프로젝트에서 project === dstProject) |
+| `test/indexer.test.ts` | L130 | retarget 후 getIncoming 호출 |
+| `src/gildash.spec.ts` | L68 | mock 정의 |
+
+- `getByType`: SELECT에 `dstProject` 추가
+- `searchRelations`: `dstProject` 필터 옵션 추가. WHERE에 `opts.dstProject !== undefined ? eq(relationsTable.dstProject, opts.dstProject) : undefined` 추가. SELECT에 `dstProject` 추가
+- `retargetRelations`: WHERE/SET에 `dstProject` 반영
+
+```ts
+retargetRelations(
+  dstProject: string,      // ← 기존 project → dstProject로 의미 변경
+  oldFile: string,
+  oldSymbol: string | null,
+  newFile: string,
+  newSymbol: string | null,
+  newDstProject?: string,   // 프로젝트 이동 시 (optional, 기본: dstProject 유지)
+): void {
+  const condition = oldSymbol === null
+    ? and(
+        eq(relationsTable.dstProject, dstProject),
+        eq(relationsTable.dstFilePath, oldFile),
+        isNull(relationsTable.dstSymbolName),
+      )
+    : and(
+        eq(relationsTable.dstProject, dstProject),
+        eq(relationsTable.dstFilePath, oldFile),
+        eq(relationsTable.dstSymbolName, oldSymbol),
+      );
+
+  const setValues: Record<string, unknown> = {
+    dstFilePath: newFile,
+    dstSymbolName: newSymbol,
+  };
+  if (newDstProject !== undefined) {
+    setValues.dstProject = newDstProject;
+  }
+
+  this.db.drizzleDb.update(relationsTable).set(setValues).where(condition).run();
+}
+```
+
+**`retargetRelations` 호출처 (index-coordinator.ts) 업데이트:**
+
+```diff
+-relationRepo.retargetRelations(oldProject, oldFile, sym.name, newSym.filePath, newSym.name);
++const dstProject = resolveFileProject(oldFile, this.opts.boundaries);
++relationRepo.retargetRelations(dstProject, oldFile, sym.name, newSym.filePath, newSym.name);
+```
+
+**`IndexCoordinatorOptions.relationRepo` 인터페이스 업데이트:**
+
+```diff
+ relationRepo: {
+   replaceFileRelations(project: string, filePath: string, relations: ReadonlyArray<Partial<RelationRecord>>): void;
+-  retargetRelations(project: string, oldFile: string, oldSymbol: string | null, newFile: string, newSymbol: string | null): void;
++  retargetRelations(dstProject: string, oldFile: string, oldSymbol: string | null, newFile: string, newSymbol: string | null, newDstProject?: string): void;
+   deleteFileRelations(project: string, filePath: string): void;
+ };
+```
+
+파라미터 타입이 모두 `string`이므로 컴파일 에러 없이 의미 변경됨. 인터페이스와 구현체 시그니처를 동시에 변경해야 함.
+
+- `deleteFileRelations`: 변경 없음 (srcFilePath 기준)
+
+---
+
+### 레이어 2: 경로 해석
+
+#### `src/extractor/extractor-utils.ts`
+
+**변경 1: `resolveImport` — `.d.ts` 후보 추가**
+
+확장자 없는 import 시 후보 배열에 `.d.ts`/`/index.d.ts` 추가:
+
+```diff
+ if (extension === '') {
+   return [
+     resolved + '.ts',
++    resolved + '.d.ts',
+     resolved + '/index.ts',
++    resolved + '/index.d.ts',
+     resolved + '.mts',
+     resolved + '/index.mts',
+     resolved + '.cts',
+     resolved + '/index.cts',
+   ];
+ }
+```
+
+해석 우선순위: `.ts` > `.d.ts` > `/index.ts` > `/index.d.ts` > `.mts` > ...
+
+knownFiles 검증이 있으므로 후보가 많아도 정확도에 영향 없음. 후보 순서가 TypeScript 해석 우선순위를 준수하는 것이 중요.
+
+**변경 2: `resolveBareSpecifier` 함수 추가**
+
+```ts
+/**
+ * Resolve a bare specifier (e.g. 'lodash', '@scope/pkg') to node_modules candidates.
+ * Returns candidate .d.ts / .ts paths. Does NOT check file existence (pure, sync).
+ */
+export function resolveBareSpecifier(
+  projectRoot: string,
+  importPath: string,
+): string[] {
+  // bare specifier 판별: 상대경로(.)도 절대경로(/)도 아닌 것
+  if (importPath.startsWith('.') || importPath.startsWith('/')) return [];
+
+  const nmDir = resolve(projectRoot, 'node_modules');
+  const candidates: string[] = [];
+
+  // 1. 직접 패키지 경로
+  const pkgDir = resolve(nmDir, importPath);
+  candidates.push(
+    resolve(pkgDir, 'index.d.ts'),
+    resolve(pkgDir, 'index.ts'),
+    resolve(pkgDir, 'index.d.mts'),
+  );
+
+  // 2. 서브패스: @scope/pkg/sub → node_modules/@scope/pkg/sub
+  if (importPath.includes('/')) {
+    const subPath = resolve(nmDir, importPath);
+    candidates.push(
+      subPath + '.d.ts',
+      subPath + '.ts',
+      subPath + '/index.d.ts',
+      subPath + '/index.ts',
+    );
+  }
+
+  // 3. @types 패키지 (scoped 패키지: @scope/pkg → @types/scope__pkg)
+  const typesName = importPath.startsWith('@')
+    ? importPath.replace('@', '').replace('/', '__')
+    : importPath;
+  candidates.push(resolve(nmDir, '@types', typesName, 'index.d.ts'));
+
+  return candidates;
+}
+```
+
+knownFiles 이중 방어로 잘못된 후보는 자동 필터링. 후보는 넓을수록 안전.
+
+**`resolveBareSpecifier` 현실적 한계**: 현재 인덱싱 범위에서 `node_modules`는 `ignorePatterns`로 제외되므로 `files` 테이블에 없음 → `knownFiles`에도 없음 → bare specifier 후보가 knownFiles 검증을 **통과하지 못함**. 즉, 이 PLAN 범위에서 `resolveBareSpecifier`는 **미래 `indexExternalPackages()` 구현 후 활성화되는 기반 코드**. monorepo 내부 패키지 간 참조는 보통 tsconfig paths로 해석되므로 `resolveImport`이 처리.
+
+- `resolveImport`의 시그니처는 변경 없음 (후보 배열만 확장)
+- `resolveBareSpecifier`는 별도 export (현재는 knownFiles 검증에 의해 비활성 상태)
+
+#### `src/extractor/relation-extractor.ts`
+
+**변경: `extractRelations`에 `resolveImportFn` 선택 파라미터 추가**
+
+```diff
++import { resolveImport } from './extractor-utils';
++
++type ResolveImportFn = (
++  currentFilePath: string,
++  importPath: string,
++  tsconfigPaths?: TsconfigPaths,
++) => string[];
+
+ export function extractRelations(
+   ast: Program,
+   filePath: string,
+   tsconfigPaths?: TsconfigPaths,
++  resolveImportFn: ResolveImportFn = resolveImport,
+ ): CodeRelation[] {
+-  const importMap = buildImportMap(ast, filePath, tsconfigPaths);
+-  const imports = extractImports(ast, filePath, tsconfigPaths);
++  const importMap = buildImportMap(ast, filePath, tsconfigPaths, resolveImportFn);
++  const imports = extractImports(ast, filePath, tsconfigPaths, resolveImportFn);
+   const calls = extractCalls(ast, filePath, importMap);
+   const heritage = extractHeritage(ast, filePath, importMap);
+
+   return [...imports, ...calls, ...heritage];
+ }
+```
+
+- 기본값 `resolveImport` → 기존 호출 전부 호환
+- 공개 API (`Gildash.extractRelations()`)는 기본값 사용 → 영향 없음
+- `imports-extractor.extractImports`와 `extractor-utils.buildImportMap`은 이미 `resolveImportFn` 파라미터를 가지고 있음
+
+---
+
+### 레이어 3: 인덱싱
+
+#### `src/indexer/relation-indexer.ts`
+
+**변경사항:**
+
+```diff
++import { resolveImport, resolveBareSpecifier } from '../extractor/extractor-utils';
++import { resolveFileProject } from '../common/project-discovery';
++import type { ProjectBoundary } from '../common/project-discovery';
+
+ export interface RelationDbRow {
+   project: string;
+   type: string;
+   srcFilePath: string;
+   srcSymbolName: string | null;
++  dstProject: string;
+   dstFilePath: string;
+   dstSymbolName: string | null;
+   metaJson: string | null;
+ }
+
+ export interface IndexFileRelationsOptions {
+   ast: Program;
+   project: string;
+   filePath: string;
+   relationRepo: RelationRepoPart;
+   projectRoot: string;
+   tsconfigPaths?: TsconfigPaths;
++  /** 인덱싱된 파일 경로 Set. `${project}::${filePath}` 형식. */
++  knownFiles?: Set<string>;
++  /** 프로젝트 경계 목록 (dstProject 결정용) */
++  boundaries?: ProjectBoundary[];
+ }
+
+ export function indexFileRelations(opts: IndexFileRelationsOptions): number {
+-  const { ast, project, filePath, relationRepo, projectRoot, tsconfigPaths } = opts;
++  const { ast, project, filePath, relationRepo, projectRoot, tsconfigPaths, knownFiles, boundaries } = opts;
+
+   const absFilePath = toAbsolutePath(projectRoot, filePath);
+
++  // knownFiles가 주어지면, 후보 중 knownFiles에 있는 경로를 선택하는 커스텀 resolver 조립
++  const customResolver = knownFiles
++    ? (currentFile: string, importPath: string, paths?: TsconfigPaths) => {
++        // 1. 기본 해석 (상대경로 + tsconfig paths)
++        let candidates = resolveImport(currentFile, importPath, paths);
++
++        // 2. bare specifier fallback
++        if (candidates.length === 0) {
++          candidates = resolveBareSpecifier(projectRoot, importPath);
++        }
++
++        // 3. 후보 중 knownFiles에 있는 첫 번째 선택
++        for (const c of candidates) {
++          const rel = toRelativePath(projectRoot, c);
++          // 모든 project에서 검색
++          if (boundaries) {
++            const p = resolveFileProject(rel, boundaries);
++            if (knownFiles.has(`${p}::${rel}`)) return [c];
++          } else {
++            if (knownFiles.has(`${project}::${rel}`)) return [c];
++          }
++        }
++        return []; // knownFiles에 없으면 빈 배열 → relation 미생성
++      }
++    : undefined;
+
+-  const rawRelations = extractRelations(ast, absFilePath, tsconfigPaths);
++  const rawRelations = extractRelations(ast, absFilePath, tsconfigPaths, customResolver);
+
+   const rows: RelationDbRow[] = [];
+
+   for (const rel of rawRelations) {
+     const relDst = toRelativePath(projectRoot, rel.dstFilePath);
+     if (relDst.startsWith('..')) continue;
+     const relSrc = toRelativePath(projectRoot, rel.srcFilePath);
+
++    // dstProject 결정: boundaries가 있으면 dstFilePath 기준으로 project 해석
++    const dstProject = boundaries
++      ? resolveFileProject(relDst, boundaries)
++      : project;
+
+     rows.push({
+       project,
+       type: rel.type,
+       srcFilePath: relSrc,
+       srcSymbolName: rel.srcSymbolName ?? null,
++      dstProject,
+       dstFilePath: relDst,
+       dstSymbolName: rel.dstSymbolName ?? null,
+       metaJson: rel.metaJson ?? null,
+     });
+   }
+
+   relationRepo.replaceFileRelations(project, filePath, rows);
+   return rows.length;
+ }
+```
+
+#### `src/indexer/index-coordinator.ts`
+
+**변경 1: fullIndex 트랜잭션 — knownFiles Set 구축**
+
+Pass 1 (파일 삽입) 이후, Pass 2 이전에:
+
+```ts
+// knownFiles Set 구축: getFilesMap이 Pass 1에서 upsert한 파일을 이미 포함 (read-your-own-writes)
+// 따라서 preread 별도 루프는 불필요 — getFilesMap 단일 루프로 충분
+const knownFiles = new Set<string>();
+for (const boundary of boundaries) {
+  for (const [fp] of fileRepo.getFilesMap(boundary.project)) {
+    knownFiles.add(`${boundary.project}::${fp}`);
+  }
+}
+```
+
+Pass 2에서 `indexFileRelations` 호출 시:
+
+```diff
+ totalRelations += indexFileRelations({
+   ast: parsed.program,
+   project,
+   filePath: fd.filePath,
+   relationRepo,
+   projectRoot,
+   tsconfigPaths,
++  knownFiles,
++  boundaries,
+ });
+```
+
+**변경 2: processChanged (증분) — 2-pass 구조로 전면 변경**
+
+기존 `processFile` 단일 파일 순차 처리 → **2-pass 구조**로 변경.
+**이유**: 파일 A(신규)→B(신규) 시 A가 먼저 처리되면 B가 knownFiles에 없어 A→B relation 소실.
+
+```ts
+const processChanged = async (): Promise<{ symbols: number; relations: number; failedFiles: string[] }> => {
+  let symbols = 0;
+  let relations = 0;
+  const failedFiles: string[] = [];
+
+  // ── Pass 1: 모든 변경 파일 read + parse + upsertFile ──
+  type Prepared = {
+    filePath: string; text: string; contentHash: string;
+    parsed: ReturnType<typeof parseSource>; project: string;
+  };
+  const prepared: Prepared[] = [];
+
+  for (const file of changed) {
+    try {
+      const absPath = toAbsolutePath(projectRoot, file.filePath);
+      const bunFile = Bun.file(absPath);
+      const text = await bunFile.text();
+      const contentHash = file.contentHash || hashString(text);
+      const project = resolveFileProject(file.filePath, boundaries);
+
+      fileRepo.upsertFile({
+        project, filePath: file.filePath,
+        mtimeMs: bunFile.lastModified, size: bunFile.size,
+        contentHash, updatedAt: new Date().toISOString(),
+        lineCount: text.split('\n').length,
+      });
+
+      const parseFn = this.opts.parseSourceFn ?? parseSource;
+      const parseResult = parseFn(absPath, text);
+      if (isErr(parseResult)) throw parseResult.data;
+      prepared.push({ filePath: file.filePath, text, contentHash, parsed: parseResult, project });
+    } catch (err) {
+      this.logger.error(`[IndexCoordinator] Failed to prepare ${file.filePath}:`, err);
+      failedFiles.push(file.filePath);
+    }
+  }
+
+  // ── knownFiles 구축 (1회) — Pass 1 완료 후 모든 신규 파일 포함 ──
+  const knownFiles = new Set<string>();
+  for (const boundary of boundaries) {
+    for (const [fp] of fileRepo.getFilesMap(boundary.project)) {
+      knownFiles.add(`${boundary.project}::${fp}`);
+    }
+  }
+
+  // ── Pass 2: index symbols + relations ──
+  for (const fd of prepared) {
+    indexFileSymbols({
+      parsed: fd.parsed, project: fd.project,
+      filePath: fd.filePath, contentHash: fd.contentHash, symbolRepo,
+    });
+    relations += indexFileRelations({
+      ast: fd.parsed.program, project: fd.project, filePath: fd.filePath,
+      relationRepo, projectRoot, tsconfigPaths,
+      knownFiles, boundaries,
+    });
+    parseCache.set(fd.filePath, fd.parsed);
+    symbols += symbolRepo.getFileSymbols(fd.project, fd.filePath).length;
+  }
+
+  return { symbols, relations, failedFiles };
+};
+```
+
+**핵심**: Pass 1에서 모든 파일 `upsertFile` 완료 → `knownFiles`에 모든 신규 파일 포함 → Pass 2에서 정확한 relation 생성. `knownFiles` 구축 1회.
+
+기존 `processFile` 메서드는 이 2-pass 구조로 대체. 더 이상 파일별 독립 호출 아님.
+
+**원자성 주의**: 증분(incremental) 경로는 fullIndex와 달리 외부 트랜잭션으로 감싸져 있지 않음. Pass 1 (upsertFile) 완료 후 Pass 2 도중 crash 시 파일만 upsert되고 relation 없는 불완전 상태 가능. 이는 기존 `processFile` 방식과 동일한 한계이나, 2-pass로 실패 윈도우가 N배 확대됨. **대응**: `processChanged` 전체를 `dbConnection.transaction()`으로 감싸는 것을 권장:
+
+```ts
+// doIndex 내부, processChanged 호출부
+const counts = dbConnection.transaction(() => processChanged());
+// 또는 processChanged 내부 첫 줄에서
+// return this.opts.dbConnection.transaction(async () => { ... });
+```
+
+fullIndex 경로와 동일하게 트랜잭션 보호를 적용하면, crash 시 전체 롤백으로 데이터 일관성 보장.
+
+---
+
+### 레이어 4: 검색
+
+#### `src/search/relation-search.ts`
+
+```diff
+ export interface RelationSearchQuery {
+   srcFilePath?: string;
+   srcSymbolName?: string;
+   dstFilePath?: string;
+   dstSymbolName?: string;
++  dstProject?: string;
+   type?: CodeRelation['type'];
+   project?: string;
+   limit?: number;
+ }
+
+ export interface IRelationRepo {
+   searchRelations(opts: {
+     srcFilePath?: string;
+     srcSymbolName?: string;
+     dstFilePath?: string;
+     dstSymbolName?: string;
++    dstProject?: string;
+     type?: string;
+     project?: string;
+     limit: number;
+   }): RelationRecord[];
+ }
+```
+
+`relationSearch` 함수 내부:
+
+```diff
+ const records = relationRepo.searchRelations({
+   srcFilePath: query.srcFilePath,
+   srcSymbolName: query.srcSymbolName,
+   dstFilePath: query.dstFilePath,
+   dstSymbolName: query.dstSymbolName,
++  dstProject: query.dstProject,
+   type: query.type,
+   project: effectiveProject,
+   limit,
+ });
+```
+
+#### `src/search/dependency-graph.ts`
+
+**변경 필요.** 크로스 프로젝트 전이적 의존성/사이클 검출 지원:
+
+```diff
+ export class DependencyGraph {
+   constructor(
+     private readonly options: {
+       relationRepo: IDependencyGraphRepo;
+       project: string;
++      /** 추가 프로젝트도 그래프에 포함 (크로스 프로젝트 분석) */
++      additionalProjects?: string[];
+     },
+   ) {}
+
+   build(): void {
+     this.adjacencyList = new Map();
+     this.reverseAdjacencyList = new Map();
+
++    const projects = [this.options.project, ...(this.options.additionalProjects ?? [])];
++    const types = ['imports', 'type-references', 're-exports'] as const;
++
+-    const relations = [
+-      ...this.options.relationRepo.getByType(this.options.project, 'imports'),
+-      ...this.options.relationRepo.getByType(this.options.project, 'type-references'),
+-      ...this.options.relationRepo.getByType(this.options.project, 're-exports'),
+-    ];
++    const relations: RelationRecord[] = [];
++    for (const p of projects) {
++      for (const t of types) {
++        relations.push(...this.options.relationRepo.getByType(p, t));
++      }
++    }
+
+     // ... 기존 adjacency 구축 로직
+```
+
+#### `src/gildash/graph-api.ts`
+
+`getOrBuildGraph`에서 project=undefined(cross) 시 boundaries 전달:
+
+```diff
+ export function getOrBuildGraph(ctx: GildashContext, project?: string): DependencyGraph {
+   const key = project ?? '__cross__';
+   if (ctx.graphCache && ctx.graphCacheKey === key) return ctx.graphCache;
+
+   const g = new DependencyGraph({
+     relationRepo: ctx.relationRepo,
+     project: project ?? ctx.defaultProject,
++    additionalProjects: project ? undefined : ctx.boundaries.map(b => b.project),
+   });
+   g.build();
+```
+
+#### `src/extractor/types.ts`
+
+**`CodeRelation` 타입에 `dstProject` 추가 (공개 API)**:
+
+```diff
+ export interface CodeRelation {
+   type: 'imports' | 'type-references' | 're-exports' | 'calls' | 'extends' | 'implements';
+   srcFilePath: string;
+   srcSymbolName: string | null;
++  dstProject?: string;          // optional로 하위 호환
+   dstFilePath: string;
+   dstSymbolName: string | null;
+   metaJson?: string;
+   meta?: Record<string, unknown>;
+ }
+```
+
+`relationSearch` 매핑에 추가 (`src/search/relation-search.ts`):
+
+```diff
+ return records.map(r => ({
+   type: r.type as CodeRelation['type'],
+   srcFilePath: r.srcFilePath,
+   srcSymbolName: r.srcSymbolName,
++  dstProject: r.dstProject,
+   dstFilePath: r.dstFilePath,
+   dstSymbolName: r.dstSymbolName,
+   metaJson: r.metaJson ?? undefined,
+   meta,
+ }));
+```
+
+---
+
+## 마이그레이션 전략
+
+1. migration SQL은 `src/store/migrations/0004_relations_dst_project.sql`에 작성
+2. `src/store/migrations/meta/` 디렉터리에 drizzle 메타 JSON 업데이트 (`_journal.json` 엔트리 + `0004_snapshot.json`)
+3. `drizzle-kit generate`로 자동 생성 시도 → 수동 검증/수정
+4. 기존 데이터: `dstProject = project`로 마이그레이션 (동일 프로젝트 가정)
+
+### FK 토글 안전 장치
+
+`connection.ts`의 `open()`에서 `PRAGMA foreign_keys = ON` 후 `migrate()` 실행됨.
+테이블 재생성 migration 중 FK 검증 충돌 방지를 위해 **migrate 전후 FK 토글**:
+
+```diff
+ // connection.ts open() 수정
+ this.client.run('PRAGMA journal_mode = WAL');
+-this.client.run('PRAGMA foreign_keys = ON');
++this.client.run('PRAGMA foreign_keys = OFF');   // migration 중 FK 비활성화
+ this.client.run('PRAGMA busy_timeout = 5000');
+ this.drizzle = drizzle(this.client, { schema });
+ migrate(this.drizzle, { migrationsFolder: ... });
++this.client.run('PRAGMA foreign_keys = ON');    // migration 후 FK 활성화
+```
+
+**이유**: SQLite PRAGMA foreign_keys는 트랜잭션 내에서 변경 불가. drizzle migrator가 트랜잭션 사용 시 SQL 내 PRAGMA 무효. connection 레벨에서 토글해야 안전.
+
+**FK 정합성 검증 (safety net)**: FK ON 직전에 `PRAGMA foreign_key_check` 실행하여 migration 결과 검증:
+
+```ts
+migrate(this.drizzle, { migrationsFolder: ... });
+
+// migration 결과 FK 정합성 검증
+const violations = this.client.prepare('PRAGMA foreign_key_check').all();
+if (violations.length > 0) {
+  throw new Error(
+    `FK integrity violation after migration: ${JSON.stringify(violations.slice(0, 5))}`
+  );
+}
+
+this.client.run('PRAGMA foreign_keys = ON');
+```
+
+FK 위반이 발견되면 migration SQL에 오류가 있다는 의미이므로 즉시 에러. 정상 상황에서는 항상 빈 배열.
+
+---
+
+## 테스트 계획
+
+### 기존 테스트 수정 (스키마 변경 반영)
+
+| 파일 | 수정 내용 |
+|------|----------|
+| `src/store/schema.spec.ts` | `dstProject` 컬럼 존재 확인 테스트 |
+| `src/store/repositories/relation.repository.spec.ts` | 모든 CRUD에 `dstProject` 포함. 크로스 프로젝트 INSERT/SELECT 테스트 추가. `replaceFileRelations` 원자성 테스트. `retargetRelations` 신규 시그니처 테스트 |
+| `src/indexer/relation-indexer.spec.ts` | `knownFiles` 필터링 테스트, `dstProject` 독립 결정 테스트, bare specifier 커스텀 resolver 테스트 |
+| `src/indexer/index-coordinator.spec.ts` | `knownFiles` 구축 + 전달 테스트, 디렉터리 임포트 정확도 테스트, **processChanged 2-pass 구조** 테스트 |
+| `src/search/relation-search.spec.ts` | `dstProject` 필터 테스트. `dstProject` 매핑 테스트 |
+| `src/extractor/extractor-utils.spec.ts` | `resolveBareSpecifier` 테스트. `resolveImport` `.d.ts` 후보 테스트 |
+| `src/extractor/relation-extractor.spec.ts` | `resolveImportFn` DI 테스트 |
+| `src/search/dependency-graph.spec.ts` | `additionalProjects` 크로스 프로젝트 테스트 |
+| `src/gildash.spec.ts` | mock 데이터에 `dstProject` 추가 (L66-68) |
+| `src/gildash/graph-api.spec.ts` | `getOrBuildGraph` boundaries 전달 테스트 |
+
+### 새 테스트 시나리오
+
+| 시나리오 | 테스트 파일 |
+|----------|-----------|
+| 디렉터리 임포트 (`./store` → `store/index.ts`) 정확 해석 | `relation-indexer.spec.ts` |
+| bare specifier (`lodash`) → `node_modules/lodash/index.d.ts` 후보 | `extractor-utils.spec.ts` |
+| bare specifier 서브패스 (`@scope/pkg/sub`) 후보 | `extractor-utils.spec.ts` |
+| `resolveImport` `.d.ts` 후보 생성 확인 | `extractor-utils.spec.ts` |
+| 크로스 프로젝트 relation (`default` → `@external/lodash`) INSERT 성공 | `relation.repository.spec.ts` |
+| knownFiles에 없는 dstFilePath → relation 미생성 (FK 위반 방지) | `relation-indexer.spec.ts` |
+| fullIndex 트랜잭션 내 FK 위반 없음 확인 | `index-coordinator.spec.ts` |
+| 증분 2-pass: 동시 추가된 신규 파일 간 상호 참조 relation 생성 | `index-coordinator.spec.ts` |
+| `replaceFileRelations` 원자성: 중간 실패 시 데이터 일관성 | `relation.repository.spec.ts` |
+| `retargetRelations` dstProject 기반 WHERE/SET | `relation.repository.spec.ts` |
+| 기존 데이터 마이그레이션 (`dstProject = project`) | `test/store.test.ts` |
+| `DependencyGraph` 크로스 프로젝트 (`additionalProjects`) | `dependency-graph.spec.ts` |
+| `CodeRelation.dstProject` 매핑 | `relation-search.spec.ts` |
+
+### 통합 테스트
+
+| 파일 | 시나리오 |
+|------|---------|
+| `test/indexer.test.ts` | 실제 TS 파일들로 fullIndex 실행 → FK 위반 없음 확인 |
+| `test/store.test.ts` | 마이그레이션 후 기존 데이터 정합성 확인 |
+
+---
+
+## 실행 순서 (의존 관계 기반)
+
+```
+Step 1 — 스키마 + 마이그레이션 + connection.ts FK 토글
+├─ schema.ts: dstProject 컬럼 + dst FK 변경
+├─ migration 0004 SQL (AUTOINCREMENT 시퀀스 복원 포함)
+├─ migration meta JSON (_journal.json + 0004_snapshot.json via drizzle-kit)
+├─ connection.ts: migrate 전후 FK OFF/ON 토글
+└─ schema.spec.ts 수정
+
+Step 2 — relation.repository
+├─ RelationRecord에 dstProject 추가
+├─ 모든 CRUD 메서드 dstProject 반영 (모든 SELECT + INSERT)
+├─ replaceFileRelations: dstProject fallback + 내부 트랜잭션 원자성
+├─ getIncoming: WHERE dstProject + 시그니처 변경
+├─ retargetRelations: dstProject 기반 WHERE/SET + 신규 시그니처
+└─ relation.repository.spec.ts 수정
+
+Step 3 — extractor-utils
+├─ resolveImport: .d.ts / /index.d.ts 후보 추가
+├─ resolveBareSpecifier 함수 추가 (서브패스 포함)
+└─ extractor-utils.spec.ts 수정
+
+Step 4 — relation-extractor
+├─ extractRelations에 resolveImportFn DI
+└─ relation-extractor.spec.ts 수정
+
+Step 5 — relation-indexer
+├─ RelationDbRow에 dstProject 추가
+├─ knownFiles 기반 커스텀 resolver 조립
+├─ dstProject 독립 결정 로직
+└─ relation-indexer.spec.ts 수정
+
+Step 6 — index-coordinator
+├─ fullIndex: knownFiles Set 구축 + 전달
+├─ processChanged: 2-pass 구조로 전면 변경 (Pass 1: upsert, Pass 2: index)
+├─ processChanged: 트랜잭션 래핑으로 원자성 보장
+├─ IndexCoordinatorOptions.relationRepo.retargetRelations 시그니처 업데이트
+├─ retargetRelations 호출처: dstProject 전달
+└─ index-coordinator.spec.ts 수정
+
+Step 7 — 공개 API 타입
+├─ src/extractor/types.ts: CodeRelation에 dstProject?: string 추가
+└─ src/search/relation-search.ts: dstProject 매핑 + 필터
+
+Step 8 — relation-search
+├─ RelationSearchQuery에 dstProject 추가
+├─ IRelationRepo 인터페이스 dstProject 추가
+└─ relation-search.spec.ts 수정
+
+Step 9 — dependency-graph + graph-api
+├─ DependencyGraph: additionalProjects 지원
+├─ graph-api.ts: getOrBuildGraph에 boundaries 전달
+├─ dependency-graph.spec.ts 수정
+└─ graph-api.spec.ts 수정
+
+Step 10 — 호출처 전파 + mock 업데이트
+├─ src/gildash.spec.ts: mock에 dstProject 추가
+├─ test/store.test.ts: getIncoming/retargetRelations 테스트 업데이트
+└─ test/indexer.test.ts: retargetRelations 테스트 업데이트
+
+Step 11 — 전체 GREEN 확인
+├─ bun test (전체)
+├─ bun test:coverage
+└─ 통합 테스트 확인
+```
+
+각 Step은 Test-First Flow (OVERFLOW → PRUNE → RED → GREEN) 적용.
+Step 간 의존: 1 → 2 → (3,4 병렬) → 5 → 6 → 7 → 8 → (9,10 병렬) → 11.
+
+---
+
+## 영향 범위 요약
+
+| 구분 | 파일 수 | 목록 |
+|------|---------|------|
+| 소스 변경 | 12 | schema.ts, connection.ts, relation.repository.ts, extractor-utils.ts, relation-extractor.ts, relation-indexer.ts, index-coordinator.ts, relation-search.ts, types.ts (CodeRelation), dependency-graph.ts, graph-api.ts, (migration SQL) |
+| 타입레벨 자동 반영 (code 변경 불필요) | 2 | context.ts — `ExtractRelationsFn` 4번째 파라미터 옵셔널+기본값이므로 타입 변경 불필요. query-api.ts — `RelationSearchQuery.dstProject` 추가로 타입 레벨 자동 확장, 코드 변경 없음 |
+| 테스트 수정 | 12 | schema.spec.ts, relation.repository.spec.ts, extractor-utils.spec.ts, relation-extractor.spec.ts, relation-indexer.spec.ts, index-coordinator.spec.ts, relation-search.spec.ts, dependency-graph.spec.ts, graph-api.spec.ts, gildash.spec.ts, test/store.test.ts, test/indexer.test.ts |
+| 통합 테스트 | 2 | test/store.test.ts, test/indexer.test.ts |
+| 마이그레이션 | 1+meta | 0004_relations_dst_project.sql + _journal.json + 0004_snapshot.json |
 
 ---
 
 ## 리스크
 
-| 항목 | 상태 | 비고 |
-|------|------|------|
-| typescript Bun 호환성 | ✅ | 순수 JS 패키지. Bun에서 문제 없이 동작. |
-| 대규모 프로젝트 메모리 | △ | in-process TypeChecker — 수천 파일 시 수백MB~1GB. 모니터링 필요. |
-| tsc API stability | ✅ | TypeChecker API는 TypeScript 릴리스 간 안정적. |
-
-블로커 없음. 즉시 구현 가능.
-
----
-
-## 실행 순서
-
-```
-Phase 0 — 선행 검증
-├─ tsc in-process 프로토타입: createProgram → getTypeChecker → getTypeOfSymbolAtLocation
-├─ LanguageService 프로토타입: findReferences + getImplementationAtPosition
-└─ Bun 환경에서 typescript import 동작 확인
-
-Phase 1 — 기반
-├─ src/semantic/types.ts — 타입 정의
-├─ src/semantic/tsc-program.ts — Program + LanguageServiceHost
-└─ src/semantic/tsc-program.spec.ts — 생성·해제 테스트
-
-Phase 2 — 수집
-├─ src/semantic/type-collector.ts — 타입 수집
-├─ src/semantic/type-collector.spec.ts
-├─ src/semantic/symbol-graph.ts — 심볼 그래프 + LRU 캐시
-├─ src/semantic/symbol-graph.spec.ts
-├─ src/semantic/reference-resolver.ts — findReferences 기반 참조
-├─ src/semantic/reference-resolver.spec.ts
-├─ src/semantic/implementation-finder.ts — findImplementations + isTypeAssignableTo
-├─ src/semantic/implementation-finder.spec.ts
-├─ Store migration — resolved_type 컬럼 추가
-└─ Store repository — resolvedType 쿼리 지원
-
-Phase 3 — 통합
-├─ src/semantic/index.ts — SemanticLayer 진입점
-├─ src/gildash.ts — semantic 옵션 + 신규 API 노출
-├─ Watcher 연동 — 파일 변경 시 Program 재생성 + 타입 재수집
-└─ 통합 테스트 (test/semantic.test.ts)
-
-Phase 4 — 마무리
-├─ 문서화 (README, CHANGELOG)
-└─ 릴리스
-```
-
-각 Phase는 Test-First Flow (OVERFLOW → PRUNE → RED → GREEN) 적용.
-
----
-
-## 세부 실행 체크리스트
-
-### Phase 0. 선행 검증
-- [ ] tsc in-process 프로토타입: `ts.createProgram` → `getTypeChecker` → `getTypeOfSymbolAtLocation` 동작 확인
-- [ ] `ts.createLanguageService` → `findReferences` + `getImplementationAtPosition` 동작 확인
-- [ ] Bun 환경에서 `import ts from 'typescript'` 정상 동작 확인
-- [ ] 결과 기반 Phase 1 진행
-
-### Phase 1. 기반
-- [ ] `src/semantic/types.ts` — ResolvedType, SemanticReference, Implementation, SemanticModuleInterface 타입 정의
-- [ ] `src/semantic/tsc-program.ts` — createProgram, LanguageServiceHost 구현, dispose
-- [ ] `src/semantic/tsc-program.spec.ts` — Program 생성·해제, tsconfig 로드, 증분 갱신
-
-### Phase 2. 수집
-- [ ] `src/semantic/type-collector.ts` — getTypeOfSymbolAtLocation → typeToString → DB 저장
-- [ ] `src/semantic/type-collector.spec.ts` — 타입 수집, 명시적 타입 없는 심볼만 선택적 수집
-- [ ] `src/semantic/symbol-graph.ts` — parent, members, exports + LRU 캐시
-- [ ] `src/semantic/symbol-graph.spec.ts` — lazy 수집, 캐시 히트/미스, 무효화
-- [ ] `src/semantic/reference-resolver.ts` — findReferences 기반 시맨틱 참조
-- [ ] `src/semantic/reference-resolver.spec.ts` — 참조 탐색, isDefinition/isWrite 구분
-- [ ] `src/semantic/implementation-finder.ts` — findImplementations + isTypeAssignableTo 기반 구현체 탐색
-- [ ] `src/semantic/implementation-finder.spec.ts` — 명시적 implements + 덕 타이핑 구현체
-- [ ] Store migration — symbols 테이블에 resolved_type 컬럼 추가
-- [ ] Store repository — resolvedType 쿼리 지원
-
-### Phase 3. 통합
-- [ ] `src/semantic/index.ts` — SemanticLayer 클래스 (TscProgram + TypeCollector + SymbolGraph + ReferenceResolver + ImplementationFinder)
-- [ ] `src/gildash.ts` — `open({ semantic: true })` 옵션, SemanticLayer 초기화/해제
-- [ ] `src/gildash.ts` — `getResolvedType()`, `getSemanticReferences()`, `getImplementations()`, `getSemanticModuleInterface()` 추가
-- [ ] `src/gildash.ts` — `searchSymbols()` resolvedType 필터 확장
-- [ ] `src/gildash.ts` — `getFullSymbol()` resolvedType 필드 확장
-- [ ] Watcher 연동 — 파일 변경 시 LanguageServiceHost 파일 버전 갱신 + 타입 재수집
-- [ ] 통합 테스트 (`test/semantic.test.ts`)
-
-### Phase 4. 마무리
-- [ ] README.md / README.ko.md — Semantic Layer 문서화
-- [ ] CHANGELOG.md — 변경사항 기록
-- [ ] commit + PR
-
----
-
-## 작업 할당 (Sonnet / Opus)
-
-할당 기준:
-- **Sonnet**: 기계적·보일러플레이트·패턴 반복 — 타입 정의, Store migration/repository, 문서화, 단순 검증
-- **Opus**: 아키텍처 결정·핵심 로직·tsc API 통합·통합 테스트 — 설계가 필요한 모든 것
-
-### Phase 0 — 선행 검증
-
-| 작업 | 담당 | 근거 |
-|------|------|------|
-| tsc in-process 프로토타입 (createProgram → getTypeChecker → getTypeOfSymbolAtLocation) | **Opus** | tsc API 탐색 + 아키텍처 결정 |
-| LanguageService 프로토타입 (findReferences + getImplementationAtPosition) | **Opus** | 동일 |
-| Bun 환경에서 `import ts from 'typescript'` 동작 확인 | **Sonnet** | 단순 검증 스크립트 |
-
-### Phase 1 — 기반
-
-| 작업 | 담당 | 근거 |
-|------|------|------|
-| `src/semantic/types.ts` — 타입 정의 | **Sonnet** | PLAN.md 타입 정의 그대로 옮기기 |
-| `src/semantic/tsc-program.ts` — Program + LanguageServiceHost | **Opus** | 핵심 모듈. LanguageServiceHost 구현 |
-| `src/semantic/tsc-program.spec.ts` — 생성·해제 테스트 | **Opus** | 복합 테스트 + OVERFLOW/PRUNE 필요 |
-
-### Phase 2 — 수집
-
-| 작업 | 담당 | 근거 |
-|------|------|------|
-| OVERFLOW/PRUNE (Phase 2 전체) | **Opus** | 분석·판단 작업 |
-| `src/semantic/type-collector.ts` | **Opus** | tsc API 연동 핵심 로직 |
-| `src/semantic/type-collector.spec.ts` | **Sonnet** | Opus PRUNE 결과 기반 spec 작성 |
-| `src/semantic/symbol-graph.ts` | **Opus** | LRU 캐시 + lazy 수집 전략 |
-| `src/semantic/symbol-graph.spec.ts` | **Sonnet** | Opus PRUNE 결과 기반 spec 작성 |
-| `src/semantic/reference-resolver.ts` | **Opus** | findReferences 연동 |
-| `src/semantic/reference-resolver.spec.ts` | **Sonnet** | Opus PRUNE 결과 기반 spec 작성 |
-| `src/semantic/implementation-finder.ts` | **Opus** | 가장 복잡 — findImplementations + isTypeAssignableTo |
-| `src/semantic/implementation-finder.spec.ts` | **Sonnet** | Opus PRUNE 결과 기반 spec 작성 |
-| Store migration — resolved_type 컬럼 추가 | **Sonnet** | SQL migration 기계적 |
-| Store repository — resolvedType 쿼리 지원 | **Sonnet** | 기존 repository 패턴 반복 |
-
-### Phase 3 — 통합
-
-| 작업 | 담당 | 근거 |
-|------|------|------|
-| `src/semantic/index.ts` — SemanticLayer 클래스 | **Opus** | 전체 모듈 통합 로직 |
-| `src/gildash.ts` — semantic 옵션 + 신규 API 4개 + 기존 API 확장 2개 | **Opus** | Public API 설계 |
-| Watcher 연동 — 파일 변경 시 Program 재생성 + 타입 재수집 | **Opus** | 증분 갱신 핵심 |
-| 통합 테스트 (`test/semantic.test.ts`) | **Opus** | end-to-end 복합 테스트 |
-
-### Phase 4 — 마무리
-
-| 작업 | 담당 | 근거 |
-|------|------|------|
-| README.md / README.ko.md — Semantic Layer 문서화 | **Sonnet** | 문서화 |
-| CHANGELOG.md — 변경사항 기록 | **Sonnet** | 문서화 |
-| commit + PR | **Opus** | 최종 검수 |
-
-### 요약
-
-| 담당 | 작업 수 | 성격 |
-|------|---------|------|
-| **Opus** | 15 | 프로토타입, 핵심 로직 6개, OVERFLOW/PRUNE, 통합, Public API, Watcher, 통합 테스트, PR |
-| **Sonnet** | 12 | 타입 정의, spec 4개, Store migration/repository, Bun 검증, 문서화 3개 |
+| 항목 | 심각도 | 대응 |
+|------|--------|------|
+| SQLite 테이블 재생성 마이그레이션 | 중간 | 트랜잭션 내 실행. connection.ts에서 FK OFF/ON 토글 + `PRAGMA foreign_key_check`로 안전 보장 |
+| `dstProject` 추가로 INSERT 로직 전체 수정 | 중간 | RelationRecord 타입이 강제 + fallback으로 컴파일 타임 검출 |
+| knownFiles Set 구축 성능 (대규모 프로젝트) | 낮음 | Map → Set 변환 O(n). fullIndex/증분 모두 1회 구축으로 성능 영향 무시가능 |
+| bare specifier 후보가 실제 파일과 불일치 | 낮음 | knownFiles 검증으로 이중 방어 |
+| `resolveBareSpecifier` 현실적 무용 | 낮음 | 현재 node_modules 미인덱싱으로 knownFiles에 없음. 미래 `indexExternalPackages()` 구현 후 활성화되는 기반 코드 |
+| 기존 테스트 대량 수정 | 중간 | RelationRecord mock 데이터에 dstProject 추가 필요 |
+| AUTOINCREMENT 시퀀스 초기화 | 낮음 | migration SQL에 sqlite_sequence 복원 구문 포함 |
+| `replaceFileRelations` 원자성 (증분) | 중간 | 내부 트랜잭션으로 DELETE+INSERT 감싸기 |
+| `getIncoming` 시그니처 의미 변경 | 중간 | positional이므로 컴파일 에러 없음. 호출처 전파 리스트로 대응. 프로덕션 호출처 없음 (테스트만) |
+| 증분 2-pass 구조 변경 | 중간 | processChanged 내부만 변경. 외부 API 영향 없음 |
+| 증분 2-pass 원자성 부재 | 중간 | processChanged를 `dbConnection.transaction()`으로 감싸 권장. crash 시 전체 롤백 |
+| `IndexCoordinatorOptions.relationRepo` 인터페이스 시그니처 | 중간 | `retargetRelations` 6파라미터로 변경. 인터페이스와 구현체 동시 변경 필수 |
