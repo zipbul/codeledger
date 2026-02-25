@@ -7,6 +7,7 @@ import { toAbsolutePath } from '../common/path-utils';
 import { hashString } from '../common/hasher';
 import { isErr } from '@zipbul/result';
 import { parseSource } from '../parser/parse-source';
+import type { ParsedFile } from '../parser/types';
 import { detectChanges } from './file-indexer';
 import { indexFileSymbols } from './symbol-indexer';
 import { indexFileRelations } from './relation-indexer';
@@ -302,19 +303,73 @@ export class IndexCoordinator {
     };
 
     const processChanged = async (): Promise<{ symbols: number; relations: number; failedFiles: string[] }> => {
+      const { projectRoot, boundaries } = this.opts;
+      const { parseCache } = this.opts;
       let symbols = 0;
       let relations = 0;
       const failedFiles: string[] = [];
+
+      // ── Pass 1: 모든 변경 파일 read + parse + upsertFile ──
+      type Prepared = {
+        filePath: string; text: string; contentHash: string;
+        parsed: ParsedFile; project: string;
+      };
+      const prepared: Prepared[] = [];
+
       for (const file of changed) {
         try {
-          const r = await this.processFile(file.filePath, file.contentHash || undefined, tsconfigPaths);
-          symbols += r.symbolCount;
-          relations += r.relCount;
-        } catch (err) {
-          this.logger.error(`[IndexCoordinator] Failed to index ${file.filePath}:`, err);
+          const absPath = toAbsolutePath(projectRoot, file.filePath);
+          const bunFile = Bun.file(absPath);
+          const text = await bunFile.text();
+          const contentHash = file.contentHash || hashString(text);
+          const project = resolveFileProject(file.filePath, boundaries);
+
+          fileRepo.upsertFile({
+            project,
+            filePath: file.filePath,
+            mtimeMs: bunFile.lastModified,
+            size: bunFile.size,
+            contentHash,
+            updatedAt: new Date().toISOString(),
+            lineCount: text.split('\n').length,
+          });
+
+          const parseFn = this.opts.parseSourceFn ?? parseSource;
+          const parseResult = parseFn(absPath, text);
+          if (isErr(parseResult)) throw parseResult.data;
+          const parsed = parseResult as ParsedFile;
+          prepared.push({ filePath: file.filePath, text, contentHash, parsed, project });
+        } catch (e) {
+          this.logger.error(`[IndexCoordinator] Failed to prepare ${file.filePath}:`, e);
           failedFiles.push(file.filePath);
         }
       }
+
+      // ── knownFiles 구축 (1회) — Pass 1 완료 후 모든 신규 파일 포함 ──
+      const knownFiles = new Set<string>();
+      for (const boundary of boundaries) {
+        for (const [fp] of fileRepo.getFilesMap(boundary.project)) {
+          knownFiles.add(`${boundary.project}::${fp}`);
+        }
+      }
+
+      // ── Pass 2: index symbols + relations (동기 DB → 트랜잭션으로 보호) ──
+      dbConnection.transaction(() => {
+        for (const fd of prepared) {
+          indexFileSymbols({
+            parsed: fd.parsed, project: fd.project,
+            filePath: fd.filePath, contentHash: fd.contentHash, symbolRepo,
+          });
+          relations += indexFileRelations({
+            ast: fd.parsed.program, project: fd.project, filePath: fd.filePath,
+            relationRepo, projectRoot, tsconfigPaths,
+            knownFiles, boundaries,
+          });
+          parseCache.set(fd.filePath, fd.parsed);
+          symbols += symbolRepo.getFileSymbols(fd.project, fd.filePath).length;
+        }
+      });
+
       return { symbols, relations, failedFiles };
     };
 
@@ -375,6 +430,14 @@ export class IndexCoordinator {
           });
         }
 
+        // knownFiles Set 구축: Pass 1에서 upsert한 파일 + 기존 파일 모두 포함 (read-your-own-writes)
+        const knownFiles = new Set<string>();
+        for (const boundary of boundaries) {
+          for (const [fp] of fileRepo.getFilesMap(boundary.project)) {
+            knownFiles.add(`${boundary.project}::${fp}`);
+          }
+        }
+
         // Pass 2: Parse sources and index symbols + relations.
         const parseFn = this.opts.parseSourceFn ?? parseSource;
         for (const fd of preread) {
@@ -391,6 +454,8 @@ export class IndexCoordinator {
             relationRepo,
             projectRoot,
             tsconfigPaths,
+            knownFiles,
+            boundaries,
           });
           totalSymbols += symbolRepo.getFileSymbols(project, fd.filePath).length;
         }
@@ -464,52 +529,6 @@ export class IndexCoordinator {
       failedFiles: allFailedFiles,
       changedSymbols,
     };
-  }
-
-  private async processFile(
-    filePath: string,
-    knownHash: string | undefined,
-    tsconfigPaths: TsconfigPaths | undefined,
-  ): Promise<{ symbolCount: number; relCount: number }> {
-    const { projectRoot, boundaries } = this.opts;
-    const { fileRepo, symbolRepo, relationRepo, parseCache } = this.opts;
-
-    const absPath = toAbsolutePath(projectRoot, filePath);
-    const bunFile = Bun.file(absPath);
-    const text = await bunFile.text();
-    const contentHash = knownHash || hashString(text);
-
-    const project = resolveFileProject(filePath, boundaries);
-
-    const parseFn = this.opts.parseSourceFn ?? parseSource;
-    const parseResult = parseFn(absPath, text);
-    if (isErr(parseResult)) throw parseResult.data;
-    const parsed = parseResult;
-    parseCache.set(filePath, parsed);
-
-    fileRepo.upsertFile({
-      project,
-      filePath,
-      mtimeMs: bunFile.lastModified,
-      size: bunFile.size,
-      contentHash,
-      updatedAt: new Date().toISOString(),
-      lineCount: text.split('\n').length,
-    });
-
-    indexFileSymbols({ parsed, project, filePath, contentHash, symbolRepo });
-
-    const relCount = indexFileRelations({
-      ast: parsed.program,
-      project,
-      filePath,
-      relationRepo,
-      projectRoot,
-      tsconfigPaths,
-    });
-
-    const symbolCount = symbolRepo.getFileSymbols(project, filePath).length;
-    return { symbolCount, relCount };
   }
 
   private fireCallbacks(result: IndexResult): void {

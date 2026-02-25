@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock, spyOn } from 'bun:test';
+import { err } from '@zipbul/result';
 import type { FileChangeEvent } from '../watcher/types';
 import type { FileChangeRecord, DetectChangesResult } from './file-indexer';
 import type { FileRecord } from '../store/repositories/file.repository';
@@ -1357,5 +1358,265 @@ describe('IndexCoordinator', () => {
     const bunFileCalls = (Bun.file as any).mock.calls as [string][];
     const drainedCall = bunFileCalls.find(([p]) => p.includes('src/concurrent.ts'));
     expect(drainedCall).toBeDefined();
+  });
+
+  // ── Step 6: knownFiles / 2-pass tests ──
+
+  it('should build knownFiles from all boundaries getFilesMap in fullIndex Pass 2', async () => {
+    const fileRepo = makeFileRepo();
+    const webMap = new Map<string, FileRecord>([['src/web.ts', { project: 'web', filePath: 'src/web.ts' } as FileRecord]]);
+    const apiMap = new Map<string, FileRecord>([['src/api.ts', { project: 'api', filePath: 'src/api.ts' } as FileRecord]]);
+    (fileRepo.getFilesMap as any).mockImplementation((project: string) => {
+      if (project === 'web') return webMap;
+      if (project === 'api') return apiMap;
+      return new Map();
+    });
+    mockDetectChanges.mockResolvedValue({
+      changed: [{ filePath: 'src/web.ts', contentHash: 'h1', mtimeMs: 1000, size: 50 }],
+      unchanged: [],
+      deleted: [],
+    });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'code', lastModified: 1000, size: 50 } as any);
+    mockResolveFileProject.mockReturnValue('web');
+
+    const coordinator = new IndexCoordinator({
+      projectRoot: PROJECT_ROOT,
+      boundaries: [{ dir: 'apps/web', project: 'web' }, { dir: 'apps/api', project: 'api' }],
+      extensions: EXTENSIONS,
+      ignorePatterns: IGNORE_PATTERNS,
+      dbConnection: makeDbConnection(),
+      parseCache: makeParseCache(),
+      fileRepo: fileRepo as any,
+      symbolRepo: makeSymbolRepo() as any,
+      relationRepo: makeRelationRepo(),
+      parseSourceFn: mockParseSource as any,
+      logger: { error: mock(() => {}) },
+    });
+
+    await coordinator.fullIndex();
+
+    const callArgs = mockIndexFileRelations.mock.calls[0]?.[0] as any;
+    expect(callArgs).toBeDefined();
+    expect(callArgs.knownFiles).toBeInstanceOf(Set);
+    expect(callArgs.knownFiles.has('web::src/web.ts')).toBe(true);
+    expect(callArgs.knownFiles.has('api::src/api.ts')).toBe(true);
+  });
+
+  it('should pass knownFiles and boundaries to indexFileRelations in fullIndex', async () => {
+    mockDetectChanges.mockResolvedValue({
+      changed: [makeFakeFile('src/a.ts')],
+      unchanged: [],
+      deleted: [],
+    });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'code', lastModified: 1000, size: 100 } as any);
+    const coordinator = makeCoordinator();
+
+    await coordinator.fullIndex();
+
+    const callArgs = mockIndexFileRelations.mock.calls[0]?.[0] as any;
+    expect(callArgs.knownFiles).toBeDefined();
+    expect(callArgs.boundaries).toBeDefined();
+    expect(callArgs.boundaries).toEqual(BOUNDARIES);
+  });
+
+  it('should upsert all files before indexing any in incremental 2-pass', async () => {
+    const callOrder: string[] = [];
+    const fileRepo = makeFileRepo();
+    fileRepo.upsertFile.mockImplementation(() => { callOrder.push('upsert'); });
+    mockIndexFileSymbols.mockImplementation(() => { callOrder.push('indexSymbols'); });
+    mockIndexFileRelations.mockImplementation(() => { callOrder.push('indexRelations'); return 0; });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'code', lastModified: 1000, size: 100 } as any);
+
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.incrementalIndex([
+      { eventType: 'change', filePath: 'src/a.ts' } as FileChangeEvent,
+      { eventType: 'change', filePath: 'src/b.ts' } as FileChangeEvent,
+    ]);
+
+    // All upserts must happen before any indexing (2-pass)
+    const lastUpsertIdx = callOrder.lastIndexOf('upsert');
+    const firstIndexIdx = callOrder.indexOf('indexSymbols');
+    expect(firstIndexIdx).toBeGreaterThan(-1);
+    expect(lastUpsertIdx).toBeLessThan(firstIndexIdx);
+  });
+
+  it('should build knownFiles from getFilesMap after Pass 1 in incremental', async () => {
+    const fileRepo = makeFileRepo();
+    const webMap = new Map<string, FileRecord>([['src/x.ts', { project: 'web', filePath: 'src/x.ts' } as FileRecord]]);
+    const apiMap = new Map<string, FileRecord>([['src/y.ts', { project: 'api', filePath: 'src/y.ts' } as FileRecord]]);
+    (fileRepo.getFilesMap as any).mockImplementation((project: string) => {
+      if (project === 'web') return webMap;
+      if (project === 'api') return apiMap;
+      return new Map();
+    });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'code', lastModified: 1000, size: 100 } as any);
+    mockResolveFileProject.mockReturnValue('web');
+
+    const coordinator = new IndexCoordinator({
+      projectRoot: PROJECT_ROOT,
+      boundaries: [{ dir: 'apps/web', project: 'web' }, { dir: 'apps/api', project: 'api' }],
+      extensions: EXTENSIONS,
+      ignorePatterns: IGNORE_PATTERNS,
+      dbConnection: makeDbConnection(),
+      parseCache: makeParseCache(),
+      fileRepo: fileRepo as any,
+      symbolRepo: makeSymbolRepo() as any,
+      relationRepo: makeRelationRepo(),
+      parseSourceFn: mockParseSource as any,
+      logger: { error: mock(() => {}) },
+    });
+
+    await coordinator.incrementalIndex([
+      { eventType: 'change', filePath: 'src/x.ts' } as FileChangeEvent,
+    ]);
+
+    const callArgs = mockIndexFileRelations.mock.calls[0]?.[0] as any;
+    expect(callArgs).toBeDefined();
+    expect(callArgs.knownFiles).toBeInstanceOf(Set);
+    expect(callArgs.knownFiles.has('web::src/x.ts')).toBe(true);
+    expect(callArgs.knownFiles.has('api::src/y.ts')).toBe(true);
+  });
+
+  it('should pass knownFiles and boundaries to indexFileRelations in incremental', async () => {
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'code', lastModified: 1000, size: 100 } as any);
+    const coordinator = makeCoordinator();
+
+    await coordinator.incrementalIndex([
+      { eventType: 'change', filePath: 'src/a.ts' } as FileChangeEvent,
+    ]);
+
+    const callArgs = mockIndexFileRelations.mock.calls[0]?.[0] as any;
+    expect(callArgs.knownFiles).toBeDefined();
+    expect(callArgs.boundaries).toBeDefined();
+    expect(callArgs.boundaries).toEqual(BOUNDARIES);
+  });
+
+  it('should wrap Pass 2 indexing inside transaction in incremental', async () => {
+    const callOrder: string[] = [];
+    const dbConnection = makeDbConnection();
+    dbConnection.transaction = mock((fn: () => any) => {
+      callOrder.push('tx:start');
+      const result = fn();
+      callOrder.push('tx:end');
+      return result;
+    }) as any;
+    mockIndexFileSymbols.mockImplementation(() => { callOrder.push('indexSymbols'); });
+    mockIndexFileRelations.mockImplementation(() => { callOrder.push('indexRelations'); return 0; });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'code', lastModified: 1000, size: 100 } as any);
+
+    const coordinator = makeCoordinator({ dbConnection });
+
+    await coordinator.incrementalIndex([
+      { eventType: 'change', filePath: 'src/a.ts' } as FileChangeEvent,
+    ]);
+
+    expect(callOrder).toContain('tx:start');
+    const txStart = callOrder.indexOf('tx:start');
+    const txEnd = callOrder.indexOf('tx:end');
+    const indexSymIdx = callOrder.indexOf('indexSymbols');
+    const indexRelIdx = callOrder.indexOf('indexRelations');
+    expect(indexSymIdx).toBeGreaterThan(txStart);
+    expect(indexSymIdx).toBeLessThan(txEnd);
+    expect(indexRelIdx).toBeGreaterThan(txStart);
+    expect(indexRelIdx).toBeLessThan(txEnd);
+  });
+
+  it('should exclude failed file from Pass 2 when read fails in incremental Pass 1', async () => {
+    const callOrder: string[] = [];
+    const fileRepo = makeFileRepo();
+    fileRepo.upsertFile.mockImplementation(() => { callOrder.push('upsert'); });
+    mockIndexFileSymbols.mockImplementation(() => { callOrder.push('indexSymbols'); });
+    mockIndexFileRelations.mockImplementation(() => { callOrder.push('indexRelations'); return 0; });
+
+    let readCount = 0;
+    spyOn(Bun, 'file').mockReturnValue({
+      text: mock(async () => {
+        readCount++;
+        if (readCount === 1) throw new Error('read fail');
+        return 'code';
+      }),
+      lastModified: 1000,
+      size: 100,
+    } as any);
+
+    const coordinator = makeCoordinator({ fileRepo });
+
+    const result = await coordinator.incrementalIndex([
+      { eventType: 'change', filePath: 'src/fail.ts' } as FileChangeEvent,
+      { eventType: 'change', filePath: 'src/ok1.ts' } as FileChangeEvent,
+      { eventType: 'change', filePath: 'src/ok2.ts' } as FileChangeEvent,
+    ]);
+
+    // ok1 + ok2 upserted, fail excluded → 2 upserts
+    expect(callOrder.filter((c) => c === 'upsert')).toHaveLength(2);
+    // ok1 + ok2 indexed → 2 indexSymbols calls
+    expect(callOrder.filter((c) => c === 'indexSymbols')).toHaveLength(2);
+    // All upserts must precede all indexing (2-pass structure)
+    const lastUpsert = callOrder.lastIndexOf('upsert');
+    const firstIndex = callOrder.indexOf('indexSymbols');
+    expect(lastUpsert).toBeLessThan(firstIndex);
+    // failedFiles includes the failed file
+    expect(result.failedFiles).toContain('src/fail.ts');
+  });
+
+  it('should exclude failed file from Pass 2 when parse returns error in incremental', async () => {
+    const fileRepo = makeFileRepo();
+    (mockParseSource as any).mockImplementation((fp: string, text: string) => {
+      if (fp.includes('parsefail')) return err(new Error('parse error'));
+      return { filePath: fp, program: { body: [] }, errors: [], comments: [], sourceText: text };
+    });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'code', lastModified: 1000, size: 100 } as any);
+
+    const coordinator = makeCoordinator({ fileRepo });
+
+    const result = await coordinator.incrementalIndex([
+      { eventType: 'change', filePath: 'src/parsefail.ts' } as FileChangeEvent,
+      { eventType: 'change', filePath: 'src/ok.ts' } as FileChangeEvent,
+    ]);
+
+    // parse-fail file should still have upsertFile called (2-pass: upsert before parse)
+    const upsertCalls = (fileRepo.upsertFile.mock.calls as any[]).map((c: any[]) => c[0]?.filePath);
+    expect(upsertCalls).toContain('src/parsefail.ts');
+    expect(upsertCalls).toContain('src/ok.ts');
+    // Only non-failed file should be indexed
+    expect(mockIndexFileSymbols).toHaveBeenCalledTimes(1);
+    expect(result.failedFiles).toContain('src/parsefail.ts');
+  });
+
+  it('should return zero counts when changed array is empty in incremental', async () => {
+    const coordinator = makeCoordinator();
+
+    const result = await coordinator.incrementalIndex([]);
+
+    expect(result.indexedFiles).toBe(0);
+    expect(result.totalSymbols).toBe(0);
+    expect(result.totalRelations).toBe(0);
+    expect(result.failedFiles).toEqual([]);
+  });
+
+  it('should include newly upserted files in knownFiles for cross-reference resolution', async () => {
+    const fileRepo = makeFileRepo();
+    // After upsertFile calls, getFilesMap returns the new file
+    const filesMap = new Map<string, FileRecord>();
+    fileRepo.upsertFile.mockImplementation((record: any) => {
+      filesMap.set(record.filePath, record);
+    });
+    fileRepo.getFilesMap.mockImplementation(() => filesMap);
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'import "./b"', lastModified: 1000, size: 100 } as any);
+
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.incrementalIndex([
+      { eventType: 'change', filePath: 'src/a.ts' } as FileChangeEvent,
+      { eventType: 'change', filePath: 'src/b.ts' } as FileChangeEvent,
+    ]);
+
+    const callArgs = mockIndexFileRelations.mock.calls[0]?.[0] as any;
+    expect(callArgs).toBeDefined();
+    expect(callArgs.knownFiles).toBeInstanceOf(Set);
+    // Both newly upserted files should appear in knownFiles
+    expect(callArgs.knownFiles.has('test-project::src/a.ts')).toBe(true);
+    expect(callArgs.knownFiles.has('test-project::src/b.ts')).toBe(true);
   });
 });
