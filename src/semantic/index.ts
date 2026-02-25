@@ -56,6 +56,19 @@ function classifyDeclKind(node: ts.Node): string {
   return "unknown";
 }
 
+/** charCode가 JS 식별자 문자(letter, digit, _, $)인지 판별 */
+function isIdentifierChar(charCode: number): boolean {
+  // a-z
+  if (charCode >= 0x61 && charCode <= 0x7a) return true;
+  // A-Z
+  if (charCode >= 0x41 && charCode <= 0x5a) return true;
+  // 0-9
+  if (charCode >= 0x30 && charCode <= 0x39) return true;
+  // _ or $
+  if (charCode === 0x5f || charCode === 0x24) return true;
+  return false;
+}
+
 // ── SemanticLayer ────────────────────────────────────────────────────────────
 
 export class SemanticLayer {
@@ -218,6 +231,20 @@ export class SemanticLayer {
     this.#symbolGraph.invalidate(filePath);
   }
 
+  /**
+   * Remove a tracked file from the tsc program and invalidate its symbol graph entries.
+   *
+   * Call this when a file is deleted from disk so the LanguageService no longer
+   * reports stale references or type information for it.
+   *
+   * No-op if already disposed.
+   */
+  notifyFileDeleted(filePath: string): void {
+    if (this.#isDisposed) return;
+    this.#program.removeFile(filePath);
+    this.#symbolGraph.invalidate(filePath);
+  }
+
   // ── Position conversion ──────────────────────────────────────────────
 
   /**
@@ -251,9 +278,21 @@ export class SemanticLayer {
     const sourceFile = this.#program.getProgram().getSourceFile(filePath);
     if (!sourceFile) return null;
     const text = sourceFile.getFullText();
-    const idx = text.indexOf(name, declarationPos);
-    if (idx < 0) return null;
-    return idx;
+    let searchFrom = declarationPos;
+    while (searchFrom < text.length) {
+      const idx = text.indexOf(name, searchFrom);
+      if (idx < 0) return null;
+
+      // Word boundary check: preceding char must be non-identifier, or idx === 0
+      const before = idx > 0 ? text.charCodeAt(idx - 1) : 0x20; // space
+      const after = idx + name.length < text.length ? text.charCodeAt(idx + name.length) : 0x20;
+      if (!isIdentifierChar(before) && !isIdentifierChar(after)) {
+        return idx;
+      }
+
+      searchFrom = idx + 1;
+    }
+    return null;
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────

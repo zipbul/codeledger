@@ -101,6 +101,7 @@ export type SemanticLayerLike = Pick<
   | 'getModuleInterface'
   | 'getSymbolNode'
   | 'notifyFileChanged'
+  | 'notifyFileDeleted'
   | 'dispose'
   | 'isDisposed'
   | 'lineColumnToPosition'

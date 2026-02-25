@@ -3611,6 +3611,7 @@ describe('Gildash', () => {
         findImplementations: mock((_fp: string, _pos: number) => [] as Implementation[]),
         getModuleInterface: mock((fp: string) => ({ filePath: fp, exports: [] } as SemanticModuleInterface)),
         notifyFileChanged: mock((_fp: string, _content: string) => {}),
+        notifyFileDeleted: mock((_fp: string) => {}),
         dispose: mock(() => {}),
         isDisposed: false,
         lineColumnToPosition: mock((_fp: string, _line: number, _col: number) => 42 as number | null),

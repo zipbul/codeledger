@@ -21,8 +21,9 @@ export interface ResolvedType {
   /** Whether this type is an intersection type (`A & B`). */
   isIntersection: boolean;
   /**
-   * Whether this type contains unresolved generic type parameters.
-   * `false` when all type arguments have been concretely resolved.
+   * Whether this type is a generic instantiation (has type arguments).
+   * `true` when the type was instantiated with concrete type arguments
+   * (e.g. `Promise<string>`), `false` for non-generic types or uninstantiated generics.
    */
   isGeneric: boolean;
   /**

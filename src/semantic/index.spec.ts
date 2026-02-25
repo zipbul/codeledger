@@ -495,4 +495,233 @@ describe("SemanticLayer", () => {
     expect(first).toBe(true);
     expect(second).toBe(true);
   });
+
+  // ── notifyFileDeleted ───────────────────────────────────────────────────
+
+  // PRUNE-1 [HP] notifyFileDeleted: collectTypeAt returns null for deleted file
+  it("should return null from collectTypeAt after notifyFileDeleted", () => {
+    // Arrange
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+    const filePath = "/project/src/a.ts";
+    layer.notifyFileChanged(filePath, "const x: number = 1;");
+
+    // Act
+    layer.notifyFileDeleted(filePath);
+    const type = layer.collectTypeAt(filePath, 6);
+
+    // Assert
+    expect(type).toBeNull();
+    layer.dispose();
+  });
+
+  // PRUNE-2 [NE] notifyFileDeleted: disposed → no-op
+  it("should no-op when notifyFileDeleted is called after dispose", () => {
+    // Arrange
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+    layer.dispose();
+
+    // Act & Assert
+    expect(() => layer.notifyFileDeleted("/project/src/a.ts")).not.toThrow();
+  });
+
+  // PRUNE-3 [ST] add→collect→delete→verify null
+  it("should return null from collectTypeAt after add→collect→delete lifecycle", () => {
+    // Arrange
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+    const filePath = "/project/src/a.ts";
+
+    // Phase 1: add and collect
+    layer.notifyFileChanged(filePath, "const x: number = 42;");
+    const typeBefore = layer.collectTypeAt(filePath, 6);
+    expect(typeBefore).not.toBeNull();
+
+    // Phase 2: delete and verify
+    layer.notifyFileDeleted(filePath);
+    const typeAfter = layer.collectTypeAt(filePath, 6);
+
+    // Assert
+    expect(typeAfter).toBeNull();
+    layer.dispose();
+  });
+
+  // PRUNE-4 [ID] double notifyFileDeleted → idempotent
+  it("should not throw when notifyFileDeleted is called twice for the same file", () => {
+    // Arrange
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+    const filePath = "/project/src/a.ts";
+    layer.notifyFileChanged(filePath, "const x = 1;");
+
+    // Act
+    layer.notifyFileDeleted(filePath);
+
+    // Assert
+    expect(() => layer.notifyFileDeleted(filePath)).not.toThrow();
+    layer.dispose();
+  });
+
+  // ── findNamePosition word boundary ──────────────────────────────────────
+
+  // PRUNE-5 [HP] findNamePosition: returns position of word-boundary name match
+  it("should return correct position for exact word match in findNamePosition", () => {
+    // Arrange
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+
+    const filePath = "/project/src/fn.ts";
+    const content = "export function greet() {}";
+    layer.notifyFileChanged(filePath, content);
+
+    // Act
+    const pos = layer.findNamePosition(filePath, 0, "greet");
+
+    // Assert
+    expect(pos).toBe(content.indexOf("greet"));
+    layer.dispose();
+  });
+
+  // PRUNE-6 [NE] findNamePosition: file not in program → null
+  it("should return null from findNamePosition when file is not in program", () => {
+    // Arrange
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+
+    // Act — no notifyFileChanged, file not in program
+    const pos = layer.findNamePosition("/project/src/unknown.ts", 0, "foo");
+
+    // Assert
+    expect(pos).toBeNull();
+    layer.dispose();
+  });
+
+  // PRUNE-7 [NE] findNamePosition: name not found → null
+  it("should return null from findNamePosition when name is not found in file", () => {
+    // Arrange
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+
+    const filePath = "/project/src/fn.ts";
+    layer.notifyFileChanged(filePath, "export const x = 1;");
+
+    // Act
+    const pos = layer.findNamePosition(filePath, 0, "nonexistent");
+
+    // Assert
+    expect(pos).toBeNull();
+    layer.dispose();
+  });
+
+  // PRUNE-8 [NE] findNamePosition: disposed → throw
+  it("should throw when findNamePosition is called after dispose", () => {
+    // Arrange
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+    layer.dispose();
+
+    // Act & Assert
+    expect(() => layer.findNamePosition("/project/src/a.ts", 0, "foo")).toThrow();
+  });
+
+  // PRUNE-9 [ED] findNamePosition: name at position 0 with correct boundary
+  it("should find name at position 0 when it starts at the beginning of file", () => {
+    // Arrange
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+
+    const filePath = "/project/src/fn.ts";
+    // Name starts at position 0: "greet" is the first token
+    layer.notifyFileChanged(filePath, "greet()");
+
+    // Act — note: this is not valid TS but tsc will still have a sourceFile
+    const pos = layer.findNamePosition(filePath, 0, "greet");
+
+    // Assert
+    expect(pos).toBe(0);
+    layer.dispose();
+  });
+
+  // PRUNE-10 [CO] findNamePosition: skip substring match and find standalone identifier
+  it("should skip substring match and find standalone identifier in findNamePosition", () => {
+    // Arrange
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+
+    const filePath = "/project/src/fn.ts";
+    // "foo" appears as substring in "fooBar" first, then standalone
+    const content = "const fooBar = 1; const foo = 2;";
+    layer.notifyFileChanged(filePath, content);
+
+    // Act
+    const pos = layer.findNamePosition(filePath, 0, "foo");
+
+    // Assert — should find standalone "foo", not "foo" inside "fooBar"
+    // "const fooBar = 1; const foo = 2;"
+    //                          ^ position 24
+    const expectedPos = content.lastIndexOf("foo");
+    expect(pos).toBe(expectedPos);
+    layer.dispose();
+  });
 });

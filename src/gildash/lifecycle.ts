@@ -73,10 +73,14 @@ function createWatcherCallback(
 ): (event: FileChangeEvent) => void {
   return (event: FileChangeEvent) => {
     coordinator.handleWatcherEvent?.(event);
-    if (ctx.semanticLayer && event.eventType !== 'delete') {
-      ctx.readFileFn(event.filePath).then(content => {
-        ctx.semanticLayer?.notifyFileChanged(event.filePath, content);
-      }).catch(() => {});
+    if (ctx.semanticLayer) {
+      if (event.eventType === 'delete') {
+        ctx.semanticLayer.notifyFileDeleted(event.filePath);
+      } else {
+        ctx.readFileFn(event.filePath).then(content => {
+          ctx.semanticLayer?.notifyFileChanged(event.filePath, content);
+        }).catch(() => {});
+      }
     }
   };
 }

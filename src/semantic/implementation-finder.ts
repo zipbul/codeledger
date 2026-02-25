@@ -11,34 +11,7 @@
 import ts from "typescript";
 import type { Implementation } from "./types";
 import type { TscProgram } from "./tsc-program";
-
-// ── AST 탐색 헬퍼 ────────────────────────────────────────────────────────────
-
-/**
- * `pos` 위치의 가장 작은(innermost) 노드를 반환한다.
- * 범위 밖이면 `undefined`.
- */
-function findNodeAtPosition(
-  sourceFile: ts.SourceFile,
-  pos: number,
-): ts.Node | undefined {
-  if (pos < 0 || pos >= sourceFile.getEnd()) return undefined;
-
-  function visit(node: ts.Node): ts.Node | undefined {
-    const start = node.getStart(sourceFile, false);
-    const end = node.getEnd();
-
-    if (pos < start || pos >= end) return undefined;
-
-    let found: ts.Node | undefined;
-    ts.forEachChild(node, (child) => {
-      if (!found) found = visit(child);
-    });
-    return found ?? node;
-  }
-
-  return visit(sourceFile);
-}
+import { findNodeAtPosition } from "./ast-node-utils";
 
 /**
  * `pos` 위치에서 가장 가까운 선언(declaration) 노드를 찾는다.

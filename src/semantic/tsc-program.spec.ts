@@ -504,4 +504,99 @@ describe("TscProgram", () => {
       result.dispose();
     }
   });
+
+  // ── removeFile ────────────────────────────────────────────────────────────
+
+  // PRUNE-1 [HP] removeFile: tracked file removed from scriptFileNames
+  it("should exclude removed file from scriptFileNames after removeFile", () => {
+    // Arrange
+    const prog = createOrThrow();
+    const filePath = "/project/src/a.ts";
+    prog.notifyFileChanged(filePath, "const x = 1;");
+    const host = prog.__testing__.host;
+
+    // Act
+    prog.removeFile(filePath);
+
+    // Assert
+    expect(host.getScriptFileNames()).not.toContain(filePath);
+    prog.dispose();
+  });
+
+  // PRUNE-2 [HP] removeFile: getScriptSnapshot returns undefined for removed file
+  it("should return undefined from getScriptSnapshot after removeFile", () => {
+    // Arrange
+    const prog = createOrThrow();
+    const filePath = "/project/src/a.ts";
+    prog.notifyFileChanged(filePath, "const x = 1;");
+    const host = prog.__testing__.host;
+
+    // Act
+    prog.removeFile(filePath);
+
+    // Assert
+    expect(host.getScriptSnapshot(filePath)).toBeUndefined();
+    prog.dispose();
+  });
+
+  // PRUNE-3 [NE] removeFile: disposed → no-op
+  it("should no-op when removeFile is called after dispose", () => {
+    // Arrange
+    const prog = createOrThrow();
+    const filePath = "/project/src/a.ts";
+    prog.notifyFileChanged(filePath, "const x = 1;");
+    prog.dispose();
+
+    // Act & Assert — should not throw
+    expect(() => prog.removeFile(filePath)).not.toThrow();
+  });
+
+  // PRUNE-4 [ED] removeFile: only tracked file → scriptFileNames empty
+  it("should leave scriptFileNames empty when the only tracked file is removed", () => {
+    // Arrange
+    const prog = createOrThrow();
+    const filePath = "/project/src/only.ts";
+    prog.notifyFileChanged(filePath, "const x = 1;");
+    const host = prog.__testing__.host;
+
+    // Act
+    prog.removeFile(filePath);
+
+    // Assert — no tracked files remain (rootFileNames from tsconfig may still be there)
+    const names = host.getScriptFileNames();
+    expect(names).not.toContain(filePath);
+    prog.dispose();
+  });
+
+  // PRUNE-5 [CO] removeFile then notifyFileChanged → re-added
+  it("should re-add file to scriptFileNames when notifyFileChanged is called after removeFile", () => {
+    // Arrange
+    const prog = createOrThrow();
+    const filePath = "/project/src/a.ts";
+    prog.notifyFileChanged(filePath, "const x = 1;");
+    prog.removeFile(filePath);
+    const host = prog.__testing__.host;
+
+    // Act
+    prog.notifyFileChanged(filePath, "const y = 2;");
+
+    // Assert
+    expect(host.getScriptFileNames()).toContain(filePath);
+    prog.dispose();
+  });
+
+  // PRUNE-6 [ID] double removeFile same path → idempotent
+  it("should not throw when removeFile is called twice for the same path", () => {
+    // Arrange
+    const prog = createOrThrow();
+    const filePath = "/project/src/a.ts";
+    prog.notifyFileChanged(filePath, "const x = 1;");
+
+    // Act
+    prog.removeFile(filePath);
+
+    // Assert — second removeFile is no-op
+    expect(() => prog.removeFile(filePath)).not.toThrow();
+    prog.dispose();
+  });
 });

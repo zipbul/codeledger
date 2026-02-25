@@ -245,9 +245,9 @@ Returns `Promise<Gildash>` (wrapped in `Result`).
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `searchSymbols(query)` | `Result<SymbolSearchResult[]>` | FTS5 full-text + exact / regex / decorator filters |
-| `searchRelations(query)` | `Result<CodeRelation[]>` | Filter by file, symbol, or relation type |
+| `searchRelations(query)` | `Result<StoredCodeRelation[]>` | Filter by file, symbol, or relation type |
 | `searchAllSymbols(query)` | `Result<SymbolSearchResult[]>` | Cross-project symbol search |
-| `searchAllRelations(query)` | `Result<CodeRelation[]>` | Cross-project relation search |
+| `searchAllRelations(query)` | `Result<StoredCodeRelation[]>` | Cross-project relation search |
 | `listIndexedFiles(project?)` | `Result<FileRecord[]>` | All indexed files for a project |
 | `getSymbolsByFile(filePath)` | `Result<SymbolSearchResult[]>` | All symbols in a single file |
 
@@ -271,7 +271,7 @@ Returns `Promise<Gildash>` (wrapped in `Result`).
 | `getFileStats(filePath)` | `Result<FileStats>` | Line count, symbol count, size |
 | `getFanMetrics(filePath)` | `Promise<Result<FanMetrics>>` | Fan-in / fan-out coupling |
 | `getModuleInterface(filePath)` | `Result<ModuleInterface>` | Public exports with metadata |
-| `getInternalRelations(filePath)` | `Result<CodeRelation[]>` | Intra-file relations |
+| `getInternalRelations(filePath)` | `Result<StoredCodeRelation[]>` | Intra-file relations |
 | `diffSymbols(before, after)` | `SymbolDiff` | Snapshot diff (added / removed / modified) |
 
 ### Semantic (opt-in)
@@ -350,6 +350,7 @@ interface RelationSearchQuery {
   srcSymbolName?: string;
   dstFilePath?: string;
   dstSymbolName?: string;
+  dstProject?: string;  // filter by destination project
   type?: 'imports' | 'type-references' | 're-exports' | 'calls' | 'extends' | 'implements';
   project?: string;
   limit?: number;       // default: 500
@@ -363,6 +364,11 @@ interface CodeRelation {
   dstSymbolName: string | null;
   metaJson?: string;
   meta?: Record<string, unknown>;   // auto-parsed from metaJson
+}
+
+/** CodeRelation enriched with the destination project identifier. */
+interface StoredCodeRelation extends CodeRelation {
+  dstProject: string;
 }
 
 // ── Analysis ────────────────────────────────────────────────────────────

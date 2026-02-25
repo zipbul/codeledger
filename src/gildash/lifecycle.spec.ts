@@ -575,6 +575,34 @@ describe('setupOwnerInfrastructure', () => {
     expect(coordinator.fullIndex).toHaveBeenCalledTimes(1);
     startSpy.mockRestore();
   });
+
+  // PRUNE-HP [HP] createWatcherCallback: delete event → calls semanticLayer.notifyFileDeleted
+  it('should call semanticLayer.notifyFileDeleted on delete event', async () => {
+    // Arrange
+    const coordinator = makeCoordinator();
+    const watcher = makeWatcher();
+    const notifyFileDeleted = mock(() => {});
+    const semanticLayer = {
+      notifyFileChanged: mock(() => {}),
+      notifyFileDeleted,
+      dispose: mock(() => {}),
+    };
+    const ctx = makeCtx({
+      coordinatorFactory: mock(() => coordinator) as any,
+      watcherFactory: mock(() => watcher) as any,
+      semanticLayer: semanticLayer as any,
+    });
+
+    await setupOwnerInfrastructure(ctx, { isWatchMode: true });
+
+    // Act — capture watcher callback and invoke with delete event
+    const startCall = (watcher.start as ReturnType<typeof mock>).mock.calls[0];
+    const watcherCallback = startCall![0] as (event: any) => void;
+    watcherCallback({ filePath: '/project/src/removed.ts', eventType: 'delete' });
+
+    // Assert
+    expect(notifyFileDeleted).toHaveBeenCalledWith('/project/src/removed.ts');
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════

@@ -244,9 +244,9 @@ if (isErr(result)) {
 | 메서드 | 반환 타입 | 설명 |
 |--------|-----------|------|
 | `searchSymbols(query)` | `Result<SymbolSearchResult[]>` | FTS5 전문검색 + exact/regex/decorator 필터 |
-| `searchRelations(query)` | `Result<CodeRelation[]>` | 파일, 심볼, 관계 유형 필터 |
+| `searchRelations(query)` | `Result<StoredCodeRelation[]>` | 파일, 심볼, 관계 유형 필터 |
 | `searchAllSymbols(query)` | `Result<SymbolSearchResult[]>` | 전체 프로젝트 심볼 검색 |
-| `searchAllRelations(query)` | `Result<CodeRelation[]>` | 전체 프로젝트 관계 검색 |
+| `searchAllRelations(query)` | `Result<StoredCodeRelation[]>` | 전체 프로젝트 관계 검색 |
 | `listIndexedFiles(project?)` | `Result<FileRecord[]>` | 인덱싱된 파일 목록 |
 | `getSymbolsByFile(filePath)` | `Result<SymbolSearchResult[]>` | 단일 파일의 모든 심볼 |
 
@@ -270,7 +270,7 @@ if (isErr(result)) {
 | `getFileStats(filePath)` | `Result<FileStats>` | 라인 수, 심볼 수, 파일 크기 |
 | `getFanMetrics(filePath)` | `Promise<Result<FanMetrics>>` | fan-in/fan-out 결합도 |
 | `getModuleInterface(filePath)` | `Result<ModuleInterface>` | 공개 export와 메타데이터 |
-| `getInternalRelations(filePath)` | `Result<CodeRelation[]>` | 파일 내부 관계 |
+| `getInternalRelations(filePath)` | `Result<StoredCodeRelation[]>` | 파일 내부 관계 |
 | `diffSymbols(before, after)` | `SymbolDiff` | 스냅샷 diff (추가/삭제/수정) |
 
 ### 시맨틱 (opt-in)
@@ -341,6 +341,11 @@ interface CodeRelation {
   dstFilePath: string;
   dstSymbolName: string | null;
   meta?: Record<string, unknown>;
+}
+
+/** 목적지 프로젝트 식별자가 추가된 CodeRelation */
+interface StoredCodeRelation extends CodeRelation {
+  dstProject: string;
 }
 
 interface IndexResult {

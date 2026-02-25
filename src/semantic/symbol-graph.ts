@@ -6,6 +6,7 @@
 import ts from "typescript";
 import { LruCache } from "../common/lru-cache";
 import type { TscProgram } from "./tsc-program";
+import { findNodeAtPosition } from "./ast-node-utils";
 
 // ── Public types ─────────────────────────────────────────────────────────────
 
@@ -32,34 +33,6 @@ const DEFAULT_CAPACITY = 1_000;
 type InternalSymbol = ts.Symbol & { parent?: ts.Symbol };
 /** members/exports 재귀 최대 깊이 */
 const MAX_MEMBER_DEPTH = 1;
-
-// ── AST 탐색 헬퍼 ────────────────────────────────────────────────────────────
-
-/**
- * `pos` 위치의 가장 작은(innermost) 노드를 반환한다.
- * 범위 밖이면 `undefined`.
- */
-function findNodeAtPosition(
-  sourceFile: ts.SourceFile,
-  pos: number,
-): ts.Node | undefined {
-  if (pos < 0 || pos >= sourceFile.getEnd()) return undefined;
-
-  function visit(node: ts.Node): ts.Node | undefined {
-    const start = node.getStart(sourceFile, false);
-    const end = node.getEnd();
-
-    if (pos < start || pos >= end) return undefined;
-
-    let found: ts.Node | undefined;
-    ts.forEachChild(node, (child) => {
-      if (!found) found = visit(child);
-    });
-    return found ?? node;
-  }
-
-  return visit(sourceFile);
-}
 
 // ── SymbolNode 빌더 ──────────────────────────────────────────────────────────
 

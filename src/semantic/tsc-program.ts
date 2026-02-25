@@ -183,6 +183,18 @@ export class TscProgram {
   }
 
   /**
+   * Remove a tracked file from the LanguageService host.
+   * After removal the file will no longer appear in `getScriptFileNames()`
+   * and `getScriptSnapshot()` will return `undefined` for it.
+   *
+   * No-op if already disposed or the file was never tracked.
+   */
+  removeFile(filePath: string): void {
+    if (this.#isDisposed) return;
+    this.#host.removeFile(filePath);
+  }
+
+  /**
    * Dispose the LanguageService and release references.
    * Idempotent — safe to call multiple times.
    */
@@ -232,6 +244,11 @@ class TscLanguageServiceHost implements ts.LanguageServiceHost {
     } else {
       this.#files.set(filePath, { version: 1, content });
     }
+  }
+
+  removeFile(filePath: string): void {
+    this.#files.delete(filePath);
+    this.#rootFileNames = this.#rootFileNames.filter((f) => f !== filePath);
   }
 
   // ── ts.LanguageServiceHost implementation ───────────────────────────────
