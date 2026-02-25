@@ -32,7 +32,6 @@ gildash indexes your TypeScript codebase into a local SQLite database, then lets
 - **Symbol-level diff** — `changedSymbols` in `IndexResult` tracks added/modified/removed symbols per index cycle
 - **Multi-process safe** — Owner/reader role separation guarantees a single writer per database
 - **Scan-only mode** — `watchMode: false` for one-shot indexing without file watcher overhead
-- **External package indexing** — Index `.d.ts` type declarations from `node_modules`
 - **tsconfig.json JSONC** — Path alias resolution parses comments and trailing commas in `tsconfig.json`
 - **Semantic layer (opt-in)** — tsc TypeChecker integration for resolved types, references, implementations, and module interface analysis
 
@@ -295,7 +294,6 @@ Requires `semantic: true` at open time.
 | `findPattern(pattern, opts?)` | `Promise<Result<PatternMatch[]>>` | AST structural search (ast-grep) |
 | `resolveSymbol(name, filePath)` | `Result<ResolvedSymbol>` | Follow re-export chain to original |
 | `getHeritageChain(name, filePath)` | `Promise<Result<HeritageNode>>` | extends / implements tree |
-| `indexExternalPackages(packages)` | `Promise<Result<IndexResult[]>>` | Index `.d.ts` from `node_modules` |
 | `batchParse(filePaths, opts?)` | `Promise<Result<Map>>` | Concurrent multi-file parsing. `opts`: oxc-parser `ParserOptions`. |
 
 ### Lifecycle & Low-level

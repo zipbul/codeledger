@@ -1,7 +1,7 @@
 import type { Program } from 'oxc-parser';
 import { extractRelations } from '../extractor/relation-extractor';
 import { toAbsolutePath, toRelativePath } from '../common/path-utils';
-import { resolveImport, resolveBareSpecifier } from '../extractor/extractor-utils';
+import { resolveImport } from '../extractor/extractor-utils';
 import { resolveFileProject } from '../common/project-discovery';
 import type { ProjectBoundary } from '../common/project-discovery';
 import type { TsconfigPaths } from '../common/tsconfig-resolver';
@@ -46,15 +46,10 @@ export function indexFileRelations(opts: IndexFileRelationsOptions): number {
   // knownFiles가 주어지면, 후보 중 knownFiles에 있는 경로를 선택하는 커스텀 resolver 조립
   const customResolver = knownFiles
     ? (currentFile: string, importPath: string, paths?: TsconfigPaths) => {
-        // 1. 기본 해석 (상대경로 + tsconfig paths)
-        let candidates = resolveImport(currentFile, importPath, paths);
+        // 기본 해석 (상대경로 + tsconfig paths)
+        const candidates = resolveImport(currentFile, importPath, paths);
 
-        // 2. bare specifier fallback
-        if (candidates.length === 0) {
-          candidates = resolveBareSpecifier(projectRoot, importPath);
-        }
-
-        // 3. 후보 중 knownFiles에 있는 첫 번째 선택
+        // 후보 중 knownFiles에 있는 첫 번째 선택
         for (const c of candidates) {
           const rel = toRelativePath(projectRoot, c);
           // 모든 project에서 검색

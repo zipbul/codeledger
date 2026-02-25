@@ -4,7 +4,7 @@ const mockResolve = mock((...args: string[]) => '');
 const mockDirname = mock((p: string) => '');
 const mockExtname = mock((p: string) => '');
 
-import { resolveImport, buildImportMap, resolveBareSpecifier } from './extractor-utils';
+import { resolveImport, buildImportMap } from './extractor-utils';
 
 const FAKE_PROJECT = '/project';
 
@@ -367,32 +367,3 @@ describe('buildImportMap', () => {
   });
 });
 
-describe('resolveBareSpecifier', () => {
-  it('should include node_modules index.d.ts candidate for bare package name', () => {
-    const result = resolveBareSpecifier('/project', 'lodash');
-    expect(result).toContain('/project/node_modules/lodash/index.d.ts');
-  });
-
-  it('should include @types candidate for bare package name', () => {
-    const result = resolveBareSpecifier('/project', 'lodash');
-    expect(result).toContain('/project/node_modules/@types/lodash/index.d.ts');
-  });
-
-  it('should include scoped @types candidate with double-underscore for scoped packages', () => {
-    const result = resolveBareSpecifier('/project', '@scope/pkg');
-    expect(result).toContain('/project/node_modules/@types/scope__pkg/index.d.ts');
-  });
-
-  it('should include subpath d.ts candidate for subpath imports', () => {
-    const result = resolveBareSpecifier('/project', '@scope/pkg/sub');
-    expect(result).toContain('/project/node_modules/@scope/pkg/sub.d.ts');
-  });
-
-  it('should return empty array for relative paths', () => {
-    expect(resolveBareSpecifier('/project', './relative')).toEqual([]);
-  });
-
-  it('should return empty array for absolute paths', () => {
-    expect(resolveBareSpecifier('/project', '/abs/path')).toEqual([]);
-  });
-});

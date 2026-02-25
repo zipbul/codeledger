@@ -241,10 +241,6 @@ export class Gildash {
     return miscApi.findPattern(this._ctx, pattern, opts);
   }
 
-  async indexExternalPackages(packages: string[], opts?: { project?: string }): Promise<Result<IndexResult[], GildashError>> {
-    return miscApi.indexExternalPackages(this._ctx, packages, opts);
-  }
-
   async getHeritageChain(symbolName: string, filePath: string, project?: string): Promise<Result<HeritageNode, GildashError>> {
     return miscApi.getHeritageChain(this._ctx, symbolName, filePath, project);
   }

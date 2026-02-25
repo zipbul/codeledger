@@ -39,7 +39,12 @@ Enable tsc TypeChecker-based semantic analysis via `Gildash.open({ semantic: tru
 ### Indexing stability
 
 - Two-pass indexing: `knownFiles` set populated before extraction prevents false "unresolved" markers on circular or forward references.
-- `.d.ts` candidate discovery via `resolveBareSpecifier`: bare specifiers (e.g. `lodash`) are resolved against `node_modules` type declarations, allowing `indexExternalPackages` to index them.
+- `node_modules` paths are now unconditionally excluded from indexing. The hard-coded filter in `detectChanges` cannot be overridden by `ignorePatterns`, and the default `ignorePatterns` includes `**/node_modules/**`.
+
+### Removed
+
+- `indexExternalPackages()` API and `MakeExternalCoordinatorFn` type — external package indexing is no longer supported.
+- `resolveBareSpecifier()` utility — bare specifier resolution against `node_modules` is removed.
 
 ### Internal structure
 

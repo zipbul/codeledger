@@ -32,7 +32,6 @@ gildash는 TypeScript 코드베이스를 로컬 SQLite 데이터베이스에 인
 - **심볼 레벨 diff** — `IndexResult`의 `changedSymbols`로 인덱싱 사이클 당 추가/수정/삭제된 심볼 추적
 - **멀티 프로세스 안전** — owner/reader 역할 분리로 단일 writer 보장
 - **스캔 전용 모드** — `watchMode: false`로 파일 워처 없이 1회성 인덱싱
-- **외부 패키지 인덱싱** — `node_modules`의 `.d.ts` 타입 선언 인덱싱
 - **tsconfig.json JSONC** — `tsconfig.json`의 주석(`//`, `/* */`)과 트레일링 콤마를 지원하는 경로 별칭 파싱
 - **시맨틱 레이어 (opt-in)** — tsc TypeChecker 통합으로 resolved type, 참조, 구현체, 모듈 인터페이스 분석
 <br>
@@ -294,7 +293,6 @@ if (isErr(result)) {
 | `findPattern(pattern, opts?)` | `Promise<Result<PatternMatch[]>>` | AST 구조적 검색 (ast-grep) |
 | `resolveSymbol(name, filePath)` | `Result<ResolvedSymbol>` | re-export 체인을 따라 원본 추적 |
 | `getHeritageChain(name, filePath)` | `Promise<Result<HeritageNode>>` | extends/implements 트리 |
-| `indexExternalPackages(packages)` | `Promise<Result<IndexResult[]>>` | `node_modules`의 `.d.ts` 인덱싱 |
 | `batchParse(filePaths, opts?)` | `Promise<Result<Map>>` | 다중 파일 동시 파싱. `opts`: oxc-parser `ParserOptions`. |
 
 ### 라이프사이클 & 저수준

@@ -664,12 +664,6 @@ describe('Gildash integration', () => {
       expect(map.has(join(tmpDir, 'src', 'utils.ts'))).toBe(true);
     });
 
-    it('should return validation error when indexExternalPackages references a non-existent package', async () => {
-      const result = await g.indexExternalPackages(['totally-nonexistent-package-xyz']);
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('validation');
-    });
-
     it('should find structural patterns in indexed files via findPattern', async () => {
       // Pass explicit absolute paths: default path list is relative (known limitation)
       const result = await g.findPattern('helper($$$)', {

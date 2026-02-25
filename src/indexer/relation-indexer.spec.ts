@@ -5,7 +5,6 @@ const mockExtractRelations = mock((ast: any, filePath: string, tsconfig?: any, r
 const mockToRelativePath = mock((root: string, abs: string) => '');
 const mockToAbsolutePath = mock((root: string, rel: string) => '');
 const mockResolveImport = mock((currentFile: string, importPath: string, paths?: any) => [] as string[]);
-const mockResolveBareSpecifier = mock((projectRoot: string, importPath: string) => [] as string[]);
 const mockResolveFileProject = mock((filePath: string, boundaries: any[]) => 'default');
 
 mock.module('../extractor/relation-extractor', () => ({ extractRelations: mockExtractRelations }));
@@ -15,7 +14,6 @@ mock.module('../common/path-utils', () => ({
 }));
 mock.module('../extractor/extractor-utils', () => ({
   resolveImport: mockResolveImport,
-  resolveBareSpecifier: mockResolveBareSpecifier,
 }));
 mock.module('../common/project-discovery', () => ({
   resolveFileProject: mockResolveFileProject,
@@ -55,7 +53,6 @@ describe('indexFileRelations', () => {
     }));
     mock.module('../extractor/extractor-utils', () => ({
       resolveImport: mockResolveImport,
-      resolveBareSpecifier: mockResolveBareSpecifier,
     }));
     mock.module('../common/project-discovery', () => ({
       resolveFileProject: mockResolveFileProject,
@@ -65,10 +62,8 @@ describe('indexFileRelations', () => {
     mockToRelativePath.mockReset();
     mockToAbsolutePath.mockReset();
     mockResolveImport.mockReset();
-    mockResolveBareSpecifier.mockReset();
     mockResolveFileProject.mockReset();
     mockResolveImport.mockReturnValue([]);
-    mockResolveBareSpecifier.mockReturnValue([]);
     mockResolveFileProject.mockReturnValue('default');
     mockToAbsolutePath.mockImplementation((root: string, rel: string) => `/project/${rel}`);
     mockToRelativePath.mockImplementation((root: string, abs: string) =>
@@ -320,51 +315,6 @@ describe('indexFileRelations', () => {
     expect(rels).toEqual([]);
   });
 
-  it('should fallback to resolveBareSpecifier when resolveImport returns empty', () => {
-    mockResolveImport.mockReturnValue([]);
-    mockResolveBareSpecifier.mockReturnValue(['/project/node_modules/pkg/index.d.ts']);
-    mockToRelativePath.mockImplementation((root: string, abs: string) =>
-      abs.startsWith('/project/') ? abs.replace('/project/', '') : `../${abs}`,
-    );
-    const knownFiles = new Set<string>([`${PROJECT}::node_modules/pkg/index.d.ts`]);
-
-    mockExtractRelations.mockImplementation((ast: any, filePath: string, tsconfig: any, resolverFn?: any) => {
-      if (resolverFn) {
-        const resolved = resolverFn(filePath, 'pkg', tsconfig);
-        return resolved.map((r: string) => makeRelation({ dstFilePath: r }));
-      }
-      return [];
-    });
-    const relationRepo = makeRelationRepo();
-
-    indexFileRelations({ ast: {} as any, project: PROJECT, filePath: REL_FILE, relationRepo: relationRepo as any, projectRoot: PROJECT_ROOT, knownFiles });
-
-    expect(mockResolveBareSpecifier).toHaveBeenCalledWith(PROJECT_ROOT, 'pkg');
-  });
-
-  it('should produce empty relation when bare specifier candidate also not in knownFiles', () => {
-    mockResolveImport.mockReturnValue([]);
-    mockResolveBareSpecifier.mockReturnValue(['/project/node_modules/pkg/index.d.ts']);
-    mockToRelativePath.mockImplementation((root: string, abs: string) =>
-      abs.startsWith('/project/') ? abs.replace('/project/', '') : `../${abs}`,
-    );
-    const knownFiles = new Set<string>(); // empty
-
-    mockExtractRelations.mockImplementation((ast: any, filePath: string, tsconfig: any, resolverFn?: any) => {
-      if (resolverFn) {
-        const resolved = resolverFn(filePath, 'pkg', tsconfig);
-        return resolved.map((r: string) => makeRelation({ dstFilePath: r }));
-      }
-      return [];
-    });
-    const relationRepo = makeRelationRepo();
-
-    indexFileRelations({ ast: {} as any, project: PROJECT, filePath: REL_FILE, relationRepo: relationRepo as any, projectRoot: PROJECT_ROOT, knownFiles });
-
-    const [, , rels] = relationRepo.replaceFileRelations.mock.calls[0]!;
-    expect(rels).toEqual([]);
-  });
-
   it('should create customResolver returning empty when knownFiles is empty Set', () => {
     const knownFiles = new Set<string>(); // empty Set → truthy
 
@@ -410,26 +360,4 @@ describe('indexFileRelations', () => {
     expect(rels[1].dstProject).toBe('proj-b');
   });
 
-  it('should prefer resolveImport over resolveBareSpecifier when resolveImport has candidates', () => {
-    mockResolveImport.mockReturnValue(['/project/src/utils.ts']);
-    mockResolveBareSpecifier.mockReturnValue(['/project/node_modules/utils/index.ts']);
-    mockToRelativePath.mockImplementation((root: string, abs: string) =>
-      abs.startsWith('/project/') ? abs.replace('/project/', '') : `../${abs}`,
-    );
-    const knownFiles = new Set<string>([`${PROJECT}::src/utils.ts`, `${PROJECT}::node_modules/utils/index.ts`]);
-
-    mockExtractRelations.mockImplementation((ast: any, filePath: string, tsconfig: any, resolverFn?: any) => {
-      if (resolverFn) {
-        const resolved = resolverFn(filePath, './utils', tsconfig);
-        return resolved.map((r: string) => makeRelation({ dstFilePath: r }));
-      }
-      return [];
-    });
-    const relationRepo = makeRelationRepo();
-
-    indexFileRelations({ ast: {} as any, project: PROJECT, filePath: REL_FILE, relationRepo: relationRepo as any, projectRoot: PROJECT_ROOT, knownFiles });
-
-    // resolveBareSpecifier should NOT be called since resolveImport returned candidates
-    expect(mockResolveBareSpecifier).not.toHaveBeenCalled();
-  });
 });

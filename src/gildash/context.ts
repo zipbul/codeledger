@@ -72,11 +72,6 @@ export type UpdateHeartbeatFn = (
   pid: number,
 ) => void;
 
-export type MakeExternalCoordinatorFn = (
-  packageDir: string,
-  project: string,
-) => { fullIndex(): Promise<IndexResult> };
-
 // ─── "Like" types for Pick-based constraints ────────────────────────
 
 export type DbStore = Pick<DbConnection, 'open' | 'close' | 'transaction'> & WatcherOwnerStore;
@@ -138,7 +133,6 @@ export interface GildashContext {
   readonly readFileFn: (filePath: string) => Promise<string>;
   readonly unlinkFn: (filePath: string) => Promise<void>;
   readonly existsSyncFn: (p: string) => boolean;
-  readonly makeExternalCoordinatorFn?: MakeExternalCoordinatorFn;
 
   // ─── Lifecycle DI (for healthcheck / promotion) ───────────────────
   readonly acquireWatcherRoleFn: AcquireWatcherRoleFn;

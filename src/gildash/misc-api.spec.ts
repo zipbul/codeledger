@@ -18,7 +18,6 @@ const {
   reindex,
   resolveSymbol,
   findPattern,
-  indexExternalPackages,
   getHeritageChain,
 } = await import('./misc-api');
 
@@ -52,7 +51,6 @@ function makeCtx(overrides?: Partial<GildashContext>): GildashContext {
     relationSearchFn: mock(() => []),
     patternSearchFn: mock(async () => []),
     existsSyncFn: mock(() => true),
-    makeExternalCoordinatorFn: undefined,
     ...overrides,
   } as unknown as GildashContext;
 }
@@ -407,82 +405,6 @@ describe('findPattern', () => {
       expect(result.data.type).toBe('search');
       expect(result.data.cause).toBe(error);
     }
-  });
-});
-
-// ─── indexExternalPackages ──────────────────────────────────────────
-
-describe('indexExternalPackages', () => {
-  it('should index package using makeExternalCoordinatorFn when available', async () => {
-    const indexResult = { indexed: 3 };
-    const makeCoord = mock((dir: string, proj: string) => ({
-      fullIndex: mock(async () => indexResult),
-    }));
-    const ctx = makeCtx({
-      makeExternalCoordinatorFn: makeCoord as any,
-      existsSyncFn: mock(() => true),
-    });
-
-    const result = await indexExternalPackages(ctx, ['lodash']);
-
-    expect(isErr(result)).toBe(false);
-    const results = result as any[];
-    expect(results).toHaveLength(1);
-    expect(results[0]).toBe(indexResult);
-    expect(makeCoord).toHaveBeenCalledWith('/project/node_modules/lodash', '@external/lodash');
-  });
-
-  it('should return err with type closed when ctx is closed', async () => {
-    const ctx = makeCtx({ closed: true });
-
-    const result = await indexExternalPackages(ctx, ['lodash']);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
-  });
-
-  it('should return err when role is not owner', async () => {
-    const ctx = makeCtx({ role: 'reader' as any });
-
-    const result = await indexExternalPackages(ctx, ['lodash']);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.message).toContain('not available for readers');
-  });
-
-  it('should return err with type validation when package dir does not exist', async () => {
-    const ctx = makeCtx({ existsSyncFn: mock(() => false) });
-
-    const result = await indexExternalPackages(ctx, ['nonexistent']);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('validation');
-      expect(result.data.message).toContain('nonexistent');
-    }
-  });
-
-  it('should return empty array when packages is empty', async () => {
-    const ctx = makeCtx();
-
-    const result = await indexExternalPackages(ctx, []);
-
-    expect(isErr(result)).toBe(false);
-    expect(result).toEqual([]);
-  });
-
-  it('should use IndexCoordinator fallback when makeExternalCoordinatorFn is not provided', async () => {
-    const ctx = makeCtx({
-      makeExternalCoordinatorFn: undefined,
-      existsSyncFn: mock(() => true),
-    });
-
-    const result = await indexExternalPackages(ctx, ['lodash']);
-
-    expect(isErr(result)).toBe(false);
-    const results = result as any[];
-    expect(results).toHaveLength(1);
-    expect(mockFullIndex).toHaveBeenCalledTimes(1);
   });
 });
 

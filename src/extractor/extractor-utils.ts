@@ -71,48 +71,6 @@ export function resolveImport(
   return [];
 }
 
-/**
- * Resolve a bare specifier (e.g. 'lodash', '@scope/pkg') to node_modules candidates.
- * Returns candidate .d.ts / .ts paths. Does NOT check file existence (pure, sync).
- */
-export function resolveBareSpecifier(
-  projectRoot: string,
-  importPath: string,
-): string[] {
-  // bare specifier 판별: 상대경로(.)도 절대경로(/)도 아닌 것
-  if (importPath.startsWith('.') || importPath.startsWith('/')) return [];
-
-  const nmDir = resolve(projectRoot, 'node_modules');
-  const candidates: string[] = [];
-
-  // 1. 직접 패키지 경로
-  const pkgDir = resolve(nmDir, importPath);
-  candidates.push(
-    resolve(pkgDir, 'index.d.ts'),
-    resolve(pkgDir, 'index.ts'),
-    resolve(pkgDir, 'index.d.mts'),
-  );
-
-  // 2. 서브패스: @scope/pkg/sub → node_modules/@scope/pkg/sub
-  if (importPath.includes('/')) {
-    const subPath = resolve(nmDir, importPath);
-    candidates.push(
-      subPath + '.d.ts',
-      subPath + '.ts',
-      subPath + '/index.d.ts',
-      subPath + '/index.ts',
-    );
-  }
-
-  // 3. @types 패키지 (scoped 패키지: @scope/pkg → @types/scope__pkg)
-  const typesName = importPath.startsWith('@')
-    ? importPath.replace('@', '').replace('/', '__')
-    : importPath;
-  candidates.push(resolve(nmDir, '@types', typesName, 'index.d.ts'));
-
-  return candidates;
-}
-
 export function buildImportMap(
   ast: Program,
   currentFilePath: string,

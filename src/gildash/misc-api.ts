@@ -1,12 +1,10 @@
 import { err, isErr, type Result } from '@zipbul/result';
-import path from 'node:path';
 import type { SymbolSearchResult } from '../search/symbol-search';
 import type { CodeRelation } from '../extractor/types';
 import type { IndexResult } from '../indexer/index-coordinator';
 import type { PatternMatch } from '../search/pattern-search';
 import type { GildashError } from '../errors';
 import { gildashError } from '../errors';
-import { IndexCoordinator } from '../indexer/index-coordinator';
 import type { GildashContext } from './context';
 import type { SymbolDiff, ResolvedSymbol, HeritageNode } from './types';
 import { invalidateGraphCache } from './graph-api';
@@ -143,48 +141,6 @@ export async function findPattern(
     return await ctx.patternSearchFn({ pattern, filePaths });
   } catch (e) {
     return err(gildashError('search', 'Gildash: findPattern failed', e));
-  }
-}
-
-/** Index TypeScript type declarations of node_modules packages. */
-export async function indexExternalPackages(
-  ctx: GildashContext,
-  packages: string[],
-  _opts?: { project?: string },
-): Promise<Result<IndexResult[], GildashError>> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
-  if (ctx.role !== 'owner') {
-    return err(gildashError('closed', 'Gildash: indexExternalPackages() is not available for readers'));
-  }
-  try {
-    const results: IndexResult[] = [];
-    for (const packageName of packages) {
-      const packageDir = path.resolve(ctx.projectRoot, 'node_modules', packageName);
-      if (!ctx.existsSyncFn(packageDir)) {
-        return err(gildashError('validation', `Gildash: package not found in node_modules: ${packageName}`));
-      }
-      const project = `@external/${packageName}`;
-      const coordinator = ctx.makeExternalCoordinatorFn
-        ? ctx.makeExternalCoordinatorFn(packageDir, project)
-        : new IndexCoordinator({
-            projectRoot: packageDir,
-            boundaries: [{ dir: '.', project }],
-            extensions: ['.d.ts'],
-            ignorePatterns: [],
-            dbConnection: ctx.db,
-            parseCache: ctx.parseCache,
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            fileRepo: ctx.fileRepo as any,
-            symbolRepo: ctx.symbolRepo,
-            relationRepo: ctx.relationRepo,
-            logger: ctx.logger,
-          });
-      const result = await coordinator.fullIndex();
-      results.push(result);
-    }
-    return results;
-  } catch (e) {
-    return err(gildashError('store', 'Gildash: indexExternalPackages failed', e));
   }
 }
 

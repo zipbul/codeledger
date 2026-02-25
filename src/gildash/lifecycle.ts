@@ -61,7 +61,6 @@ export interface GildashInternalOptions {
   loadTsconfigPathsFn?: typeof loadTsconfigPaths;
   readFileFn?: (filePath: string) => Promise<string>;
   unlinkFn?: (filePath: string) => Promise<void>;
-  makeExternalCoordinatorFn?: (packageDir: string, project: string) => { fullIndex(): Promise<IndexResult> };
   semanticLayerFactory?: (tsconfigPath: string) => Result<SemanticLayer, GildashError>;
 }
 
@@ -184,7 +183,7 @@ export async function initializeContext(
   const {
     projectRoot,
     extensions = ['.ts', '.mts', '.cts'],
-    ignorePatterns = [],
+    ignorePatterns = ['**/node_modules/**'],
     parseCacheCapacity = 500,
     logger = console,
     existsSyncFn = existsSync,
@@ -203,7 +202,6 @@ export async function initializeContext(
     relationSearchFn = defaultRelationSearch,
     patternSearchFn = defaultPatternSearch,
     loadTsconfigPathsFn = loadTsconfigPaths,
-    makeExternalCoordinatorFn,
     readFileFn = async (fp: string) => Bun.file(fp).text(),
     unlinkFn = async (fp: string) => { await Bun.file(fp).unlink(); },
     watchMode,
@@ -274,7 +272,6 @@ export async function initializeContext(
     readFileFn,
     unlinkFn,
     existsSyncFn,
-    makeExternalCoordinatorFn,
 
     acquireWatcherRoleFn: acquireWatcherRoleFnOpt,
     updateHeartbeatFn: updateHeartbeatFnOpt,
