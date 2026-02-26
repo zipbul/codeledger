@@ -1,5 +1,5 @@
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
-import { isErr } from '@zipbul/result';
+import { GildashError } from '../errors';
 import type { GildashContext } from './context';
 
 // ─── DependencyGraph mock ───────────────────────────────────────────
@@ -168,29 +168,26 @@ describe('getDependencies', () => {
 
     const result = getDependencies(ctx, 'a.ts', 'proj');
 
-    expect(isErr(result)).toBe(false);
     expect(result).toEqual(['b.ts', 'c.ts']);
   });
 
-  it('should return err with type closed when ctx is closed', () => {
+  it('should throw with type closed when ctx is closed', () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = getDependencies(ctx, 'a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => getDependencies(ctx, 'a.ts')).toThrow(GildashError);
   });
 
-  it('should catch exception and return err with cause', () => {
+  it('should catch exception and throw GildashError with cause', () => {
     const error = new Error('search fail');
     const ctx = makeCtx({ relationSearchFn: mock(() => { throw error; }) as any });
 
-    const result = getDependencies(ctx, 'a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBe(error);
+    try {
+      getDependencies(ctx, 'a.ts');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBe(error);
     }
   });
 
@@ -221,17 +218,13 @@ describe('getDependents', () => {
 
     const result = getDependents(ctx, 'a.ts', 'proj');
 
-    expect(isErr(result)).toBe(false);
     expect(result).toEqual(['x.ts', 'y.ts']);
   });
 
-  it('should return err with type closed when ctx is closed', () => {
+  it('should throw with type closed when ctx is closed', () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = getDependents(ctx, 'a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => getDependents(ctx, 'a.ts')).toThrow(GildashError);
   });
 });
 
@@ -244,31 +237,28 @@ describe('getAffected', () => {
 
     const result = await getAffected(ctx, ['a.ts'], 'proj');
 
-    expect(isErr(result)).toBe(false);
     expect(result).toEqual(['a.ts', 'b.ts']);
     expect(mockGetAffectedByChange).toHaveBeenCalledWith(['a.ts']);
   });
 
-  it('should return err with type closed when ctx is closed', async () => {
+  it('should throw with type closed when ctx is closed', async () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = await getAffected(ctx, ['a.ts']);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    await expect(getAffected(ctx, ['a.ts'])).rejects.toThrow(GildashError);
   });
 
-  it('should catch exception and return err with cause', async () => {
+  it('should catch exception and throw GildashError with cause', async () => {
     const error = new Error('affected fail');
     mockGetAffectedByChange.mockImplementation(() => { throw error; });
     const ctx = makeCtx();
 
-    const result = await getAffected(ctx, ['a.ts']);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBe(error);
+    try {
+      await getAffected(ctx, ['a.ts']);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBe(error);
     }
   });
 });
@@ -282,17 +272,13 @@ describe('hasCycle', () => {
 
     const result = await hasCycle(ctx, 'proj');
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(true);
   });
 
-  it('should return err with type closed when ctx is closed', async () => {
+  it('should throw with type closed when ctx is closed', async () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = await hasCycle(ctx);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    await expect(hasCycle(ctx)).rejects.toThrow(GildashError);
   });
 });
 
@@ -306,17 +292,13 @@ describe('getImportGraph', () => {
 
     const result = await getImportGraph(ctx, 'proj');
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(adj);
   });
 
-  it('should return err with type closed when ctx is closed', async () => {
+  it('should throw with type closed when ctx is closed', async () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = await getImportGraph(ctx);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    await expect(getImportGraph(ctx)).rejects.toThrow(GildashError);
   });
 });
 
@@ -329,18 +311,14 @@ describe('getTransitiveDependencies', () => {
 
     const result = await getTransitiveDependencies(ctx, 'a.ts', 'proj');
 
-    expect(isErr(result)).toBe(false);
     expect(result).toEqual(['b.ts', 'c.ts']);
     expect(mockGetTransitiveDependencies).toHaveBeenCalledWith('a.ts');
   });
 
-  it('should return err with type closed when ctx is closed', async () => {
+  it('should throw with type closed when ctx is closed', async () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = await getTransitiveDependencies(ctx, 'a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    await expect(getTransitiveDependencies(ctx, 'a.ts')).rejects.toThrow(GildashError);
   });
 });
 
@@ -354,17 +332,13 @@ describe('getCyclePaths', () => {
 
     const result = await getCyclePaths(ctx, 'proj');
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(paths);
   });
 
-  it('should return err with type closed when ctx is closed', async () => {
+  it('should throw with type closed when ctx is closed', async () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = await getCyclePaths(ctx);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    await expect(getCyclePaths(ctx)).rejects.toThrow(GildashError);
   });
 
   it('should forward options to getCyclePaths', async () => {
@@ -387,20 +361,15 @@ describe('getFanMetrics', () => {
 
     const result = await getFanMetrics(ctx, 'a.ts', 'proj');
 
-    expect(isErr(result)).toBe(false);
-    const metrics = result as any;
-    expect(metrics.filePath).toBe('a.ts');
-    expect(metrics.fanIn).toBe(2);
-    expect(metrics.fanOut).toBe(1);
+    expect(result.filePath).toBe('a.ts');
+    expect(result.fanIn).toBe(2);
+    expect(result.fanOut).toBe(1);
   });
 
-  it('should return err with type closed when ctx is closed', async () => {
+  it('should throw with type closed when ctx is closed', async () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = await getFanMetrics(ctx, 'a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    await expect(getFanMetrics(ctx, 'a.ts')).rejects.toThrow(GildashError);
   });
 
   it('should return fanIn=0 and fanOut=0 when graph has no edges', async () => {
@@ -410,28 +379,24 @@ describe('getFanMetrics', () => {
 
     const result = await getFanMetrics(ctx, 'lonely.ts');
 
-    expect(isErr(result)).toBe(false);
-    const metrics = result as any;
-    expect(metrics.fanIn).toBe(0);
-    expect(metrics.fanOut).toBe(0);
+    expect(result.fanIn).toBe(0);
+    expect(result.fanOut).toBe(0);
   });
 });
 
 // ─── State Transition ───────────────────────────────────────────────
 
 describe('graph-api state transitions', () => {
-  it('should return err from getDependencies after ctx transitions open to closed', () => {
+  it('should throw from getDependencies after ctx transitions open to closed', () => {
     const searchFn = mock(() => []);
     const ctx = makeCtx({ relationSearchFn: searchFn as any });
 
     const first = getDependencies(ctx, 'a.ts');
-    expect(isErr(first)).toBe(false);
+    expect(first).toEqual([]);
 
     ctx.closed = true;
 
-    const second = getDependencies(ctx, 'a.ts');
-    expect(isErr(second)).toBe(true);
-    if (isErr(second)) expect(second.data.type).toBe('closed');
+    expect(() => getDependencies(ctx, 'a.ts')).toThrow(GildashError);
   });
 });
 

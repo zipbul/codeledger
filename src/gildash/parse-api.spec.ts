@@ -1,6 +1,6 @@
 import { describe, it, expect, mock } from 'bun:test';
-import { err, isErr } from '@zipbul/result';
-import { gildashError } from '../errors';
+import { err } from '@zipbul/result';
+import { GildashError, gildashError } from '../errors';
 import type { GildashContext } from './context';
 import type { ParsedFile } from '../parser/types';
 import { parseSource, batchParse, getParsedAst } from './parse-api';
@@ -39,7 +39,6 @@ describe('parseSource', () => {
 
     const result = parseSource(ctx, '/src/a.ts', 'const x = 1;', options);
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(parsed);
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn).toHaveBeenCalledWith('/src/a.ts', 'const x = 1;', options);
@@ -60,7 +59,7 @@ describe('parseSource', () => {
     expect(cacheSet).toHaveBeenCalledWith('/src/b.ts', parsed);
   });
 
-  it('should return err and skip parseSourceFn and parseCache.set when closed', () => {
+  it('should throw GildashError and skip parseSourceFn and parseCache.set when closed', () => {
     const fn = mock(() => makeParsed());
     const cacheSet = mock(() => {});
     const ctx = makeCtx({
@@ -69,18 +68,13 @@ describe('parseSource', () => {
       parseCache: { set: cacheSet, get: mock(() => undefined), invalidate: mock(() => {}) } as any,
     });
 
-    const result = parseSource(ctx, '/src/a.ts', 'code');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('closed');
-      expect(result.data.message).toBe('Gildash: instance is closed');
-    }
+    expect(() => parseSource(ctx, '/src/a.ts', 'code')).toThrow(GildashError);
+    expect(() => parseSource(ctx, '/src/a.ts', 'code')).toThrow(/instance is closed/);
     expect(fn).toHaveBeenCalledTimes(0);
     expect(cacheSet).toHaveBeenCalledTimes(0);
   });
 
-  it('should return err and skip parseCache.set when parseSourceFn returns err', () => {
+  it('should throw GildashError and skip parseCache.set when parseSourceFn returns err', () => {
     const parseErr = err(gildashError('parse', 'syntax error'));
     const fn = mock(() => parseErr);
     const cacheSet = mock(() => {});
@@ -89,13 +83,8 @@ describe('parseSource', () => {
       parseCache: { set: cacheSet, get: mock(() => undefined), invalidate: mock(() => {}) } as any,
     });
 
-    const result = parseSource(ctx, '/src/bad.ts', 'invalid{');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('parse');
-      expect(result.data.message).toBe('syntax error');
-    }
+    expect(() => parseSource(ctx, '/src/bad.ts', 'invalid{')).toThrow(GildashError);
+    expect(() => parseSource(ctx, '/src/bad.ts', 'invalid{')).toThrow(/syntax error/);
     expect(cacheSet).toHaveBeenCalledTimes(0);
   });
 
@@ -108,19 +97,15 @@ describe('parseSource', () => {
     expect(fn).toHaveBeenCalledWith('/src/a.ts', 'code', undefined);
   });
 
-  it('should return err after ctx transitions from open to closed', () => {
+  it('should throw GildashError after ctx transitions from open to closed', () => {
     const ctx = makeCtx();
 
     const first = parseSource(ctx, '/src/a.ts', 'code');
-    expect(isErr(first)).toBe(false);
+    expect(first).toBeDefined();
 
     ctx.closed = true;
 
-    const second = parseSource(ctx, '/src/a.ts', 'code');
-    expect(isErr(second)).toBe(true);
-    if (isErr(second)) {
-      expect(second.data.type).toBe('closed');
-    }
+    expect(() => parseSource(ctx, '/src/a.ts', 'code')).toThrow(GildashError);
   });
 });
 
@@ -137,10 +122,8 @@ describe('batchParse', () => {
     });
     const ctx = makeCtx({ readFileFn: readFn as any, parseSourceFn: parseFn as any });
 
-    const result = await batchParse(ctx, ['/src/a.ts', '/src/b.ts']);
+    const map = await batchParse(ctx, ['/src/a.ts', '/src/b.ts']);
 
-    expect(isErr(result)).toBe(false);
-    const map = result as Map<string, ParsedFile>;
     expect(map.size).toBe(2);
     expect(map.get('/src/a.ts')).toBe(parsedA);
     expect(map.get('/src/b.ts')).toBe(parsedB);
@@ -157,7 +140,7 @@ describe('batchParse', () => {
     expect(parseFn).toHaveBeenCalledWith('/src/a.ts', 'file content', options);
   });
 
-  it('should return err and skip readFileFn and parseSourceFn when closed', async () => {
+  it('should throw GildashError and skip readFileFn and parseSourceFn when closed', async () => {
     const readFn = mock(async () => 'code');
     const parseFn = mock(() => makeParsed());
     const ctx = makeCtx({
@@ -166,12 +149,7 @@ describe('batchParse', () => {
       parseSourceFn: parseFn as any,
     });
 
-    const result = await batchParse(ctx, ['/src/a.ts']);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('closed');
-    }
+    await expect(batchParse(ctx, ['/src/a.ts'])).rejects.toThrow(GildashError);
     expect(readFn).toHaveBeenCalledTimes(0);
     expect(parseFn).toHaveBeenCalledTimes(0);
   });
@@ -184,10 +162,8 @@ describe('batchParse', () => {
     const parseFn = mock(() => makeParsed());
     const ctx = makeCtx({ readFileFn: readFn as any, parseSourceFn: parseFn as any });
 
-    const result = await batchParse(ctx, ['/src/bad.ts', '/src/good.ts']);
+    const map = await batchParse(ctx, ['/src/bad.ts', '/src/good.ts']);
 
-    expect(isErr(result)).toBe(false);
-    const map = result as Map<string, ParsedFile>;
     expect(map.size).toBe(1);
     expect(map.has('/src/bad.ts')).toBe(false);
     expect(map.has('/src/good.ts')).toBe(true);
@@ -201,10 +177,8 @@ describe('batchParse', () => {
     });
     const ctx = makeCtx({ readFileFn: readFn as any, parseSourceFn: parseFn as any });
 
-    const result = await batchParse(ctx, ['/src/bad.ts', '/src/good.ts']);
+    const map = await batchParse(ctx, ['/src/bad.ts', '/src/good.ts']);
 
-    expect(isErr(result)).toBe(false);
-    const map = result as Map<string, ParsedFile>;
     expect(map.size).toBe(1);
     expect(map.has('/src/bad.ts')).toBe(false);
     expect(map.has('/src/good.ts')).toBe(true);
@@ -213,10 +187,8 @@ describe('batchParse', () => {
   it('should return empty Map when filePaths is empty', async () => {
     const ctx = makeCtx();
 
-    const result = await batchParse(ctx, []);
+    const map = await batchParse(ctx, []);
 
-    expect(isErr(result)).toBe(false);
-    const map = result as Map<string, ParsedFile>;
     expect(map.size).toBe(0);
   });
 
@@ -232,27 +204,21 @@ describe('batchParse', () => {
     });
     const ctx = makeCtx({ readFileFn: readFn as any, parseSourceFn: parseFn as any });
 
-    const result = await batchParse(ctx, ['/src/read-fail.ts', '/src/parse-fail.ts', '/src/ok.ts']);
+    const map = await batchParse(ctx, ['/src/read-fail.ts', '/src/parse-fail.ts', '/src/ok.ts']);
 
-    expect(isErr(result)).toBe(false);
-    const map = result as Map<string, ParsedFile>;
     expect(map.size).toBe(1);
     expect(map.has('/src/ok.ts')).toBe(true);
   });
 
-  it('should return err after ctx transitions from open to closed', async () => {
+  it('should throw GildashError after ctx transitions from open to closed', async () => {
     const ctx = makeCtx();
 
     const first = await batchParse(ctx, []);
-    expect(isErr(first)).toBe(false);
+    expect(first.size).toBe(0);
 
     ctx.closed = true;
 
-    const second = await batchParse(ctx, []);
-    expect(isErr(second)).toBe(true);
-    if (isErr(second)) {
-      expect(second.data.type).toBe('closed');
-    }
+    await expect(batchParse(ctx, [])).rejects.toThrow(GildashError);
   });
 });
 

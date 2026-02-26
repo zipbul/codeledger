@@ -1,10 +1,8 @@
-import { err, isErr, type Result } from '@zipbul/result';
 import type { SymbolSearchResult } from '../search/symbol-search';
 import type { CodeRelation } from '../extractor/types';
 import type { IndexResult } from '../indexer/index-coordinator';
 import type { PatternMatch } from '../search/pattern-search';
-import type { GildashError } from '../errors';
-import { gildashError } from '../errors';
+import { GildashError } from '../errors';
 import type { GildashContext } from './context';
 import type { SymbolDiff, ResolvedSymbol, HeritageNode } from './types';
 import { invalidateGraphCache } from './graph-api';
@@ -52,17 +50,18 @@ export function onIndexed(
 /** Trigger a full re-index of all tracked files. */
 export async function reindex(
   ctx: GildashContext,
-): Promise<Result<IndexResult, GildashError>> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): Promise<IndexResult> {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   if (!ctx.coordinator) {
-    return err(gildashError('closed', 'Gildash: reindex() is not available for readers'));
+    throw new GildashError('closed', 'Gildash: reindex() is not available for readers');
   }
   try {
     const result = await ctx.coordinator.fullIndex();
     invalidateGraphCache(ctx);
     return result;
   } catch (e) {
-    return err(gildashError('index', 'Gildash: reindex failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('index', 'Gildash: reindex failed', { cause: e });
   }
 }
 
@@ -72,8 +71,8 @@ export function resolveSymbol(
   symbolName: string,
   filePath: string,
   project?: string,
-): Result<ResolvedSymbol, GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): ResolvedSymbol {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   const effectiveProject = project ?? ctx.defaultProject;
   const visited = new Set<string>();
   const chain: Array<{ filePath: string; exportedAs: string }> = [];
@@ -84,7 +83,7 @@ export function resolveSymbol(
   for (;;) {
     const key = `${currentFile}::${currentName}`;
     if (visited.has(key)) {
-      return err(gildashError('search', 'Gildash: resolveSymbol detected circular re-export chain'));
+      return { originalName: currentName, originalFilePath: currentFile, reExportChain: chain, circular: true };
     }
     visited.add(key);
 
@@ -116,7 +115,7 @@ export function resolveSymbol(
     }
 
     if (!nextFile || !nextName) {
-      return { originalName: currentName, originalFilePath: currentFile, reExportChain: chain };
+      return { originalName: currentName, originalFilePath: currentFile, reExportChain: chain, circular: false };
     }
 
     chain.push({ filePath: currentFile, exportedAs: currentName });
@@ -130,8 +129,8 @@ export async function findPattern(
   ctx: GildashContext,
   pattern: string,
   opts?: { filePaths?: string[]; project?: string },
-): Promise<Result<PatternMatch[], GildashError>> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): Promise<PatternMatch[]> {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     const effectiveProject = opts?.project ?? ctx.defaultProject;
     const filePaths: string[] = opts?.filePaths
@@ -140,7 +139,8 @@ export async function findPattern(
 
     return await ctx.patternSearchFn({ pattern, filePaths });
   } catch (e) {
-    return err(gildashError('search', 'Gildash: findPattern failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: findPattern failed', { cause: e });
   }
 }
 
@@ -150,8 +150,8 @@ export async function getHeritageChain(
   symbolName: string,
   filePath: string,
   project?: string,
-): Promise<Result<HeritageNode, GildashError>> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): Promise<HeritageNode> {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     const proj = project ?? ctx.defaultProject;
     const visited = new Set<string>();
@@ -183,6 +183,7 @@ export async function getHeritageChain(
 
     return buildNode(symbolName, filePath);
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getHeritageChain failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getHeritageChain failed', { cause: e });
   }
 }

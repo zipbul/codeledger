@@ -1,7 +1,6 @@
 import { describe, it, expect, mock } from 'bun:test';
-import { err, isErr } from '@zipbul/result';
 import path from 'node:path';
-import { gildashError } from '../errors';
+import { GildashError } from '../errors';
 import type { GildashContext } from './context';
 import {
   resolveSymbolPosition,
@@ -151,56 +150,47 @@ describe('getResolvedType', () => {
 
     const result = getResolvedType(ctx, 'Foo', '/project/src/a.ts');
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(typeResult as any);
   });
 
-  it('should return err with type closed when ctx is closed', () => {
+  it('should throw with type closed when ctx is closed', () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = getResolvedType(ctx, 'Foo', '/project/src/a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('closed');
-    }
+    expect(() => getResolvedType(ctx, 'Foo', '/project/src/a.ts')).toThrow(GildashError);
   });
 
-  it('should return err with type semantic when semanticLayer is null', () => {
+  it('should throw with type semantic when semanticLayer is null', () => {
     const ctx = makeCtx({ semanticLayer: null });
 
-    const result = getResolvedType(ctx, 'Foo', '/project/src/a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('semantic');
-      expect(result.data.message).toContain('semantic layer is not enabled');
+    expect(() => getResolvedType(ctx, 'Foo', '/project/src/a.ts')).toThrow(GildashError);
+    try {
+      getResolvedType(ctx, 'Foo', '/project/src/a.ts');
+    } catch (e) {
+      expect((e as GildashError).type).toBe('semantic');
+      expect((e as GildashError).message).toContain('semantic layer is not enabled');
     }
   });
 
-  it('should return err with type search when resolveSymbolPosition returns null', () => {
+  it('should return null when resolveSymbolPosition returns null', () => {
     const ctx = makeCtx({ symbolSearchFn: mock(() => []) as any });
 
     const result = getResolvedType(ctx, 'Missing', '/project/src/a.ts');
 
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.message).toContain("'Missing'");
-    }
+    expect(result).toBeNull();
   });
 
-  it('should catch exception and return err with cause', () => {
+  it('should catch exception and throw GildashError with cause', () => {
     const error = new Error('boom');
     const layer = makeSemanticLayer({ collectTypeAt: mock(() => { throw error; }) });
     const ctx = makeCtx({ semanticLayer: layer as any });
 
-    const result = getResolvedType(ctx, 'Foo', '/project/src/a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBe(error);
+    try {
+      getResolvedType(ctx, 'Foo', '/project/src/a.ts');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBe(error);
     }
   });
 });
@@ -215,49 +205,39 @@ describe('getSemanticReferences', () => {
 
     const result = getSemanticReferences(ctx, 'Foo', '/project/src/a.ts');
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(refs as any);
   });
 
-  it('should return err with type closed when ctx is closed', () => {
+  it('should throw with type closed when ctx is closed', () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = getSemanticReferences(ctx, 'Foo', '/project/src/a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('closed');
-    }
+    expect(() => getSemanticReferences(ctx, 'Foo', '/project/src/a.ts')).toThrow(GildashError);
   });
 
-  it('should catch exception and return err with cause', () => {
+  it('should catch exception and throw GildashError with cause', () => {
     const error = new Error('ref fail');
     const layer = makeSemanticLayer({ findReferences: mock(() => { throw error; }) });
     const ctx = makeCtx({ semanticLayer: layer as any });
 
-    const result = getSemanticReferences(ctx, 'Foo', '/project/src/a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBe(error);
+    try {
+      getSemanticReferences(ctx, 'Foo', '/project/src/a.ts');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBe(error);
     }
   });
 
-  it('should return err when resolveSymbolPosition returns null', () => {
+  it('should throw when resolveSymbolPosition returns null', () => {
     const layer = makeSemanticLayer();
     const ctx = makeCtx({
       semanticLayer: layer as any,
       symbolSearchFn: mock(() => []) as any,
     });
 
-    const result = getSemanticReferences(ctx, 'Missing', '/project/src/a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.message).toContain('Missing');
-    }
+    expect(() => getSemanticReferences(ctx, 'Missing', '/project/src/a.ts')).toThrow(GildashError);
+    expect(() => getSemanticReferences(ctx, 'Missing', '/project/src/a.ts')).toThrow(/Missing/);
   });
 });
 
@@ -271,32 +251,27 @@ describe('getImplementations', () => {
 
     const result = getImplementations(ctx, 'Foo', '/project/src/a.ts');
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(impls as any);
   });
 
-  it('should return err with type closed when ctx is closed', () => {
+  it('should throw with type closed when ctx is closed', () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = getImplementations(ctx, 'Foo', '/project/src/a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('closed');
-    }
+    expect(() => getImplementations(ctx, 'Foo', '/project/src/a.ts')).toThrow(GildashError);
   });
 
-  it('should catch exception and return err with cause', () => {
+  it('should catch exception and throw GildashError with cause', () => {
     const error = new Error('impl fail');
     const layer = makeSemanticLayer({ findImplementations: mock(() => { throw error; }) });
     const ctx = makeCtx({ semanticLayer: layer as any });
 
-    const result = getImplementations(ctx, 'Foo', '/project/src/a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBe(error);
+    try {
+      getImplementations(ctx, 'Foo', '/project/src/a.ts');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBe(error);
     }
   });
 });
@@ -311,43 +286,33 @@ describe('getSemanticModuleInterface', () => {
 
     const result = getSemanticModuleInterface(ctx, '/project/src/a.ts');
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(iface as any);
   });
 
-  it('should return err with type closed when ctx is closed', () => {
+  it('should throw with type closed when ctx is closed', () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = getSemanticModuleInterface(ctx, '/project/src/a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('closed');
-    }
+    expect(() => getSemanticModuleInterface(ctx, '/project/src/a.ts')).toThrow(GildashError);
   });
 
-  it('should return err with type semantic when semanticLayer is null', () => {
+  it('should throw with type semantic when semanticLayer is null', () => {
     const ctx = makeCtx({ semanticLayer: null });
 
-    const result = getSemanticModuleInterface(ctx, '/project/src/a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('semantic');
-    }
+    expect(() => getSemanticModuleInterface(ctx, '/project/src/a.ts')).toThrow(GildashError);
   });
 
-  it('should catch exception and return err with cause', () => {
+  it('should catch exception and throw GildashError with cause', () => {
     const error = new Error('iface fail');
     const layer = makeSemanticLayer({ getModuleInterface: mock(() => { throw error; }) });
     const ctx = makeCtx({ semanticLayer: layer as any });
 
-    const result = getSemanticModuleInterface(ctx, '/project/src/a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBe(error);
+    try {
+      getSemanticModuleInterface(ctx, '/project/src/a.ts');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBe(error);
     }
   });
 });
@@ -368,18 +333,14 @@ describe('semantic-api state transitions', () => {
     expect(second).toBeNull();
   });
 
-  it('should return err from getResolvedType after ctx transitions from open to closed', () => {
+  it('should throw from getResolvedType after ctx transitions from open to closed', () => {
     const ctx = makeCtx();
 
     const first = getResolvedType(ctx, 'Foo', '/project/src/a.ts');
-    expect(isErr(first)).toBe(false);
+    expect(first).not.toBeNull();
 
     ctx.closed = true;
 
-    const second = getResolvedType(ctx, 'Foo', '/project/src/a.ts');
-    expect(isErr(second)).toBe(true);
-    if (isErr(second)) {
-      expect(second.data.type).toBe('closed');
-    }
+    expect(() => getResolvedType(ctx, 'Foo', '/project/src/a.ts')).toThrow(GildashError);
   });
 });

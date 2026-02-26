@@ -1,11 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, mock } from 'bun:test';
-import { isErr } from '@zipbul/result';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Gildash } from '../src/gildash';
 import type { FullSymbol } from '../src/gildash';
+import { GildashError } from '../src/errors';
 import { DATA_DIR, DB_FILE } from '../src/constants';
 
 // ── Fixture Helpers ────────────────────────────────────────────────────────
@@ -122,20 +122,11 @@ async function createRichProject(root: string): Promise<void> {
 }
 
 async function openGildash(projectRoot: string): Promise<Gildash> {
-  const result = await Gildash.open({
+  return Gildash.open({
     projectRoot,
     extensions: ['.ts'],
     watchMode: false,
   } as any);
-  if (isErr(result)) {
-    const e = (result as any).data;
-    const cause = e.cause;
-    let causeMsg = '';
-    if (cause instanceof Error) causeMsg = `${cause.message}\n${cause.stack}`;
-    else if (cause) causeMsg = JSON.stringify(cause);
-    throw new Error(`Failed to open: ${e.message} | cause: ${causeMsg}`);
-  }
-  return result as Gildash;
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
@@ -160,8 +151,7 @@ describe('Gildash integration', () => {
       expect(g.role).toBe('owner');
 
       const files = g.listIndexedFiles();
-      if (isErr(files)) throw (files as any).data;
-      expect((files as any[]).length).toBeGreaterThan(0);
+      expect(files.length).toBeGreaterThan(0);
 
       await g.close();
     });
@@ -178,24 +168,20 @@ describe('Gildash integration', () => {
 
     it('should return validation error when projectRoot is a relative path', async () => {
       tmpDir = await mkdtemp(join(tmpdir(), 'gildash-it-'));
-      const result = await Gildash.open({
+      await expect(Gildash.open({
         projectRoot: 'relative/path',
         extensions: ['.ts'],
         watchMode: false,
-      } as any);
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('validation');
+      } as any)).rejects.toThrow(GildashError);
     });
 
     it('should return validation error when projectRoot does not exist', async () => {
       tmpDir = await mkdtemp(join(tmpdir(), 'gildash-it-'));
-      const result = await Gildash.open({
+      await expect(Gildash.open({
         projectRoot: join(tmpDir, 'nonexistent'),
         extensions: ['.ts'],
         watchMode: false,
-      } as any);
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('validation');
+      } as any)).rejects.toThrow(GildashError);
     });
 
     it('should delete database files when close is called with cleanup option', async () => {
@@ -217,9 +203,8 @@ describe('Gildash integration', () => {
       await writeFile(join(tmpDir, 'src', 'index.ts'), 'export const x = 1;');
 
       const g = await openGildash(tmpDir);
-      const stats = g.getStats();
       // Should not error even without package.json
-      expect(isErr(stats)).toBe(false);
+      g.getStats();
       await g.close();
     });
 
@@ -228,11 +213,9 @@ describe('Gildash integration', () => {
       await createRichProject(tmpDir);
 
       const g = await openGildash(tmpDir);
-      const r1 = await g.close();
-      const r2 = await g.close();
+      await g.close();
+      await g.close();
       // Both should succeed (second is no-op)
-      expect(isErr(r1 as any)).not.toBe(true);
-      expect(isErr(r2 as any)).not.toBe(true);
     });
   });
 
@@ -256,7 +239,6 @@ describe('Gildash integration', () => {
     it('should parse TypeScript source and store result in cache', () => {
       const code = 'export function greet(name: string): string { return `Hello ${name}`; }';
       const parsed = g.parseSource('/virtual/test.ts', code);
-      expect(isErr(parsed)).toBe(false);
 
       const cached = g.getParsedAst('/virtual/test.ts');
       expect(cached).toBeDefined();
@@ -270,12 +252,9 @@ describe('Gildash integration', () => {
         'export const MY_CONST = 42;',
       ].join('\n');
       const parsed = g.parseSource('/virtual/syms.ts', code);
-      if (isErr(parsed)) throw (parsed as any).data;
 
-      const symbols = g.extractSymbols(parsed as any);
-      if (isErr(symbols)) throw (symbols as any).data;
-
-      const names = (symbols as any[]).map((s: any) => s.name);
+      const symbols = g.extractSymbols(parsed);
+      const names = symbols.map((s: any) => s.name);
       expect(names).toContain('myFn');
       expect(names).toContain('MyClass');
       expect(names).toContain('MY_CONST');
@@ -284,12 +263,9 @@ describe('Gildash integration', () => {
     it('should extract import and call relations from a parsed file', () => {
       const code = "import { helper } from './utils';\nexport function run() { helper(1); }";
       const parsed = g.parseSource('/virtual/rels.ts', code);
-      if (isErr(parsed)) throw (parsed as any).data;
 
-      const relations = g.extractRelations(parsed as any);
-      if (isErr(relations)) throw (relations as any).data;
-
-      const types = (relations as any[]).map((r: any) => r.type);
+      const relations = g.extractRelations(parsed);
+      const types = relations.map((r: any) => r.type);
       expect(types).toContain('imports');
     });
 
@@ -328,33 +304,25 @@ describe('Gildash integration', () => {
 
     it('should find indexed function symbols with text and kind filter', () => {
       const result = g.searchSymbols({ text: 'helper', kind: 'function' });
-      if (isErr(result)) throw (result as any).data;
-      const arr = result as any[];
-      expect(arr.length).toBeGreaterThanOrEqual(1);
-      expect(arr.some((s: any) => s.name === 'helper' && s.kind === 'function')).toBe(true);
+      expect(result.length).toBeGreaterThanOrEqual(1);
+      expect(result.some((s: any) => s.name === 'helper' && s.kind === 'function')).toBe(true);
     });
 
     it('should find imports relations via searchRelations', () => {
       const result = g.searchRelations({ type: 'imports' });
-      if (isErr(result)) throw (result as any).data;
-      const arr = result as any[];
-      expect(arr.length).toBeGreaterThan(0);
-      expect(arr.every((r: any) => r.type === 'imports')).toBe(true);
+      expect(result.length).toBeGreaterThan(0);
+      expect(result.every((r: any) => r.type === 'imports')).toBe(true);
     });
 
     it('should find symbols across all projects with searchAllSymbols', () => {
       const result = g.searchAllSymbols({ text: 'App' });
-      if (isErr(result)) throw (result as any).data;
-      const arr = result as any[];
-      expect(arr.some((s: any) => s.name === 'App')).toBe(true);
+      expect(result.some((s: any) => s.name === 'App')).toBe(true);
     });
 
     it('should list all indexed files for the project', () => {
       const result = g.listIndexedFiles();
-      if (isErr(result)) throw (result as any).data;
-      const arr = result as any[];
-      expect(arr.length).toBeGreaterThan(0);
-      const paths = arr.map((f: any) => f.filePath);
+      expect(result.length).toBeGreaterThan(0);
+      const paths = result.map((f: any) => f.filePath);
       expect(paths.some((p: string) => p.includes('utils.ts'))).toBe(true);
       expect(paths.some((p: string) => p.includes('app.ts'))).toBe(true);
     });
@@ -365,9 +333,7 @@ describe('Gildash integration', () => {
       const inst = await openGildash(dir);
       await inst.close();
 
-      const result = inst.searchSymbols({ text: 'helper' });
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      expect(() => inst.searchSymbols({ text: 'helper' })).toThrow(GildashError);
 
       await rm(dir, { recursive: true, force: true });
     });
@@ -393,56 +359,43 @@ describe('Gildash integration', () => {
     it('should return direct import list via getDependencies', () => {
       // src/app.ts imports from utils and models
       const result = g.getDependencies('src/app.ts');
-      if (isErr(result)) throw (result as any).data;
-      const arr = result as string[];
-      expect(arr.length).toBeGreaterThanOrEqual(1);
-      expect(arr.some((p: string) => p.includes('utils'))).toBe(true);
+      expect(result.length).toBeGreaterThanOrEqual(1);
+      expect(result.some((p: string) => p.includes('utils'))).toBe(true);
     });
 
     it('should return files that import a given file via getDependents', () => {
       // src/utils.ts is imported by app.ts, index.ts, re-export.ts
       const result = g.getDependents('src/utils.ts');
-      if (isErr(result)) throw (result as any).data;
-      const arr = result as string[];
-      expect(arr.length).toBeGreaterThanOrEqual(1);
-      expect(arr.some((p: string) => p.includes('app'))).toBe(true);
+      expect(result.length).toBeGreaterThanOrEqual(1);
+      expect(result.some((p: string) => p.includes('app'))).toBe(true);
     });
 
     it('should return transitively affected files via getAffected', async () => {
       // Changing utils.ts should affect app.ts (imports utils) and index.ts (re-exports from app/utils)
       const result = await g.getAffected(['src/utils.ts']);
-      if (isErr(result)) throw (result as any).data;
-      const arr = result as string[];
-      expect(arr.length).toBeGreaterThanOrEqual(1);
+      expect(result.length).toBeGreaterThanOrEqual(1);
     });
 
     it('should return adjacency list from getImportGraph', async () => {
       const result = await g.getImportGraph();
-      if (isErr(result)) throw (result as any).data;
-      const graph = result as Map<string, string[]>;
-      expect(graph.size).toBeGreaterThan(0);
+      expect(result.size).toBeGreaterThan(0);
       // app.ts should have edges
-      const appEdges = Array.from(graph.entries()).find(([k]) => k.includes('app'));
+      const appEdges = Array.from(result.entries()).find(([k]) => k.includes('app'));
       expect(appEdges).toBeDefined();
     });
 
     it('should return transitive dependencies via getTransitiveDependencies', async () => {
       // app.ts → utils.ts, models.ts (direct); no further transitive from those
       const result = await g.getTransitiveDependencies('src/app.ts');
-      if (isErr(result)) throw (result as any).data;
-      const arr = result as string[];
-      expect(arr.length).toBeGreaterThanOrEqual(1);
-      expect(arr.some((p: string) => p.includes('utils'))).toBe(true);
+      expect(result.length).toBeGreaterThanOrEqual(1);
+      expect(result.some((p: string) => p.includes('utils'))).toBe(true);
     });
 
     it('should detect cycle and return cycle paths when circular imports exist', async () => {
       const cycleResult = await g.hasCycle();
-      if (isErr(cycleResult)) throw (cycleResult as any).data;
       expect(cycleResult).toBe(true);
 
-      const pathsResult = await g.getCyclePaths();
-      if (isErr(pathsResult)) throw (pathsResult as any).data;
-      const paths = pathsResult as string[][];
+      const paths = await g.getCyclePaths();
       expect(paths.length).toBeGreaterThanOrEqual(1);
       // One cycle should involve cycle-a and cycle-b
       const cyclePathFlat = paths.flat();
@@ -452,8 +405,7 @@ describe('Gildash integration', () => {
 
     it('should return empty array when getAffected receives empty changedFiles', async () => {
       const result = await g.getAffected([]);
-      if (isErr(result)) throw (result as any).data;
-      expect(result as string[]).toEqual([]);
+      expect(result).toEqual([]);
     });
   });
 
@@ -476,7 +428,7 @@ describe('Gildash integration', () => {
 
     it('should return full symbol details including members for a class', () => {
       const result = g.getFullSymbol('Base', 'src/models.ts');
-      if (isErr(result)) throw (result as any).data;
+      expect(result).not.toBeNull();
       const full = result as FullSymbol;
       expect(full.name).toBe('Base');
       expect(full.kind).toBe('class');
@@ -488,35 +440,28 @@ describe('Gildash integration', () => {
 
     it('should return search error when getFullSymbol queries a non-existent symbol', () => {
       const result = g.getFullSymbol('NonExistent', 'src/models.ts');
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      expect(result).toBeNull();
     });
 
     it('should return file statistics with lineCount and symbolCount', () => {
       const result = g.getFileStats('src/utils.ts');
-      if (isErr(result)) throw (result as any).data;
-      const stats = result as any;
-      expect(stats.filePath).toBe('src/utils.ts');
-      expect(stats.lineCount).toBeGreaterThan(0);
-      expect(stats.symbolCount).toBeGreaterThanOrEqual(2); // helper + MAGIC
-      expect(stats.size).toBeGreaterThan(0);
+      expect(result.filePath).toBe('src/utils.ts');
+      expect(result.lineCount).toBeGreaterThan(0);
+      expect(result.symbolCount).toBeGreaterThanOrEqual(2); // helper + MAGIC
+      expect(result.size).toBeGreaterThan(0);
     });
 
     it('should return search error when getFileStats queries a non-indexed file', () => {
-      const result = g.getFileStats('src/nonexistent.ts');
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      expect(() => g.getFileStats('src/nonexistent.ts')).toThrow(GildashError);
     });
 
     it('should return fan-in and fan-out metrics via getFanMetrics', async () => {
       const result = await g.getFanMetrics('src/utils.ts');
-      if (isErr(result)) throw (result as any).data;
-      const metrics = result as any;
-      expect(metrics.filePath).toBe('src/utils.ts');
+      expect(result.filePath).toBe('src/utils.ts');
       // utils.ts is imported by several files → fanIn > 0
-      expect(metrics.fanIn).toBeGreaterThanOrEqual(1);
+      expect(result.fanIn).toBeGreaterThanOrEqual(1);
       // utils.ts doesn't import anything → fanOut = 0
-      expect(metrics.fanOut).toBe(0);
+      expect(result.fanOut).toBe(0);
     });
 
     it('should detect added, removed, and modified symbols via diffSymbols', () => {
@@ -560,57 +505,45 @@ describe('Gildash integration', () => {
 
     it('should return resolved symbol immediately for a direct export with no re-export chain', () => {
       const result = g.resolveSymbol('helper', 'src/utils.ts');
-      if (isErr(result)) throw (result as any).data;
-      const resolved = result as any;
-      expect(resolved.originalName).toBe('helper');
-      expect(resolved.originalFilePath).toBe('src/utils.ts');
-      expect(resolved.reExportChain).toEqual([]);
+      expect(result.originalName).toBe('helper');
+      expect(result.originalFilePath).toBe('src/utils.ts');
+      expect(result.reExportChain).toEqual([]);
     });
 
     it('should follow one-hop re-export chain via resolveSymbol', () => {
       const result = g.resolveSymbol('renamedHelper', 'src/re-export.ts');
-      if (isErr(result)) throw (result as any).data;
-      const resolved = result as any;
-      expect(resolved.originalName).toBe('helper');
-      expect(resolved.originalFilePath).toContain('utils');
-      expect(resolved.reExportChain.length).toBe(1);
-      expect(resolved.reExportChain[0].exportedAs).toBe('renamedHelper');
+      expect(result.originalName).toBe('helper');
+      expect(result.originalFilePath).toContain('utils');
+      expect(result.reExportChain.length).toBe(1);
+      expect(result.reExportChain[0]!.exportedAs).toBe('renamedHelper');
     });
 
     it('should return error when resolveSymbol detects circular re-export chain', () => {
       const result = g.resolveSymbol('foo', 'src/circ-re-a.ts');
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
-      expect((result as any).data.message).toContain('circular');
+      expect(result.circular).toBe(true);
     });
 
     it('should return module interface with exported symbols', () => {
       const result = g.getModuleInterface('src/utils.ts');
-      if (isErr(result)) throw (result as any).data;
-      const iface = result as any;
-      expect(iface.filePath).toBe('src/utils.ts');
-      expect(iface.exports.length).toBeGreaterThanOrEqual(2);
-      const names = iface.exports.map((e: any) => e.name);
+      expect(result.filePath).toBe('src/utils.ts');
+      expect(result.exports.length).toBeGreaterThanOrEqual(2);
+      const names = result.exports.map((e: any) => e.name);
       expect(names).toContain('helper');
       expect(names).toContain('MAGIC');
     });
 
     it('should return heritage tree for extends relationship via getHeritageChain', async () => {
       const result = await g.getHeritageChain('App', 'src/app.ts');
-      if (isErr(result)) throw (result as any).data;
-      const tree = result as any;
-      expect(tree.symbolName).toBe('App');
-      expect(tree.children.length).toBeGreaterThanOrEqual(1);
-      const extendsChild = tree.children.find((c: any) => c.kind === 'extends');
+      expect(result.symbolName).toBe('App');
+      expect(result.children.length).toBeGreaterThanOrEqual(1);
+      const extendsChild = result.children.find((c: any) => c.kind === 'extends');
       expect(extendsChild).toBeDefined();
-      expect(extendsChild.symbolName).toBe('Base');
+      expect(extendsChild!.symbolName).toBe('Base');
     });
 
     it('should handle circular heritage by truncating with visited set', async () => {
       const result = await g.getHeritageChain('CircA', 'src/circ-base-a.ts');
-      if (isErr(result)) throw (result as any).data;
-      const tree = result as any;
-      expect(tree.symbolName).toBe('CircA');
+      expect(result.symbolName).toBe('CircA');
       // Should not infinitely recurse; the cycle should be cut off
       // Walk the tree and ensure finite depth
       const collectNames = (node: any, depth = 0): string[] => {
@@ -621,7 +554,7 @@ describe('Gildash integration', () => {
         }
         return names;
       };
-      const allNames = collectNames(tree);
+      const allNames = collectNames(result);
       expect(allNames).not.toContain('TOO_DEEP');
     });
   });
@@ -648,9 +581,7 @@ describe('Gildash integration', () => {
         join(tmpDir, 'src', 'utils.ts'),
         join(tmpDir, 'src', 'app.ts'),
       ]);
-      if (isErr(result)) throw (result as any).data;
-      const map = result as Map<string, any>;
-      expect(map.size).toBe(2);
+      expect(result.size).toBe(2);
     });
 
     it('should include only successful parses in batchParse result when one file fails', async () => {
@@ -658,10 +589,8 @@ describe('Gildash integration', () => {
         join(tmpDir, 'src', 'utils.ts'),
         join(tmpDir, 'nonexistent', 'missing.ts'),
       ]);
-      if (isErr(result)) throw (result as any).data;
-      const map = result as Map<string, any>;
-      expect(map.size).toBe(1);
-      expect(map.has(join(tmpDir, 'src', 'utils.ts'))).toBe(true);
+      expect(result.size).toBe(1);
+      expect(result.has(join(tmpDir, 'src', 'utils.ts'))).toBe(true);
     });
 
     it('should find structural patterns in indexed files via findPattern', async () => {
@@ -669,10 +598,8 @@ describe('Gildash integration', () => {
       const result = await g.findPattern('helper($$$)', {
         filePaths: [join(tmpDir, 'src', 'app.ts')],
       });
-      if (isErr(result)) throw (result as any).data;
-      const matches = result as any[];
       // app.ts calls helper(1) → should match
-      expect(matches.length).toBeGreaterThanOrEqual(1);
+      expect(result.length).toBeGreaterThanOrEqual(1);
     });
   });
 
@@ -692,8 +619,7 @@ describe('Gildash integration', () => {
 
       // Verify initial state
       const beforeResult = g.searchSymbols({ text: 'newFunction' });
-      if (isErr(beforeResult)) throw (beforeResult as any).data;
-      expect((beforeResult as any[]).length).toBe(0);
+      expect(beforeResult.length).toBe(0);
 
       // Add a new file
       await writeFile(
@@ -703,12 +629,10 @@ describe('Gildash integration', () => {
 
       // Reindex
       const reindexResult = await g.reindex();
-      if (isErr(reindexResult)) throw (reindexResult as any).data;
 
       // Verify new symbol is found
       const afterResult = g.searchSymbols({ text: 'newFunction' });
-      if (isErr(afterResult)) throw (afterResult as any).data;
-      expect((afterResult as any[]).length).toBeGreaterThanOrEqual(1);
+      expect(afterResult.length).toBeGreaterThanOrEqual(1);
 
       await g.close();
     });
@@ -751,11 +675,10 @@ describe('Gildash integration', () => {
       );
 
       const r = await g.reindex();
-      if (isErr(r)) throw (r as any).data;
 
       // reindex should detect the changed file and re-index it
-      expect((r as any).indexedFiles).toBeGreaterThanOrEqual(1);
-      expect((r as any).changedFiles.length).toBeGreaterThanOrEqual(1);
+      expect(r.indexedFiles).toBeGreaterThanOrEqual(1);
+      expect(r.changedFiles.length).toBeGreaterThanOrEqual(1);
 
       await g.close();
     });

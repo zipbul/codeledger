@@ -1,12 +1,10 @@
-import { err, type Result } from '@zipbul/result';
 import path from 'node:path';
 import type { SymbolSearchQuery, SymbolSearchResult } from '../search/symbol-search';
 import type { RelationSearchQuery } from '../search/relation-search';
 import type { CodeRelation } from '../extractor/types';
 import type { FileRecord } from '../store/repositories/file.repository';
 import type { SymbolStats } from '../store/repositories/symbol.repository';
-import type { GildashError } from '../errors';
-import { gildashError } from '../errors';
+import { GildashError } from '../errors';
 import type { GildashContext } from './context';
 import type { FullSymbol, FileStats, ModuleInterface } from './types';
 
@@ -14,12 +12,13 @@ import type { FullSymbol, FileStats, ModuleInterface } from './types';
 export function getStats(
   ctx: GildashContext,
   project?: string,
-): Result<SymbolStats, GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): SymbolStats {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     return ctx.symbolRepo.getStats(project ?? ctx.defaultProject);
   } catch (e) {
-    return err(gildashError('store', 'Gildash: getStats failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('store', 'Gildash: getStats failed', { cause: e });
   }
 }
 
@@ -27,12 +26,13 @@ export function getStats(
 export function searchSymbols(
   ctx: GildashContext,
   query: SymbolSearchQuery,
-): Result<SymbolSearchResult[], GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): SymbolSearchResult[] {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     return ctx.symbolSearchFn({ symbolRepo: ctx.symbolRepo, project: ctx.defaultProject, query });
   } catch (e) {
-    return err(gildashError('search', 'Gildash: searchSymbols failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: searchSymbols failed', { cause: e });
   }
 }
 
@@ -40,12 +40,13 @@ export function searchSymbols(
 export function searchRelations(
   ctx: GildashContext,
   query: RelationSearchQuery,
-): Result<CodeRelation[], GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): CodeRelation[] {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     return ctx.relationSearchFn({ relationRepo: ctx.relationRepo, project: ctx.defaultProject, query });
   } catch (e) {
-    return err(gildashError('search', 'Gildash: searchRelations failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: searchRelations failed', { cause: e });
   }
 }
 
@@ -53,12 +54,13 @@ export function searchRelations(
 export function searchAllSymbols(
   ctx: GildashContext,
   query: Omit<SymbolSearchQuery, 'project'> & { project?: string },
-): Result<SymbolSearchResult[], GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): SymbolSearchResult[] {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     return ctx.symbolSearchFn({ symbolRepo: ctx.symbolRepo, project: undefined, query });
   } catch (e) {
-    return err(gildashError('search', 'Gildash: searchAllSymbols failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: searchAllSymbols failed', { cause: e });
   }
 }
 
@@ -66,12 +68,13 @@ export function searchAllSymbols(
 export function searchAllRelations(
   ctx: GildashContext,
   query: RelationSearchQuery,
-): Result<CodeRelation[], GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): CodeRelation[] {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     return ctx.relationSearchFn({ relationRepo: ctx.relationRepo, project: undefined, query });
   } catch (e) {
-    return err(gildashError('search', 'Gildash: searchAllRelations failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: searchAllRelations failed', { cause: e });
   }
 }
 
@@ -79,12 +82,13 @@ export function searchAllRelations(
 export function listIndexedFiles(
   ctx: GildashContext,
   project?: string,
-): Result<FileRecord[], GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): FileRecord[] {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     return ctx.fileRepo.getAllFiles(project ?? ctx.defaultProject);
   } catch (e) {
-    return err(gildashError('store', 'Gildash: listIndexedFiles failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('store', 'Gildash: listIndexedFiles failed', { cause: e });
   }
 }
 
@@ -93,8 +97,8 @@ export function getInternalRelations(
   ctx: GildashContext,
   filePath: string,
   project?: string,
-): Result<CodeRelation[], GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): CodeRelation[] {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     return ctx.relationSearchFn({
       relationRepo: ctx.relationRepo,
@@ -102,7 +106,8 @@ export function getInternalRelations(
       query: { srcFilePath: filePath, dstFilePath: filePath, limit: 10_000 },
     });
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getInternalRelations failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getInternalRelations failed', { cause: e });
   }
 }
 
@@ -112,8 +117,8 @@ export function getFullSymbol(
   symbolName: string,
   filePath: string,
   project?: string,
-): Result<FullSymbol, GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): FullSymbol | null {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     const effectiveProject = project ?? ctx.defaultProject;
     const results = ctx.symbolSearchFn({
@@ -122,7 +127,7 @@ export function getFullSymbol(
       query: { text: symbolName, exact: true, filePath, limit: 1 },
     });
     if (results.length === 0) {
-      return err(gildashError('search', `Gildash: symbol '${symbolName}' not found in '${filePath}'`));
+      return null;
     }
     const sym = results[0]!;
     const d = sym.detail;
@@ -155,7 +160,8 @@ export function getFullSymbol(
     }
     return full;
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getFullSymbol failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getFullSymbol failed', { cause: e });
   }
 }
 
@@ -164,13 +170,13 @@ export function getFileStats(
   ctx: GildashContext,
   filePath: string,
   project?: string,
-): Result<FileStats, GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): FileStats {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     const effectiveProject = project ?? ctx.defaultProject;
     const fileRecord = ctx.fileRepo.getFile(effectiveProject, filePath);
     if (!fileRecord) {
-      return err(gildashError('search', `Gildash: file '${filePath}' is not in the index`));
+      throw new GildashError('search', `Gildash: file '${filePath}' is not in the index`);
     }
     const symbols = ctx.symbolRepo.getFileSymbols(effectiveProject, filePath);
     const relations = ctx.relationRepo.getOutgoing(effectiveProject, filePath);
@@ -183,7 +189,8 @@ export function getFileStats(
       relationCount: relations.length,
     };
   } catch (e) {
-    return err(gildashError('store', 'Gildash: getFileStats failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('store', 'Gildash: getFileStats failed', { cause: e });
   }
 }
 
@@ -192,12 +199,13 @@ export function getFileInfo(
   ctx: GildashContext,
   filePath: string,
   project?: string,
-): Result<FileRecord | null, GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): FileRecord | null {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     return ctx.fileRepo.getFile(project ?? ctx.defaultProject, filePath);
   } catch (e) {
-    return err(gildashError('store', 'Gildash: getFileInfo failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('store', 'Gildash: getFileInfo failed', { cause: e });
   }
 }
 
@@ -206,7 +214,7 @@ export function getSymbolsByFile(
   ctx: GildashContext,
   filePath: string,
   project?: string,
-): Result<SymbolSearchResult[], GildashError> {
+): SymbolSearchResult[] {
   return searchSymbols(ctx, { filePath, project: project ?? undefined, limit: 10_000 });
 }
 
@@ -215,8 +223,8 @@ export function getModuleInterface(
   ctx: GildashContext,
   filePath: string,
   project?: string,
-): Result<ModuleInterface, GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): ModuleInterface {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     const symbols = ctx.symbolSearchFn({
       symbolRepo: ctx.symbolRepo,
@@ -232,6 +240,7 @@ export function getModuleInterface(
     }));
     return { filePath, exports };
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getModuleInterface failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getModuleInterface failed', { cause: e });
   }
 }

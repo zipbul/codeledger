@@ -1,5 +1,5 @@
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
-import { err, isErr } from '@zipbul/result';
+import { GildashError } from '../errors';
 import type { GildashContext } from './context';
 import type { SymbolSearchResult } from '../search/symbol-search';
 
@@ -196,47 +196,39 @@ describe('reindex', () => {
 
     const result = await reindex(ctx);
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(indexResult as any);
     expect(fullIndex).toHaveBeenCalledTimes(1);
     expect(ctx.graphCache).toBeNull();
     expect(ctx.graphCacheKey).toBeNull();
   });
 
-  it('should return err with type closed when ctx is closed', async () => {
+  it('should throw with type closed when ctx is closed', async () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = await reindex(ctx);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    await expect(reindex(ctx)).rejects.toThrow(GildashError);
   });
 
-  it('should return err when coordinator is null', async () => {
+  it('should throw when coordinator is null', async () => {
     const ctx = makeCtx({ coordinator: null });
 
-    const result = await reindex(ctx);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('closed');
-      expect(result.data.message).toContain('not available for readers');
-    }
+    await expect(reindex(ctx)).rejects.toThrow(GildashError);
+    await expect(reindex(ctx)).rejects.toThrow(/not available for readers/);
   });
 
-  it('should catch exception and return err with type index', async () => {
+  it('should catch exception and throw GildashError with type index', async () => {
     const error = new Error('index fail');
     const fullIndex = mock(async () => { throw error; });
     const ctx = makeCtx({
       coordinator: { fullIndex, onIndexed: mock(() => () => {}), shutdown: mock(() => {}) } as any,
     });
 
-    const result = await reindex(ctx);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('index');
-      expect(result.data.cause).toBe(error);
+    try {
+      await reindex(ctx);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('index');
+      expect((e as GildashError).cause).toBe(error);
     }
   });
 });
@@ -250,11 +242,10 @@ describe('resolveSymbol', () => {
 
     const result = resolveSymbol(ctx, 'Foo', 'src/a.ts');
 
-    expect(isErr(result)).toBe(false);
-    const resolved = result as any;
-    expect(resolved.originalName).toBe('Foo');
-    expect(resolved.originalFilePath).toBe('src/a.ts');
-    expect(resolved.reExportChain).toEqual([]);
+    expect(result.originalName).toBe('Foo');
+    expect(result.originalFilePath).toBe('src/a.ts');
+    expect(result.reExportChain).toEqual([]);
+    expect(result.circular).toBe(false);
   });
 
   it('should follow single-hop re-export chain', () => {
@@ -273,13 +264,12 @@ describe('resolveSymbol', () => {
 
     const result = resolveSymbol(ctx, 'Foo', 'src/index.ts');
 
-    expect(isErr(result)).toBe(false);
-    const resolved = result as any;
-    expect(resolved.originalName).toBe('FooImpl');
-    expect(resolved.originalFilePath).toBe('src/foo.ts');
-    expect(resolved.reExportChain).toEqual([
+    expect(result.originalName).toBe('FooImpl');
+    expect(result.originalFilePath).toBe('src/foo.ts');
+    expect(result.reExportChain).toEqual([
       { filePath: 'src/index.ts', exportedAs: 'Foo' },
     ]);
+    expect(result.circular).toBe(false);
   });
 
   it('should follow multi-hop re-export chain', () => {
@@ -303,23 +293,19 @@ describe('resolveSymbol', () => {
 
     const result = resolveSymbol(ctx, 'Foo', 'src/index.ts');
 
-    expect(isErr(result)).toBe(false);
-    const resolved = result as any;
-    expect(resolved.originalName).toBe('RealFoo');
-    expect(resolved.originalFilePath).toBe('src/real.ts');
-    expect(resolved.reExportChain).toHaveLength(2);
+    expect(result.originalName).toBe('RealFoo');
+    expect(result.originalFilePath).toBe('src/real.ts');
+    expect(result.reExportChain).toHaveLength(2);
+    expect(result.circular).toBe(false);
   });
 
-  it('should return err with type closed when ctx is closed', () => {
+  it('should throw with type closed when ctx is closed', () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = resolveSymbol(ctx, 'Foo', 'a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => resolveSymbol(ctx, 'Foo', 'a.ts')).toThrow(GildashError);
   });
 
-  it('should return err on circular re-export detected', () => {
+  it('should return circular=true on circular re-export detected', () => {
     const searchFn = mock(() => [{
       type: 're-exports', srcFilePath: 'a.ts', dstFilePath: 'a.ts',
       metaJson: JSON.stringify({ specifiers: [{ local: 'Foo', exported: 'Foo' }] }),
@@ -328,11 +314,8 @@ describe('resolveSymbol', () => {
 
     const result = resolveSymbol(ctx, 'Foo', 'a.ts');
 
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.message).toContain('circular');
-    }
+    expect(result.circular).toBe(true);
+    expect(result.reExportChain.length).toBeGreaterThan(0);
   });
 
   it('should skip relations with malformed metaJson', () => {
@@ -344,10 +327,9 @@ describe('resolveSymbol', () => {
 
     const result = resolveSymbol(ctx, 'Foo', 'a.ts');
 
-    expect(isErr(result)).toBe(false);
-    const resolved = result as any;
-    expect(resolved.originalName).toBe('Foo');
-    expect(resolved.reExportChain).toEqual([]);
+    expect(result.originalName).toBe('Foo');
+    expect(result.reExportChain).toEqual([]);
+    expect(result.circular).toBe(false);
   });
 
   it('should use defaultProject when project is omitted', () => {
@@ -372,7 +354,6 @@ describe('findPattern', () => {
 
     const result = await findPattern(ctx, 'if(', { filePaths: ['a.ts', 'b.ts'] });
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(matches as any);
     expect(searchFn).toHaveBeenCalledWith({ pattern: 'if(', filePaths: ['a.ts', 'b.ts'] });
   });
@@ -390,25 +371,23 @@ describe('findPattern', () => {
     expect(searchFn).toHaveBeenCalledWith({ pattern: 'pattern', filePaths: ['x.ts', 'y.ts'] });
   });
 
-  it('should return err with type closed when ctx is closed', async () => {
+  it('should throw with type closed when ctx is closed', async () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = await findPattern(ctx, 'p');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    await expect(findPattern(ctx, 'p')).rejects.toThrow(GildashError);
   });
 
-  it('should catch exception and return err with cause', async () => {
+  it('should catch exception and throw GildashError with cause', async () => {
     const error = new Error('search fail');
     const ctx = makeCtx({ patternSearchFn: mock(async () => { throw error; }) as any });
 
-    const result = await findPattern(ctx, 'p');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBe(error);
+    try {
+      await findPattern(ctx, 'p');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBe(error);
     }
   });
 });
@@ -421,11 +400,9 @@ describe('getHeritageChain', () => {
 
     const result = await getHeritageChain(ctx, 'Foo', 'src/a.ts');
 
-    expect(isErr(result)).toBe(false);
-    const node = result as any;
-    expect(node.symbolName).toBe('Foo');
-    expect(node.filePath).toBe('src/a.ts');
-    expect(node.children).toEqual([]);
+    expect(result.symbolName).toBe('Foo');
+    expect(result.filePath).toBe('src/a.ts');
+    expect(result.children).toEqual([]);
   });
 
   it('should build heritage tree with extends relation', async () => {
@@ -442,33 +419,29 @@ describe('getHeritageChain', () => {
 
     const result = await getHeritageChain(ctx, 'Child', 'src/child.ts');
 
-    expect(isErr(result)).toBe(false);
-    const node = result as any;
-    expect(node.symbolName).toBe('Child');
-    expect(node.children).toHaveLength(1);
-    expect(node.children[0].symbolName).toBe('Parent');
-    expect(node.children[0].kind).toBe('extends');
+    expect(result.symbolName).toBe('Child');
+    expect(result.children).toHaveLength(1);
+    expect(result.children[0]!.symbolName).toBe('Parent');
+    expect(result.children[0]!.kind).toBe('extends');
   });
 
-  it('should return err with type closed when ctx is closed', async () => {
+  it('should throw with type closed when ctx is closed', async () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = await getHeritageChain(ctx, 'Foo', 'a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    await expect(getHeritageChain(ctx, 'Foo', 'a.ts')).rejects.toThrow(GildashError);
   });
 
-  it('should catch exception and return err with cause', async () => {
+  it('should catch exception and throw GildashError with cause', async () => {
     const error = new Error('heritage fail');
     const ctx = makeCtx({ relationSearchFn: mock(() => { throw error; }) as any });
 
-    const result = await getHeritageChain(ctx, 'Foo', 'a.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBe(error);
+    try {
+      await getHeritageChain(ctx, 'Foo', 'a.ts');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBe(error);
     }
   });
 
@@ -481,29 +454,25 @@ describe('getHeritageChain', () => {
 
     const result = await getHeritageChain(ctx, 'A', 'a.ts');
 
-    expect(isErr(result)).toBe(false);
-    const node = result as any;
-    expect(node.children).toHaveLength(1);
-    expect(node.children[0].children).toEqual([]);
+    expect(result.children).toHaveLength(1);
+    expect(result.children[0]!.children).toEqual([]);
   });
 });
 
 // ─── State Transition ───────────────────────────────────────────────
 
 describe('misc-api state transitions', () => {
-  it('should return err from reindex after ctx transitions open to closed', async () => {
+  it('should throw from reindex after ctx transitions open to closed', async () => {
     const fullIndex = mock(async () => ({ indexed: 5 }));
     const ctx = makeCtx({
       coordinator: { fullIndex, onIndexed: mock(() => () => {}), shutdown: mock(() => {}) } as any,
     });
 
     const first = await reindex(ctx);
-    expect(isErr(first)).toBe(false);
+    expect(first).toBeDefined();
 
     ctx.closed = true;
 
-    const second = await reindex(ctx);
-    expect(isErr(second)).toBe(true);
-    if (isErr(second)) expect(second.data.type).toBe('closed');
+    await expect(reindex(ctx)).rejects.toThrow(GildashError);
   });
 });

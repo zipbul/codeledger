@@ -122,6 +122,8 @@ export interface ResolvedSymbol {
   originalFilePath: string;
   /** Ordered list of re-export hops between the queried file and the original definition. */
   reExportChain: Array<{ filePath: string; exportedAs: string }>;
+  /** Whether a circular re-export chain was detected. */
+  circular: boolean;
 }
 
 /**

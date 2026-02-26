@@ -1,6 +1,4 @@
-import { err, type Result } from '@zipbul/result';
-import type { GildashError } from '../errors';
-import { gildashError } from '../errors';
+import { GildashError } from '../errors';
 import { DependencyGraph } from '../search/dependency-graph';
 import type { GildashContext } from './context';
 import type { FanMetrics } from './types';
@@ -37,8 +35,8 @@ export function getDependencies(
   filePath: string,
   project?: string,
   limit = 10_000,
-): Result<string[], GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): string[] {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     return ctx.relationSearchFn({
       relationRepo: ctx.relationRepo,
@@ -46,7 +44,8 @@ export function getDependencies(
       query: { srcFilePath: filePath, type: 'imports', project: project ?? ctx.defaultProject, limit },
     }).map(r => r.dstFilePath);
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getDependencies failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getDependencies failed', { cause: e });
   }
 }
 
@@ -56,8 +55,8 @@ export function getDependents(
   filePath: string,
   project?: string,
   limit = 10_000,
-): Result<string[], GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): string[] {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     return ctx.relationSearchFn({
       relationRepo: ctx.relationRepo,
@@ -65,7 +64,8 @@ export function getDependents(
       query: { dstFilePath: filePath, type: 'imports', project: project ?? ctx.defaultProject, limit },
     }).map(r => r.srcFilePath);
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getDependents failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getDependents failed', { cause: e });
   }
 }
 
@@ -74,13 +74,14 @@ export async function getAffected(
   ctx: GildashContext,
   changedFiles: string[],
   project?: string,
-): Promise<Result<string[], GildashError>> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): Promise<string[]> {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     const g = getOrBuildGraph(ctx, project);
     return g.getAffectedByChange(changedFiles);
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getAffected failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getAffected failed', { cause: e });
   }
 }
 
@@ -88,13 +89,14 @@ export async function getAffected(
 export async function hasCycle(
   ctx: GildashContext,
   project?: string,
-): Promise<Result<boolean, GildashError>> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): Promise<boolean> {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     const g = getOrBuildGraph(ctx, project);
     return g.hasCycle();
   } catch (e) {
-    return err(gildashError('search', 'Gildash: hasCycle failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: hasCycle failed', { cause: e });
   }
 }
 
@@ -102,13 +104,14 @@ export async function hasCycle(
 export async function getImportGraph(
   ctx: GildashContext,
   project?: string,
-): Promise<Result<Map<string, string[]>, GildashError>> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): Promise<Map<string, string[]>> {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     const g = getOrBuildGraph(ctx, project);
     return g.getAdjacencyList();
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getImportGraph failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getImportGraph failed', { cause: e });
   }
 }
 
@@ -117,13 +120,14 @@ export async function getTransitiveDependencies(
   ctx: GildashContext,
   filePath: string,
   project?: string,
-): Promise<Result<string[], GildashError>> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): Promise<string[]> {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     const g = getOrBuildGraph(ctx, project);
     return g.getTransitiveDependencies(filePath);
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getTransitiveDependencies failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getTransitiveDependencies failed', { cause: e });
   }
 }
 
@@ -132,13 +136,14 @@ export async function getCyclePaths(
   ctx: GildashContext,
   project?: string,
   options?: { maxCycles?: number },
-): Promise<Result<string[][], GildashError>> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): Promise<string[][]> {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     const g = getOrBuildGraph(ctx, project);
     return g.getCyclePaths(options);
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getCyclePaths failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getCyclePaths failed', { cause: e });
   }
 }
 
@@ -147,8 +152,8 @@ export async function getFanMetrics(
   ctx: GildashContext,
   filePath: string,
   project?: string,
-): Promise<Result<FanMetrics, GildashError>> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): Promise<FanMetrics> {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     const g = getOrBuildGraph(ctx, project);
     return {
@@ -157,6 +162,7 @@ export async function getFanMetrics(
       fanOut: g.getDependencies(filePath).length,
     };
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getFanMetrics failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getFanMetrics failed', { cause: e });
   }
 }

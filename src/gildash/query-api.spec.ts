@@ -1,5 +1,5 @@
-import { describe, it, expect, mock, beforeEach } from 'bun:test';
-import { isErr } from '@zipbul/result';
+import { describe, it, expect, mock } from 'bun:test';
+import { GildashError } from '../errors';
 import type { GildashContext } from './context';
 import {
   getStats,
@@ -64,29 +64,26 @@ describe('getStats', () => {
 
     const result = getStats(ctx);
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(stats as any);
   });
 
-  it('should return err when closed', () => {
+  it('should throw when closed', () => {
     const ctx = makeCtx({ closed: true });
 
-    const result = getStats(ctx);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => getStats(ctx)).toThrow(GildashError);
   });
 
-  it('should return err when repo throws', () => {
+  it('should throw when repo throws', () => {
     const error = new Error('db fail');
     const ctx = makeCtx({ symbolRepo: { getStats: mock(() => { throw error; }) } as any });
 
-    const result = getStats(ctx);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('store');
-      expect(result.data.cause).toBe(error);
+    expect(() => getStats(ctx)).toThrow(GildashError);
+    try {
+      getStats(ctx);
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('store');
+      expect((e as GildashError).cause).toBe(error);
     }
   });
 });
@@ -100,23 +97,17 @@ describe('searchSymbols', () => {
 
     const result = searchSymbols(ctx, { text: 'Foo' });
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(symbols as any);
   });
 
-  it('should return err when closed', () => {
+  it('should throw when closed', () => {
     const ctx = makeCtx({ closed: true });
-    const result = searchSymbols(ctx, { text: 'Foo' });
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => searchSymbols(ctx, { text: 'Foo' })).toThrow(GildashError);
   });
 
-  it('should return err when fn throws', () => {
-    const error = new Error('fail');
-    const ctx = makeCtx({ symbolSearchFn: mock(() => { throw error; }) as any });
-    const result = searchSymbols(ctx, { text: 'X' });
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('search');
+  it('should throw when fn throws', () => {
+    const ctx = makeCtx({ symbolSearchFn: mock(() => { throw new Error('fail'); }) as any });
+    expect(() => searchSymbols(ctx, { text: 'X' })).toThrow(GildashError);
   });
 });
 
@@ -129,23 +120,17 @@ describe('searchRelations', () => {
 
     const result = searchRelations(ctx, { type: 'imports' });
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(rels as any);
   });
 
-  it('should return err when closed', () => {
+  it('should throw when closed', () => {
     const ctx = makeCtx({ closed: true });
-    const result = searchRelations(ctx, {});
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => searchRelations(ctx, {})).toThrow(GildashError);
   });
 
-  it('should return err when fn throws', () => {
-    const error = new Error('fail');
-    const ctx = makeCtx({ relationSearchFn: mock(() => { throw error; }) as any });
-    const result = searchRelations(ctx, {});
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('search');
+  it('should throw when fn throws', () => {
+    const ctx = makeCtx({ relationSearchFn: mock(() => { throw new Error('fail'); }) as any });
+    expect(() => searchRelations(ctx, {})).toThrow(GildashError);
   });
 });
 
@@ -163,18 +148,14 @@ describe('searchAllSymbols', () => {
     );
   });
 
-  it('should return err when closed', () => {
+  it('should throw when closed', () => {
     const ctx = makeCtx({ closed: true });
-    const result = searchAllSymbols(ctx, { text: 'Foo' });
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => searchAllSymbols(ctx, { text: 'Foo' })).toThrow(GildashError);
   });
 
-  it('should return err when fn throws', () => {
+  it('should throw when fn throws', () => {
     const ctx = makeCtx({ symbolSearchFn: mock(() => { throw new Error(); }) as any });
-    const result = searchAllSymbols(ctx, { text: 'X' });
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('search');
+    expect(() => searchAllSymbols(ctx, { text: 'X' })).toThrow(GildashError);
   });
 });
 
@@ -192,18 +173,14 @@ describe('searchAllRelations', () => {
     );
   });
 
-  it('should return err when closed', () => {
+  it('should throw when closed', () => {
     const ctx = makeCtx({ closed: true });
-    const result = searchAllRelations(ctx, {});
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => searchAllRelations(ctx, {})).toThrow(GildashError);
   });
 
-  it('should return err when fn throws', () => {
+  it('should throw when fn throws', () => {
     const ctx = makeCtx({ relationSearchFn: mock(() => { throw new Error(); }) as any });
-    const result = searchAllRelations(ctx, {});
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('search');
+    expect(() => searchAllRelations(ctx, {})).toThrow(GildashError);
   });
 });
 
@@ -216,22 +193,17 @@ describe('listIndexedFiles', () => {
 
     const result = listIndexedFiles(ctx);
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(files as any);
   });
 
-  it('should return err when closed', () => {
+  it('should throw when closed', () => {
     const ctx = makeCtx({ closed: true });
-    const result = listIndexedFiles(ctx);
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => listIndexedFiles(ctx)).toThrow(GildashError);
   });
 
-  it('should return err when repo throws', () => {
+  it('should throw when repo throws', () => {
     const ctx = makeCtx({ fileRepo: { getAllFiles: mock(() => { throw new Error(); }) } as any });
-    const result = listIndexedFiles(ctx);
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('store');
+    expect(() => listIndexedFiles(ctx)).toThrow(GildashError);
   });
 });
 
@@ -254,18 +226,14 @@ describe('getInternalRelations', () => {
     );
   });
 
-  it('should return err when closed', () => {
+  it('should throw when closed', () => {
     const ctx = makeCtx({ closed: true });
-    const result = getInternalRelations(ctx, 'a.ts');
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => getInternalRelations(ctx, 'a.ts')).toThrow(GildashError);
   });
 
-  it('should return err when fn throws', () => {
+  it('should throw when fn throws', () => {
     const ctx = makeCtx({ relationSearchFn: mock(() => { throw new Error(); }) as any });
-    const result = getInternalRelations(ctx, 'a.ts');
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('search');
+    expect(() => getInternalRelations(ctx, 'a.ts')).toThrow(GildashError);
   });
 });
 
@@ -285,17 +253,17 @@ describe('getFullSymbol', () => {
     const sym = makeSym('Foo', detail);
     const ctx = makeCtx({ symbolSearchFn: mock(() => [sym]) as any });
 
-    const result = getFullSymbol(ctx, 'Foo', 'src/a.ts') as any;
+    const result = getFullSymbol(ctx, 'Foo', 'src/a.ts');
 
-    expect(isErr(result)).toBe(false);
-    expect(result.name).toBe('Foo');
-    expect(result.members).toEqual(detail.members);
-    expect(result.jsDoc).toBe('/** docs */');
-    expect(result.parameters).toBe('(a: number)');
-    expect(result.returnType).toBe('void');
-    expect(result.heritage).toEqual(['Base']);
-    expect(result.decorators).toEqual(detail.decorators);
-    expect(result.typeParameters).toBe('<T>');
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('Foo');
+    expect(result!.members).toEqual(detail.members);
+    expect(result!.jsDoc).toBe('/** docs */');
+    expect(result!.parameters).toBe('(a: number)');
+    expect(result!.returnType).toBe('void');
+    expect(result!.heritage).toEqual(['Base']);
+    expect(result!.decorators).toEqual(detail.decorators);
+    expect(result!.typeParameters).toBe('<T>');
   });
 
   it('should return undefined for missing or wrong-type detail fields', () => {
@@ -311,16 +279,16 @@ describe('getFullSymbol', () => {
     const sym = makeSym('Bar', detail);
     const ctx = makeCtx({ symbolSearchFn: mock(() => [sym]) as any });
 
-    const result = getFullSymbol(ctx, 'Bar', 'src/a.ts') as any;
+    const result = getFullSymbol(ctx, 'Bar', 'src/a.ts');
 
-    expect(isErr(result)).toBe(false);
-    expect(result.members).toBeUndefined();
-    expect(result.jsDoc).toBeUndefined();
-    expect(result.parameters).toBeUndefined();
-    expect(result.returnType).toBeUndefined();
-    expect(result.heritage).toBeUndefined();
-    expect(result.decorators).toBeUndefined();
-    expect(result.typeParameters).toBeUndefined();
+    expect(result).not.toBeNull();
+    expect(result!.members).toBeUndefined();
+    expect(result!.jsDoc).toBeUndefined();
+    expect(result!.parameters).toBeUndefined();
+    expect(result!.returnType).toBeUndefined();
+    expect(result!.heritage).toBeUndefined();
+    expect(result!.decorators).toBeUndefined();
+    expect(result!.typeParameters).toBeUndefined();
   });
 
   it('should enrich with semantic resolvedType when semantic layer available', () => {
@@ -335,9 +303,9 @@ describe('getFullSymbol', () => {
       semanticLayer: semanticLayer as any,
     });
 
-    const result = getFullSymbol(ctx, 'X', '/project/src/a.ts') as any;
+    const result = getFullSymbol(ctx, 'X', '/project/src/a.ts');
 
-    expect(result.resolvedType).toBe('string');
+    expect(result!.resolvedType as any).toBe('string');
   });
 
   it('should skip enrichment when declPos is null', () => {
@@ -352,9 +320,9 @@ describe('getFullSymbol', () => {
       semanticLayer: semanticLayer as any,
     });
 
-    const result = getFullSymbol(ctx, 'X', 'src/a.ts') as any;
+    const result = getFullSymbol(ctx, 'X', 'src/a.ts');
 
-    expect(result.resolvedType).toBeUndefined();
+    expect(result!.resolvedType).toBeUndefined();
     expect(semanticLayer.findNamePosition).not.toHaveBeenCalled();
   });
 
@@ -370,10 +338,10 @@ describe('getFullSymbol', () => {
       semanticLayer: semanticLayer as any,
     });
 
-    const result = getFullSymbol(ctx, 'X', '/project/src/a.ts') as any;
+    const result = getFullSymbol(ctx, 'X', '/project/src/a.ts');
 
     expect(semanticLayer.collectTypeAt).toHaveBeenCalledWith('/project/src/a.ts', 10);
-    expect(result.resolvedType).toBe('boolean');
+    expect(result!.resolvedType as any).toBe('boolean');
   });
 
   it('should skip resolvedType when collectTypeAt returns null', () => {
@@ -388,9 +356,9 @@ describe('getFullSymbol', () => {
       semanticLayer: semanticLayer as any,
     });
 
-    const result = getFullSymbol(ctx, 'X', '/project/src/a.ts') as any;
+    const result = getFullSymbol(ctx, 'X', '/project/src/a.ts');
 
-    expect(result.resolvedType).toBeUndefined();
+    expect(result!.resolvedType).toBeUndefined();
   });
 
   it('should silently catch semantic layer exception', () => {
@@ -403,10 +371,10 @@ describe('getFullSymbol', () => {
       semanticLayer: semanticLayer as any,
     });
 
-    const result = getFullSymbol(ctx, 'X', 'src/a.ts') as any;
+    const result = getFullSymbol(ctx, 'X', 'src/a.ts');
 
-    expect(isErr(result)).toBe(false);
-    expect(result.name).toBe('X');
+    expect(result).not.toBeNull();
+    expect(result!.name).toBe('X');
   });
 
   it('should resolve relative filePath with projectRoot for semantic lookup', () => {
@@ -431,31 +399,22 @@ describe('getFullSymbol', () => {
     );
   });
 
-  it('should return err when closed', () => {
+  it('should throw when closed', () => {
     const ctx = makeCtx({ closed: true });
-    const result = getFullSymbol(ctx, 'X', 'a.ts');
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => getFullSymbol(ctx, 'X', 'a.ts')).toThrow(GildashError);
   });
 
-  it('should return err when symbol not found', () => {
+  it('should return null when symbol not found', () => {
     const ctx = makeCtx({ symbolSearchFn: mock(() => []) as any });
 
     const result = getFullSymbol(ctx, 'Nope', 'a.ts');
 
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.message).toContain('Nope');
-    }
+    expect(result).toBeNull();
   });
 
-  it('should return err when fn throws', () => {
-    const error = new Error('fail');
-    const ctx = makeCtx({ symbolSearchFn: mock(() => { throw error; }) as any });
-    const result = getFullSymbol(ctx, 'X', 'a.ts');
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('search');
+  it('should throw when fn throws', () => {
+    const ctx = makeCtx({ symbolSearchFn: mock(() => { throw new Error('fail'); }) as any });
+    expect(() => getFullSymbol(ctx, 'X', 'a.ts')).toThrow(GildashError);
   });
 });
 
@@ -475,9 +434,8 @@ describe('getFileStats', () => {
       relationRepo: { getOutgoing: mock(() => relations) } as any,
     });
 
-    const result = getFileStats(ctx, 'a.ts') as any;
+    const result = getFileStats(ctx, 'a.ts');
 
-    expect(isErr(result)).toBe(false);
     expect(result.filePath).toBe('a.ts');
     expect(result.lineCount).toBe(0); // lineCount null → 0
     expect(result.size).toBe(500);
@@ -486,30 +444,21 @@ describe('getFileStats', () => {
     expect(result.relationCount).toBe(1);
   });
 
-  it('should return err when file not found', () => {
+  it('should throw when file not found', () => {
     const ctx = makeCtx({ fileRepo: { getFile: mock(() => null) } as any });
 
-    const result = getFileStats(ctx, 'missing.ts');
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.message).toContain('missing.ts');
-    }
+    expect(() => getFileStats(ctx, 'missing.ts')).toThrow(GildashError);
+    expect(() => getFileStats(ctx, 'missing.ts')).toThrow(/missing\.ts/);
   });
 
-  it('should return err when closed', () => {
+  it('should throw when closed', () => {
     const ctx = makeCtx({ closed: true });
-    const result = getFileStats(ctx, 'a.ts');
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => getFileStats(ctx, 'a.ts')).toThrow(GildashError);
   });
 
-  it('should return err when repo throws', () => {
+  it('should throw when repo throws', () => {
     const ctx = makeCtx({ fileRepo: { getFile: mock(() => { throw new Error(); }) } as any });
-    const result = getFileStats(ctx, 'a.ts');
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('store');
+    expect(() => getFileStats(ctx, 'a.ts')).toThrow(GildashError);
   });
 });
 
@@ -522,22 +471,17 @@ describe('getFileInfo', () => {
 
     const result = getFileInfo(ctx, 'a.ts');
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(file as any);
   });
 
-  it('should return err when closed', () => {
+  it('should throw when closed', () => {
     const ctx = makeCtx({ closed: true });
-    const result = getFileInfo(ctx, 'a.ts');
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => getFileInfo(ctx, 'a.ts')).toThrow(GildashError);
   });
 
-  it('should return err when repo throws', () => {
+  it('should throw when repo throws', () => {
     const ctx = makeCtx({ fileRepo: { getFile: mock(() => { throw new Error(); }) } as any });
-    const result = getFileInfo(ctx, 'a.ts');
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('store');
+    expect(() => getFileInfo(ctx, 'a.ts')).toThrow(GildashError);
   });
 });
 
@@ -551,7 +495,6 @@ describe('getSymbolsByFile', () => {
 
     const result = getSymbolsByFile(ctx, 'src/a.ts');
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(symbols as any);
     expect(searchFn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -585,40 +528,34 @@ describe('getModuleInterface', () => {
     });
     const ctx = makeCtx({ symbolSearchFn: mock(() => [sym]) as any });
 
-    const result = getModuleInterface(ctx, 'src/a.ts') as any;
+    const result = getModuleInterface(ctx, 'src/a.ts');
 
-    expect(isErr(result)).toBe(false);
     expect(result.filePath).toBe('src/a.ts');
     expect(result.exports).toHaveLength(1);
-    expect(result.exports[0].name).toBe('Foo');
-    expect(result.exports[0].parameters).toBe('(x: string)');
-    expect(result.exports[0].returnType).toBe('void');
-    expect(result.exports[0].jsDoc).toBe('/** doc */');
+    expect(result.exports[0]!.name).toBe('Foo');
+    expect(result.exports[0]!.parameters).toBe('(x: string)');
+    expect(result.exports[0]!.returnType).toBe('void');
+    expect(result.exports[0]!.jsDoc).toBe('/** doc */');
   });
 
   it('should return undefined for missing optional fields', () => {
     const sym = makeSym('Bar', {});
     const ctx = makeCtx({ symbolSearchFn: mock(() => [sym]) as any });
 
-    const result = getModuleInterface(ctx, 'src/a.ts') as any;
+    const result = getModuleInterface(ctx, 'src/a.ts');
 
-    expect(result.exports[0].parameters).toBeUndefined();
-    expect(result.exports[0].returnType).toBeUndefined();
-    expect(result.exports[0].jsDoc).toBeUndefined();
+    expect(result.exports[0]!.parameters).toBeUndefined();
+    expect(result.exports[0]!.returnType).toBeUndefined();
+    expect(result.exports[0]!.jsDoc).toBeUndefined();
   });
 
-  it('should return err when closed', () => {
+  it('should throw when closed', () => {
     const ctx = makeCtx({ closed: true });
-    const result = getModuleInterface(ctx, 'a.ts');
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('closed');
+    expect(() => getModuleInterface(ctx, 'a.ts')).toThrow(GildashError);
   });
 
-  it('should return err when fn throws', () => {
-    const error = new Error('fail');
-    const ctx = makeCtx({ symbolSearchFn: mock(() => { throw error; }) as any });
-    const result = getModuleInterface(ctx, 'a.ts');
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('search');
+  it('should throw when fn throws', () => {
+    const ctx = makeCtx({ symbolSearchFn: mock(() => { throw new Error('fail'); }) as any });
+    expect(() => getModuleInterface(ctx, 'a.ts')).toThrow(GildashError);
   });
 });

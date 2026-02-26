@@ -1,8 +1,8 @@
 export { Gildash } from "./gildash";
 export type { GildashOptions, Logger, SymbolDiff, ModuleInterface, HeritageNode, FullSymbol, FileStats, FanMetrics, ResolvedSymbol } from "./gildash";
 
-export { gildashError } from "./errors";
-export type { GildashError, GildashErrorType } from "./errors";
+export { GildashError, gildashError } from "./errors";
+export type { GildashErrorType } from "./errors";
 
 export { symbolSearch } from "./search/symbol-search";
 export type { SymbolSearchQuery, SymbolSearchResult } from "./search/symbol-search";

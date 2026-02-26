@@ -1,8 +1,7 @@
-import { err, isErr, type Result } from '@zipbul/result';
+import { isErr } from '@zipbul/result';
 import type { ParsedFile } from '../parser/types';
 import type { ParserOptions } from 'oxc-parser';
-import type { GildashError } from '../errors';
-import { gildashError } from '../errors';
+import { GildashError } from '../errors';
 import type { GildashContext } from './context';
 
 /** Parse a TypeScript source string into an AST and cache the result. */
@@ -11,10 +10,10 @@ export function parseSource(
   filePath: string,
   sourceText: string,
   options?: ParserOptions,
-): Result<ParsedFile, GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): ParsedFile {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   const result = ctx.parseSourceFn(filePath, sourceText, options);
-  if (isErr(result)) return result;
+  if (isErr(result)) throw result.data;
   ctx.parseCache.set(filePath, result);
   return result;
 }
@@ -24,8 +23,8 @@ export async function batchParse(
   ctx: GildashContext,
   filePaths: string[],
   options?: ParserOptions,
-): Promise<Result<Map<string, ParsedFile>, GildashError>> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
+): Promise<Map<string, ParsedFile>> {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   const result = new Map<string, ParsedFile>();
   await Promise.all(
     filePaths.map(async (fp) => {

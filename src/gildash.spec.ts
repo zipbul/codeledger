@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest, mock, spyOn } from 'bun:test';
-import { err, isErr } from '@zipbul/result';
 import { Gildash } from './gildash';
-import { gildashError, type GildashError } from './errors';
+import { GildashError } from './errors';
 import type { ResolvedType, SemanticReference, Implementation } from './semantic/types';
 import type { SemanticModuleInterface } from './semantic/types';
 import type { ExtractedSymbol, CodeRelation } from './extractor/types';
@@ -154,9 +153,7 @@ function makeOptions(opts: {
 }
 
 async function openOrThrow(opts: Parameters<typeof Gildash.open>[0]): Promise<Gildash> {
-  const result = await Gildash.open(opts);
-  if (isErr(result)) throw result.data;
-  return result;
+  return Gildash.open(opts);
 }
 
 beforeEach(() => {
@@ -518,17 +515,13 @@ describe('Gildash', () => {
   it('should return Err with validation type when projectRoot is a relative path', async () => {
     const opts: any = { projectRoot: 'relative/path' };
 
-    const result = await Gildash.open(opts);
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('validation');
+    await expect(Gildash.open(opts)).rejects.toThrow(GildashError);
   });
 
   it('should return Err with validation type when projectRoot does not exist on disk', async () => {
     const opts = makeOptions({ existsSync: () => false });
 
-    const result = await Gildash.open(opts);
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('validation');
+    await expect(Gildash.open(opts)).rejects.toThrow(GildashError);
   });
 
   it('should not throw when close() is called a second time', async () => {
@@ -615,8 +608,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'reader' });
     const ledger = await openOrThrow(opts);
 
-    const result = await (ledger as any).reindex();
-    expect(isErr(result)).toBe(true);
+    await expect((ledger as any).reindex()).rejects.toThrow(GildashError);
     await ledger.close();
   });
 
@@ -710,8 +702,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ db });
     opts.discoverProjectsFn = mock(async () => { throw new Error('discover failed'); }) as any;
 
-    const result = await Gildash.open(opts);
-    expect(isErr(result)).toBe(true);
+    await expect(Gildash.open(opts)).rejects.toThrow(GildashError);
     expect(db.close).toHaveBeenCalled();
   });
 
@@ -721,8 +712,7 @@ describe('Gildash', () => {
     watcher.start.mockRejectedValue(new Error('watcher start failed'));
     const opts = makeOptions({ role: 'owner', db, watcher });
 
-    const result = await Gildash.open(opts);
-    expect(isErr(result)).toBe(true);
+    await expect(Gildash.open(opts)).rejects.toThrow(GildashError);
     expect(db.close).toHaveBeenCalled();
   });
 
@@ -872,7 +862,7 @@ describe('Gildash', () => {
     const ledger = await openOrThrow(opts);
     await ledger.close();
 
-    expect(isErr(ledger.searchSymbols({ text: 'foo' }))).toBe(true);
+    expect(() => ledger.searchSymbols({ text: 'foo' })).toThrow(GildashError);
   });
 
   it('should return Err when searchRelations() is called after close()', async () => {
@@ -880,7 +870,7 @@ describe('Gildash', () => {
     const ledger = await openOrThrow(opts);
     await ledger.close();
 
-    expect(isErr(ledger.searchRelations({ srcFilePath: 'a.ts' }))).toBe(true);
+    expect(() => ledger.searchRelations({ srcFilePath: 'a.ts' })).toThrow(GildashError);
   });
 
   it('should return Err when stateless APIs are called after close()', async () => {
@@ -889,12 +879,12 @@ describe('Gildash', () => {
     const parsed = { filePath: '/project/src/a.ts', program: { body: [] }, errors: [], comments: [], sourceText: 'x' } as any;
     await ledger.close();
 
-    expect(isErr(ledger.parseSource('/project/src/a.ts', 'x'))).toBe(true);
-    expect(isErr(ledger.extractSymbols(parsed))).toBe(true);
-    expect(isErr(ledger.extractRelations(parsed))).toBe(true);
-    expect(isErr(ledger.getStats())).toBe(true);
-    expect(isErr(ledger.getDependencies('src/a.ts'))).toBe(true);
-    expect(isErr(ledger.getDependents('src/a.ts'))).toBe(true);
+    expect(() => ledger.parseSource('/project/src/a.ts', 'x')).toThrow(GildashError);
+    expect(() => ledger.extractSymbols(parsed)).toThrow(GildashError);
+    expect(() => ledger.extractRelations(parsed)).toThrow(GildashError);
+    expect(() => ledger.getStats()).toThrow(GildashError);
+    expect(() => ledger.getDependencies('src/a.ts')).toThrow(GildashError);
+    expect(() => ledger.getDependents('src/a.ts')).toThrow(GildashError);
   });
 
   it('should return Err when async APIs are called after close()', async () => {
@@ -902,9 +892,9 @@ describe('Gildash', () => {
     const ledger = await openOrThrow(opts);
     await ledger.close();
 
-    expect(isErr(await ledger.reindex())).toBe(true);
-    expect(isErr(await ledger.getAffected(['src/a.ts']))).toBe(true);
-    expect(isErr(await ledger.hasCycle())).toBe(true);
+    await expect(ledger.reindex()).rejects.toThrow(GildashError);
+    await expect(ledger.getAffected(['src/a.ts'])).rejects.toThrow(GildashError);
+    await expect(ledger.hasCycle()).rejects.toThrow(GildashError);
   });
 
   it('should use projectRoot basename as defaultProject when discoverProjects returns empty', async () => {
@@ -950,9 +940,7 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'owner', coordinator });
     const ledger = await openOrThrow(opts);
 
-    const result = await ledger.close();
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('close');
+    await expect(ledger.close()).rejects.toThrow(GildashError);
   });
 
   it('should accumulate multiple errors in Err when both coordinator and db.close() throw', async () => {
@@ -963,12 +951,14 @@ describe('Gildash', () => {
     const opts = makeOptions({ role: 'owner', coordinator, db });
     const ledger = await openOrThrow(opts);
 
-    const result = await ledger.close();
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('close');
-      expect(Array.isArray(result.data.cause)).toBe(true);
-      expect((result.data.cause as unknown[]).length).toBeGreaterThanOrEqual(2);
+    try {
+      await ledger.close();
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('close');
+      expect(Array.isArray((e as GildashError).cause)).toBe(true);
+      expect(((e as GildashError).cause as unknown[]).length).toBeGreaterThanOrEqual(2);
     }
   });
 
@@ -1205,12 +1195,14 @@ describe('Gildash', () => {
     const opts = makeOptions({ symbolRepo });
     const ledger = await openOrThrow(opts);
 
-    const result = (ledger as any).getStats();
 
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect((result.data as GildashError).type).toBe('store');
-      expect((result.data as GildashError).cause).toBeInstanceOf(Error);
+    try {
+      (ledger as any).getStats();
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('store');
+      expect((e as GildashError).cause).toBeInstanceOf(Error);
     }
     await ledger.close();
   });
@@ -1220,12 +1212,14 @@ describe('Gildash', () => {
     opts.symbolSearchFn.mockImplementation(() => { throw new Error('db error'); });
     const ledger = await openOrThrow(opts);
 
-    const result = ledger.searchSymbols({ text: 'foo' });
 
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBeInstanceOf(Error);
+    try {
+      ledger.searchSymbols({ text: 'foo' });
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBeInstanceOf(Error);
     }
     await ledger.close();
   });
@@ -1235,12 +1229,14 @@ describe('Gildash', () => {
     opts.relationSearchFn.mockImplementation(() => { throw new Error('db error'); });
     const ledger = await openOrThrow(opts);
 
-    const result = ledger.searchRelations({ srcFilePath: 'a.ts' });
 
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBeInstanceOf(Error);
+    try {
+      ledger.searchRelations({ srcFilePath: 'a.ts' });
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBeInstanceOf(Error);
     }
     await ledger.close();
   });
@@ -1250,12 +1246,14 @@ describe('Gildash', () => {
     opts.relationSearchFn.mockImplementation(() => { throw new Error('db error'); });
     const ledger = await openOrThrow(opts);
 
-    const result = ledger.getDependencies('src/a.ts');
 
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBeInstanceOf(Error);
+    try {
+      ledger.getDependencies('src/a.ts');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBeInstanceOf(Error);
     }
     await ledger.close();
   });
@@ -1265,12 +1263,14 @@ describe('Gildash', () => {
     opts.relationSearchFn.mockImplementation(() => { throw new Error('db error'); });
     const ledger = await openOrThrow(opts);
 
-    const result = ledger.getDependents('src/a.ts');
 
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBeInstanceOf(Error);
+    try {
+      ledger.getDependents('src/a.ts');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBeInstanceOf(Error);
     }
     await ledger.close();
   });
@@ -1281,12 +1281,14 @@ describe('Gildash', () => {
     const opts = makeOptions({ relationRepo });
     const ledger = await openOrThrow(opts);
 
-    const result = await ledger.getAffected(['src/a.ts']);
 
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBeInstanceOf(Error);
+    try {
+      await ledger.getAffected(['src/a.ts']);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBeInstanceOf(Error);
     }
     await ledger.close();
   });
@@ -1297,12 +1299,14 @@ describe('Gildash', () => {
     const opts = makeOptions({ relationRepo });
     const ledger = await openOrThrow(opts);
 
-    const result = await ledger.hasCycle();
 
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('search');
-      expect(result.data.cause).toBeInstanceOf(Error);
+    try {
+      await ledger.hasCycle();
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBeInstanceOf(Error);
     }
     await ledger.close();
   });
@@ -1313,12 +1317,14 @@ describe('Gildash', () => {
     const ledger = await openOrThrow(opts);
     coordinator.fullIndex.mockRejectedValue(new Error('db error'));
 
-    const result = await (ledger as any).reindex();
 
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect((result.data as GildashError).type).toBe('index');
-      expect((result.data as GildashError).cause).toBeInstanceOf(Error);
+    try {
+      await (ledger as any).reindex();
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('index');
+      expect((e as GildashError).cause).toBeInstanceOf(Error);
     }
     await ledger.close();
   });
@@ -1454,7 +1460,6 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       const result = (ledger as any).getFileInfo('src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual(record);
       await ledger.close();
     });
@@ -1467,7 +1472,6 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       const result = (ledger as any).getFileInfo('src/missing.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result).toBeNull();
       await ledger.close();
     });
@@ -1499,10 +1503,8 @@ describe('Gildash', () => {
 
       const ledger = await openOrThrow(opts);
       await ledger.close();
-      const result = (ledger as any).getFileInfo('src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      expect(() => (ledger as any).getFileInfo('src/a.ts')).toThrow(GildashError);
     });
 
     it('should return store error when fileRepo.getFile throws', async () => {
@@ -1511,10 +1513,8 @@ describe('Gildash', () => {
       const opts = makeOptions({ fileRepo });
 
       const ledger = await openOrThrow(opts);
-      const result = (ledger as any).getFileInfo('src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('store');
+      expect(() => (ledger as any).getFileInfo('src/a.ts')).toThrow(GildashError);
       await ledger.close();
     });
 
@@ -1535,10 +1535,8 @@ describe('Gildash', () => {
 
       const ledger = await openOrThrow(opts);
       await ledger.close();
-      const result = (ledger as any).getFileInfo('src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      expect(() => (ledger as any).getFileInfo('src/a.ts')).toThrow(GildashError);
       expect(fileRepo.getFile).not.toHaveBeenCalled();
     });
   });
@@ -1596,7 +1594,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).searchAllSymbols({});
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual([sym]);
       await ledger.close();
     });
@@ -1619,10 +1616,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = (ledger as any).searchAllSymbols({});
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      expect(() => (ledger as any).searchAllSymbols({})).toThrow(GildashError);
     });
 
     it('should return Err with search type when symbolSearchFn throws inside searchAllSymbols', async () => {
@@ -1630,10 +1625,8 @@ describe('Gildash', () => {
       const opts = { ...makeOptions(), symbolSearchFn } as any;
       const ledger = await openOrThrow(opts);
 
-      const result = (ledger as any).searchAllSymbols({});
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      expect(() => (ledger as any).searchAllSymbols({})).toThrow(GildashError);
       await ledger.close();
     });
 
@@ -1669,7 +1662,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).searchAllSymbols({});
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual([]);
       await ledger.close();
     });
@@ -1697,7 +1689,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).searchAllRelations({});
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual([rel]);
       await ledger.close();
     });
@@ -1707,10 +1698,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = (ledger as any).searchAllRelations({});
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      expect(() => (ledger as any).searchAllRelations({})).toThrow(GildashError);
     });
 
     it('should return Err with search type when relationSearchFn throws inside searchAllRelations', async () => {
@@ -1718,10 +1707,8 @@ describe('Gildash', () => {
       const opts = { ...makeOptions(), relationSearchFn } as any;
       const ledger = await openOrThrow(opts);
 
-      const result = (ledger as any).searchAllRelations({});
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      expect(() => (ledger as any).searchAllRelations({})).toThrow(GildashError);
       await ledger.close();
     });
   });
@@ -1763,7 +1750,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).listIndexedFiles();
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual(files);
       await ledger.close();
     });
@@ -1773,10 +1759,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = (ledger as any).listIndexedFiles();
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      expect(() => (ledger as any).listIndexedFiles()).toThrow(GildashError);
     });
 
     it('should return Err with store type when fileRepo.getAllFiles throws inside listIndexedFiles', async () => {
@@ -1785,10 +1769,8 @@ describe('Gildash', () => {
       const opts = makeOptions({ fileRepo });
       const ledger = await openOrThrow(opts);
 
-      const result = (ledger as any).listIndexedFiles();
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('store');
+      expect(() => (ledger as any).listIndexedFiles()).toThrow(GildashError);
       await ledger.close();
     });
 
@@ -1800,7 +1782,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).listIndexedFiles();
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual([]);
       await ledger.close();
     });
@@ -1856,7 +1837,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getInternalRelations('src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual([rel]);
       await ledger.close();
     });
@@ -1866,10 +1846,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = (ledger as any).getInternalRelations('src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      expect(() => (ledger as any).getInternalRelations('src/a.ts')).toThrow(GildashError);
     });
 
     it('should return Err with search type when relationSearchFn throws inside getInternalRelations', async () => {
@@ -1877,10 +1855,8 @@ describe('Gildash', () => {
       const opts = { ...makeOptions(), relationSearchFn } as any;
       const ledger = await openOrThrow(opts);
 
-      const result = (ledger as any).getInternalRelations('src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      expect(() => (ledger as any).getInternalRelations('src/a.ts')).toThrow(GildashError);
       await ledger.close();
     });
 
@@ -1891,7 +1867,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getInternalRelations('src/isolated.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual([]);
       await ledger.close();
     });
@@ -2113,7 +2088,6 @@ describe('Gildash', () => {
 
       const result = await ledger.getImportGraph();
 
-      expect(isErr(result)).toBe(false);
       expect(result).toBeInstanceOf(Map);
       expect((result as Map<string, string[]>).get('src/a.ts')).toContain('src/b.ts');
       await ledger.close();
@@ -2125,7 +2099,6 @@ describe('Gildash', () => {
 
       const result = await ledger.getImportGraph();
 
-      expect(isErr(result)).toBe(false);
       expect((result as Map<string, string[]>).size).toBe(0);
       await ledger.close();
     });
@@ -2135,10 +2108,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = await ledger.getImportGraph();
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      await expect(ledger.getImportGraph()).rejects.toThrow(GildashError);
     });
 
     it('should return Err with search type when relationRepo throws inside getImportGraph', async () => {
@@ -2147,10 +2118,8 @@ describe('Gildash', () => {
       const opts = makeOptions({ relationRepo });
       const ledger = await openOrThrow(opts);
 
-      const result = await ledger.getImportGraph();
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      await expect(ledger.getImportGraph()).rejects.toThrow(GildashError);
       await ledger.close();
     });
   });
@@ -2169,7 +2138,6 @@ describe('Gildash', () => {
 
       const result = await ledger.getTransitiveDependencies('src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result as string[]).toContain('src/b.ts');
       expect(result as string[]).toContain('src/c.ts');
       await ledger.close();
@@ -2181,7 +2149,6 @@ describe('Gildash', () => {
 
       const result = await ledger.getTransitiveDependencies('src/isolated.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual([]);
       await ledger.close();
     });
@@ -2191,10 +2158,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = await ledger.getTransitiveDependencies('src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      await expect(ledger.getTransitiveDependencies('src/a.ts')).rejects.toThrow(GildashError);
     });
 
     it('should not loop infinitely when cycle exists in getTransitiveDependencies', async () => {
@@ -2227,7 +2192,6 @@ describe('Gildash', () => {
 
       const result = await ledger.getCyclePaths();
 
-      expect(isErr(result)).toBe(false);
       expect((result as string[][]).length).toBeGreaterThan(0);
       await ledger.close();
     });
@@ -2238,7 +2202,6 @@ describe('Gildash', () => {
 
       const result = await ledger.getCyclePaths();
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual([]);
       await ledger.close();
     });
@@ -2248,10 +2211,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = await ledger.getCyclePaths();
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      await expect(ledger.getCyclePaths()).rejects.toThrow(GildashError);
     });
 
     it('should return Err with search type when relationRepo throws inside getCyclePaths', async () => {
@@ -2260,10 +2221,8 @@ describe('Gildash', () => {
       const opts = makeOptions({ relationRepo });
       const ledger = await openOrThrow(opts);
 
-      const result = await ledger.getCyclePaths();
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      await expect(ledger.getCyclePaths()).rejects.toThrow(GildashError);
       await ledger.close();
     });
 
@@ -2280,7 +2239,6 @@ describe('Gildash', () => {
 
       const result = await ledger.getCyclePaths(undefined, { maxCycles: 1 });
 
-      expect(isErr(result)).toBe(false);
       expect(result as string[][]).toHaveLength(1);
       await ledger.close();
     });
@@ -2296,7 +2254,6 @@ describe('Gildash', () => {
 
       const result = await ledger.batchParse(['/project/src/a.ts', '/project/src/b.ts']);
 
-      expect(isErr(result)).toBe(false);
       const map = result as Map<string, any>;
       expect(map).toBeInstanceOf(Map);
       expect(map.size).toBe(2);
@@ -2311,7 +2268,6 @@ describe('Gildash', () => {
 
       const result = await ledger.batchParse([]);
 
-      expect(isErr(result)).toBe(false);
       expect((result as Map<string, any>).size).toBe(0);
       await ledger.close();
     });
@@ -2326,7 +2282,6 @@ describe('Gildash', () => {
 
       const result = await ledger.batchParse(['/project/src/ok.ts', '/project/src/fail.ts']);
 
-      expect(isErr(result)).toBe(false);
       const map = result as Map<string, any>;
       expect(map.has('/project/src/ok.ts')).toBe(true);
       expect(map.has('/project/src/fail.ts')).toBe(false);
@@ -2338,10 +2293,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = await ledger.batchParse(['/project/src/a.ts']);
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      await expect(ledger.batchParse(['/project/src/a.ts'])).rejects.toThrow(GildashError);
     });
 
     it('should exclude file when parseSourceFn throws for that file in batchParse', async () => {
@@ -2370,7 +2323,6 @@ describe('Gildash', () => {
 
       const result = await ledger.batchParse(['/project/src/single.ts']);
 
-      expect(isErr(result)).toBe(false);
       expect((result as Map<string, any>).size).toBe(1);
       await ledger.close();
     });
@@ -2407,7 +2359,6 @@ describe('Gildash', () => {
 
       const result = ledger.getModuleInterface('/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       const mi = result as any;
       expect(mi.filePath).toBe('/project/src/a.ts');
       expect(mi.exports).toHaveLength(1);
@@ -2425,7 +2376,6 @@ describe('Gildash', () => {
 
       const result = ledger.getModuleInterface('/project/src/empty.ts');
 
-      expect(isErr(result)).toBe(false);
       const mi = result as any;
       expect(mi.exports).toEqual([]);
       await ledger.close();
@@ -2449,10 +2399,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = ledger.getModuleInterface('/project/src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      expect(() => ledger.getModuleInterface('/project/src/a.ts')).toThrow(GildashError);
     });
 
     it('should return Err with search type when symbolSearchFn throws inside getModuleInterface', async () => {
@@ -2460,10 +2408,8 @@ describe('Gildash', () => {
       const opts = { ...makeOptions(), symbolSearchFn } as any;
       const ledger = await openOrThrow(opts);
 
-      const result = ledger.getModuleInterface('/project/src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      expect(() => ledger.getModuleInterface('/project/src/a.ts')).toThrow(GildashError);
       await ledger.close();
     });
 
@@ -2500,7 +2446,6 @@ describe('Gildash', () => {
 
       const result = await ledger.getHeritageChain('ClassA', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       const node = result as any;
       expect(node.symbolName).toBe('ClassA');
       expect(node.children).toHaveLength(1);
@@ -2515,7 +2460,6 @@ describe('Gildash', () => {
 
       const result = await ledger.getHeritageChain('StandaloneClass', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       const node = result as any;
       expect(node.symbolName).toBe('StandaloneClass');
       expect(node.children).toEqual([]);
@@ -2527,10 +2471,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = await ledger.getHeritageChain('ClassA', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      await expect(ledger.getHeritageChain('ClassA', '/project/src/a.ts')).rejects.toThrow(GildashError);
     });
 
     it('should not loop infinitely when cycle exists in getHeritageChain', async () => {
@@ -2566,7 +2508,6 @@ describe('Gildash', () => {
 
       const result = await ledger.getHeritageChain('MyClass', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       const node = result as any;
       expect(node.children[0].kind).toBe('implements');
       expect(node.children[0].symbolName).toBe('IFoo');
@@ -2578,10 +2519,8 @@ describe('Gildash', () => {
       const opts = { ...makeOptions(), relationSearchFn } as any;
       const ledger = await openOrThrow(opts);
 
-      const result = await ledger.getHeritageChain('ClassA', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      await expect(ledger.getHeritageChain('ClassA', '/project/src/a.ts')).rejects.toThrow(GildashError);
       await ledger.close();
     });
   });
@@ -2692,9 +2631,8 @@ describe('Gildash', () => {
       const unlinkFn = mock(async (_p: string) => { throw new Error('unlink failed'); });
       const opts = { ...makeOptions(), unlinkFn } as any;
       const ledger = await openOrThrow(opts);
-      const result = await ledger.close({ cleanup: true });
+      await ledger.close({ cleanup: true });
 
-      expect(isErr(result)).toBe(false);
     });
   });
 
@@ -2715,7 +2653,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFullSymbol('MyClass', 'src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.members).toEqual([{ name: 'doWork', kind: 'method', type: 'void', visibility: 'public', isStatic: false }]);
       await ledger.close();
     });
@@ -2733,7 +2670,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFullSymbol('fetchData', 'src/b.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.parameters).toBe('url: string');
       expect(result.returnType).toBe('Promise<Data>');
       await ledger.close();
@@ -2752,7 +2688,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFullSymbol('MyFunc', 'src/c.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.jsDoc).toBe('/** Does something useful */');
       await ledger.close();
     });
@@ -2770,7 +2705,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFullSymbol('DerivedClass', 'src/d.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.heritage).toEqual(['BaseClass', 'IMixin']);
       await ledger.close();
     });
@@ -2788,7 +2722,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFullSymbol('Injectable', 'src/e.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.decorators).toEqual([{ name: 'Injectable', arguments: "'singleton'" }]);
       await ledger.close();
     });
@@ -2806,7 +2739,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFullSymbol('SimpleVar', 'src/f.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.members).toBeUndefined();
       expect(result.jsDoc).toBeUndefined();
       expect(result.parameters).toBeUndefined();
@@ -2814,16 +2746,14 @@ describe('Gildash', () => {
       await ledger.close();
     });
 
-    // 7. [NE] symbol not found → Err with search type
-    it('should return Err with search type when getFullSymbol cannot find the requested symbol', async () => {
+    // 7. [NE] symbol not found → null
+    it('should return null when getFullSymbol cannot find the requested symbol', async () => {
       const opts = makeOptions();
       opts.symbolSearchFn.mockReturnValue([]);
       const ledger = await openOrThrow(opts);
 
       const result = (ledger as any).getFullSymbol('NotExist', 'src/x.ts');
-
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      expect(result).toBeNull();
       await ledger.close();
     });
 
@@ -2833,10 +2763,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = (ledger as any).getFullSymbol('Foo', 'src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      expect(() => (ledger as any).getFullSymbol('Foo', 'src/a.ts')).toThrow(GildashError);
     });
 
     // 9. [ED] symbol with empty members array → members is []
@@ -2852,7 +2780,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFullSymbol('EmptyClass', 'src/g.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.members).toEqual([]);
       await ledger.close();
     });
@@ -2863,10 +2790,8 @@ describe('Gildash', () => {
       opts.symbolSearchFn.mockImplementation(() => { throw new Error('db error'); });
       const ledger = await openOrThrow(opts);
 
-      const result = (ledger as any).getFullSymbol('Foo', 'src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      expect(() => (ledger as any).getFullSymbol('Foo', 'src/a.ts')).toThrow(GildashError);
       await ledger.close();
     });
   });
@@ -2893,7 +2818,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFileStats('src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result).toMatchObject({
         filePath: 'src/a.ts',
         lineCount: 80,
@@ -2917,7 +2841,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFileStats('src/empty.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.symbolCount).toBe(0);
       expect(result.exportedSymbolCount).toBe(0);
       await ledger.close();
@@ -2941,7 +2864,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFileStats('src/b.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.symbolCount).toBe(3);
       expect(result.exportedSymbolCount).toBe(2);
       await ledger.close();
@@ -2952,10 +2874,8 @@ describe('Gildash', () => {
       const opts = makeOptions();
       const ledger = await openOrThrow(opts);
 
-      const result = (ledger as any).getFileStats('src/missing.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      expect(() => (ledger as any).getFileStats('src/missing.ts')).toThrow(GildashError);
       await ledger.close();
     });
 
@@ -2965,10 +2885,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = (ledger as any).getFileStats('src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      expect(() => (ledger as any).getFileStats('src/a.ts')).toThrow(GildashError);
     });
 
     // 6. [ED] lineCount null → returns 0
@@ -2983,7 +2901,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFileStats('src/null-lc.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.lineCount).toBe(0);
       await ledger.close();
     });
@@ -3000,10 +2917,8 @@ describe('Gildash', () => {
       const opts = makeOptions({ fileRepo, symbolRepo });
       const ledger = await openOrThrow(opts);
 
-      const result = (ledger as any).getFileStats('src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('store');
+      expect(() => (ledger as any).getFileStats('src/a.ts')).toThrow(GildashError);
       await ledger.close();
     });
 
@@ -3019,7 +2934,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFileStats('src/leaf.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.relationCount).toBe(0);
       await ledger.close();
     });
@@ -3041,7 +2955,6 @@ describe('Gildash', () => {
 
       const result = await (ledger as any).getFanMetrics('src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.fanIn).toBe(3);
       await ledger.close();
     });
@@ -3059,7 +2972,6 @@ describe('Gildash', () => {
 
       const result = await (ledger as any).getFanMetrics('src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.fanOut).toBe(2);
       await ledger.close();
     });
@@ -3071,7 +2983,6 @@ describe('Gildash', () => {
 
       const result = await (ledger as any).getFanMetrics('src/isolated.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.fanIn).toBe(0);
       expect(result.fanOut).toBe(0);
       await ledger.close();
@@ -3083,10 +2994,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = await (ledger as any).getFanMetrics('src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      await expect((ledger as any).getFanMetrics('src/a.ts')).rejects.toThrow(GildashError);
     });
 
     // 5. [NE] build throws → Err('search')
@@ -3096,10 +3005,8 @@ describe('Gildash', () => {
       const opts = makeOptions({ relationRepo });
       const ledger = await openOrThrow(opts);
 
-      const result = await (ledger as any).getFanMetrics('src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      await expect((ledger as any).getFanMetrics('src/a.ts')).rejects.toThrow(GildashError);
       await ledger.close();
     });
 
@@ -3114,7 +3021,6 @@ describe('Gildash', () => {
 
       const result = await (ledger as any).getFanMetrics('src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.fanIn).toBe(1);
       await ledger.close();
     });
@@ -3132,7 +3038,6 @@ describe('Gildash', () => {
 
       const result = await (ledger as any).getFanMetrics('src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.fanIn).toBeGreaterThan(0);
       expect(result.fanOut).toBeGreaterThan(0);
       await ledger.close();
@@ -3150,7 +3055,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.originalName).toBe('Foo');
       expect(result.originalFilePath).toBe('/project/src/a.ts');
       expect(result.reExportChain).toEqual([]);
@@ -3174,7 +3078,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.originalName).toBe('Foo');
       expect(result.originalFilePath).toBe('/project/src/b.ts');
       expect(result.reExportChain).toEqual([{ filePath: '/project/src/a.ts', exportedAs: 'Foo' }]);
@@ -3198,7 +3101,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.originalName).toBe('Bar');
       expect(result.originalFilePath).toBe('/project/src/b.ts');
       expect(result.reExportChain).toEqual([{ filePath: '/project/src/a.ts', exportedAs: 'Foo' }]);
@@ -3230,7 +3132,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.originalFilePath).toBe('/project/src/c.ts');
       expect(result.reExportChain.length).toBe(2);
       expect(result.reExportChain[0]).toEqual({ filePath: '/project/src/a.ts', exportedAs: 'Foo' });
@@ -3238,8 +3139,8 @@ describe('Gildash', () => {
       await ledger.close();
     });
 
-    // 5. [EP] circular re-export A → B → A → Err('search')
-    it('should return Err(search) when re-export chain is circular', async () => {
+    // 5. [EP] circular re-export A → B → A → { circular: true }
+    it('should return { circular: true } when re-export chain is circular', async () => {
       const opts = makeOptions();
       opts.relationSearchFn
         .mockReturnValueOnce([{
@@ -3261,9 +3162,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
 
       const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
-
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      expect(result.circular).toBe(true);
+      expect(result.reExportChain.length).toBeGreaterThan(0);
       await ledger.close();
     });
 
@@ -3273,10 +3173,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      expect(() => (ledger as any).resolveSymbol('Foo', '/project/src/a.ts')).toThrow(GildashError);
     });
 
     // 7. [HP] project 파라미터 전달 확인
@@ -3308,7 +3206,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).resolveSymbol('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.originalName).toBe('Foo');
       expect(result.originalFilePath).toBe('/project/src/a.ts');
       expect(result.reExportChain).toEqual([]);
@@ -3328,7 +3225,6 @@ describe('Gildash', () => {
 
       const result = await (ledger as any).findPattern('console.log($$$)');
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual(matches);
       await ledger.close();
     });
@@ -3373,7 +3269,6 @@ describe('Gildash', () => {
 
       const result = await (ledger as any).findPattern('nonExistentPattern');
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual([]);
       await ledger.close();
     });
@@ -3384,10 +3279,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = await (ledger as any).findPattern('foo()');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      await expect((ledger as any).findPattern('foo()')).rejects.toThrow(GildashError);
     });
 
     // 6. [EP] patternSearchFn throws → Err('search')
@@ -3396,10 +3289,8 @@ describe('Gildash', () => {
       (opts as any).patternSearchFn.mockRejectedValue(new Error('ast-grep failed'));
       const ledger = await openOrThrow(opts);
 
-      const result = await (ledger as any).findPattern('foo()');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      await expect((ledger as any).findPattern('foo()')).rejects.toThrow(GildashError);
       await ledger.close();
     });
   });
@@ -3548,13 +3439,11 @@ describe('Gildash', () => {
       const opts = {
         ...base,
         semantic: true,
-        semanticLayerFactory: mock(() => err(gildashError('semantic', 'tsconfig not found'))),
+        semanticLayerFactory: mock(() => { throw new GildashError('semantic', 'tsconfig not found'); }),
       } as any;
 
-      const result = await Gildash.open(opts);
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('semantic');
+      await expect(Gildash.open(opts)).rejects.toThrow(GildashError);
     });
 
     // 3. [HP] getResolvedType → symbol found + collectTypeAt returns type
@@ -3567,7 +3456,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getResolvedType('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual(SAMPLE_TYPE);
       expect(opts._sl.lineColumnToPosition).toHaveBeenCalledWith('/project/src/a.ts', 5, 10);
       expect(opts._sl.findNamePosition).toHaveBeenCalledWith('/project/src/a.ts', 42, 'Foo');
@@ -3585,7 +3473,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getResolvedType('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result).toBeNull();
       await ledger.close();
     });
@@ -3603,7 +3490,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getSemanticReferences('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual(refs);
       expect(opts._sl.findReferences).toHaveBeenCalledWith('/project/src/a.ts', 55);
       await ledger.close();
@@ -3622,7 +3508,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getImplementations('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual(impls);
       expect(opts._sl.findImplementations).toHaveBeenCalledWith('/project/src/a.ts', 55);
       await ledger.close();
@@ -3640,7 +3525,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getSemanticModuleInterface('/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result).toEqual(moduleIface);
       expect(opts._sl.getModuleInterface).toHaveBeenCalledWith('/project/src/a.ts');
       await ledger.close();
@@ -3659,7 +3543,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFullSymbol('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.resolvedType).toEqual(SAMPLE_TYPE);
       expect(result.parameters).toBe('x: number');
       await ledger.close();
@@ -3676,7 +3559,6 @@ describe('Gildash', () => {
 
       const result = (ledger as any).getFullSymbol('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(false);
       expect(result.resolvedType).toBeUndefined();
       await ledger.close();
     });
@@ -3708,50 +3590,38 @@ describe('Gildash', () => {
       await ledger.close();
     });
 
-    // 12. [NE] semantic APIs after close → Err 'closed'
-    it('should return Err with closed type when semantic APIs are called after close()', async () => {
+    // 12. [NE] semantic APIs after close → throw 'closed'
+    it('should throw with closed type when semantic APIs are called after close()', async () => {
       const opts = makeSemanticOpts();
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const r1 = (ledger as any).getResolvedType('Foo', '/project/src/a.ts');
-      const r2 = (ledger as any).getSemanticReferences('Foo', '/project/src/a.ts');
-      const r3 = (ledger as any).getImplementations('Foo', '/project/src/a.ts');
-      const r4 = (ledger as any).getSemanticModuleInterface('/project/src/a.ts');
-
-      for (const r of [r1, r2, r3, r4]) {
-        expect(isErr(r)).toBe(true);
-        expect((r as any).data.type).toBe('closed');
-      }
+      expect(() => (ledger as any).getResolvedType('Foo', '/project/src/a.ts')).toThrow(GildashError);
+      expect(() => (ledger as any).getSemanticReferences('Foo', '/project/src/a.ts')).toThrow(GildashError);
+      expect(() => (ledger as any).getImplementations('Foo', '/project/src/a.ts')).toThrow(GildashError);
+      expect(() => (ledger as any).getSemanticModuleInterface('/project/src/a.ts')).toThrow(GildashError);
     });
 
-    // 13. [NE] semantic APIs without semantic → Err 'semantic'
-    it('should return Err with semantic type when semantic APIs are called without semantic enabled', async () => {
+    // 13. [NE] semantic APIs without semantic → throw 'semantic'
+    it('should throw with semantic type when semantic APIs are called without semantic enabled', async () => {
       const opts = makeOptions();
       const ledger = await openOrThrow(opts);
 
-      const r1 = (ledger as any).getResolvedType('Foo', '/project/src/a.ts');
-      const r2 = (ledger as any).getSemanticReferences('Foo', '/project/src/a.ts');
-      const r3 = (ledger as any).getImplementations('Foo', '/project/src/a.ts');
-      const r4 = (ledger as any).getSemanticModuleInterface('/project/src/a.ts');
-
-      for (const r of [r1, r2, r3, r4]) {
-        expect(isErr(r)).toBe(true);
-        expect((r as any).data.type).toBe('semantic');
-      }
+      expect(() => (ledger as any).getResolvedType('Foo', '/project/src/a.ts')).toThrow(GildashError);
+      expect(() => (ledger as any).getSemanticReferences('Foo', '/project/src/a.ts')).toThrow(GildashError);
+      expect(() => (ledger as any).getImplementations('Foo', '/project/src/a.ts')).toThrow(GildashError);
+      expect(() => (ledger as any).getSemanticModuleInterface('/project/src/a.ts')).toThrow(GildashError);
       await ledger.close();
     });
 
-    // 14. [NE] getResolvedType symbol not found → Err 'search'
-    it('should return Err with search type when getResolvedType cannot find the symbol', async () => {
+    // 14. [NE] getResolvedType symbol not found → null
+    it('should return null when getResolvedType cannot find the symbol', async () => {
       const opts = makeSemanticOpts();
       opts.symbolSearchFn.mockReturnValue([]);
       const ledger = await openOrThrow(opts);
 
       const result = (ledger as any).getResolvedType('NonExistent', '/project/src/a.ts');
-
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      expect(result).toBeNull();
       await ledger.close();
     });
 
@@ -3761,10 +3631,8 @@ describe('Gildash', () => {
       opts.symbolSearchFn.mockImplementation(() => { throw new Error('db error'); });
       const ledger = await openOrThrow(opts);
 
-      const result = (ledger as any).getResolvedType('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('search');
+      expect(() => (ledger as any).getResolvedType('Foo', '/project/src/a.ts')).toThrow(GildashError);
       await ledger.close();
     });
 
@@ -3774,10 +3642,8 @@ describe('Gildash', () => {
       opts._sl.dispose.mockImplementation(() => { throw new Error('dispose failed'); });
       const ledger = await openOrThrow(opts);
 
-      const result = await ledger.close();
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('close');
+      await expect(ledger.close()).rejects.toThrow(GildashError);
     });
 
     // 17. [CO] closed check > semantic check priority
@@ -3786,10 +3652,8 @@ describe('Gildash', () => {
       const ledger = await openOrThrow(opts);
       await ledger.close();
 
-      const result = (ledger as any).getResolvedType('Foo', '/project/src/a.ts');
 
-      expect(isErr(result)).toBe(true);
-      expect((result as any).data.type).toBe('closed');
+      expect(() => (ledger as any).getResolvedType('Foo', '/project/src/a.ts')).toThrow(GildashError);
     });
 
     // 18. [OR] SemanticLayer created before fullIndex

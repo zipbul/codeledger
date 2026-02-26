@@ -1,6 +1,5 @@
 import { describe, it, expect, mock } from 'bun:test';
-import { err, isErr } from '@zipbul/result';
-import { gildashError } from '../errors';
+import { GildashError } from '../errors';
 import type { GildashContext } from './context';
 import type { ParsedFile } from '../parser/types';
 import { extractSymbols, extractRelations } from './extract-api';
@@ -39,23 +38,17 @@ describe('extractSymbols', () => {
 
     const result = extractSymbols(ctx, parsed);
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(symbols as any);
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn).toHaveBeenCalledWith(parsed);
   });
 
-  it('should return err with type closed when ctx.closed is true', () => {
+  it('should throw GildashError with type closed when ctx.closed is true', () => {
     const ctx = makeCtx({ closed: true });
     const parsed = makeParsed();
 
-    const result = extractSymbols(ctx, parsed);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('closed');
-      expect(result.data.message).toBe('Gildash: instance is closed');
-    }
+    expect(() => extractSymbols(ctx, parsed)).toThrow(GildashError);
+    expect(() => extractSymbols(ctx, parsed)).toThrow(/instance is closed/);
   });
 
   it('should not call extractSymbolsFn when ctx.closed is true', () => {
@@ -63,40 +56,21 @@ describe('extractSymbols', () => {
     const ctx = makeCtx({ closed: true, extractSymbolsFn: fn as any });
     const parsed = makeParsed();
 
-    extractSymbols(ctx, parsed);
+    try { extractSymbols(ctx, parsed); } catch {}
 
     expect(fn).toHaveBeenCalledTimes(0);
   });
 
-  it('should propagate err result from extractSymbolsFn', () => {
-    const extractErr = err(gildashError('extract', 'extraction failed'));
-    const fn = mock(() => extractErr);
-    const ctx = makeCtx({ extractSymbolsFn: fn as any });
-    const parsed = makeParsed();
-
-    const result = extractSymbols(ctx, parsed);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('extract');
-      expect(result.data.message).toBe('extraction failed');
-    }
-  });
-
-  it('should return err after ctx transitions from open to closed', () => {
+  it('should throw after ctx transitions from open to closed', () => {
     const ctx = makeCtx();
     const parsed = makeParsed();
 
     const firstResult = extractSymbols(ctx, parsed);
-    expect(isErr(firstResult)).toBe(false);
+    expect(firstResult).toEqual([]);
 
     ctx.closed = true;
 
-    const secondResult = extractSymbols(ctx, parsed);
-    expect(isErr(secondResult)).toBe(true);
-    if (isErr(secondResult)) {
-      expect(secondResult.data.type).toBe('closed');
-    }
+    expect(() => extractSymbols(ctx, parsed)).toThrow(GildashError);
   });
 
   it('should call extractSymbolsFn on every invocation without caching', () => {
@@ -126,7 +100,6 @@ describe('extractRelations', () => {
 
     const result = extractRelations(ctx, parsed);
 
-    expect(isErr(result)).toBe(false);
     expect(result).toBe(relations as any);
     expect(fn).toHaveBeenCalledTimes(1);
     expect(fn).toHaveBeenCalledWith(parsed.program, parsed.filePath, tsconfigPaths);
@@ -169,17 +142,12 @@ describe('extractRelations', () => {
     expect(fn).toHaveBeenCalledWith(parsed.program, parsed.filePath, emptyPaths);
   });
 
-  it('should return err with type closed when ctx.closed is true', () => {
+  it('should throw GildashError with type closed when ctx.closed is true', () => {
     const ctx = makeCtx({ closed: true });
     const parsed = makeParsed();
 
-    const result = extractRelations(ctx, parsed);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('closed');
-      expect(result.data.message).toBe('Gildash: instance is closed');
-    }
+    expect(() => extractRelations(ctx, parsed)).toThrow(GildashError);
+    expect(() => extractRelations(ctx, parsed)).toThrow(/instance is closed/);
   });
 
   it('should not call extractRelationsFn when ctx.closed is true', () => {
@@ -187,39 +155,20 @@ describe('extractRelations', () => {
     const ctx = makeCtx({ closed: true, extractRelationsFn: fn as any });
     const parsed = makeParsed();
 
-    extractRelations(ctx, parsed);
+    try { extractRelations(ctx, parsed); } catch {}
 
     expect(fn).toHaveBeenCalledTimes(0);
   });
 
-  it('should propagate err result from extractRelationsFn', () => {
-    const relErr = err(gildashError('extract', 'relation extraction failed'));
-    const fn = mock(() => relErr);
-    const ctx = makeCtx({ extractRelationsFn: fn as any });
-    const parsed = makeParsed();
-
-    const result = extractRelations(ctx, parsed);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('extract');
-      expect(result.data.message).toBe('relation extraction failed');
-    }
-  });
-
-  it('should return err after ctx transitions from open to closed', () => {
+  it('should throw after ctx transitions from open to closed', () => {
     const ctx = makeCtx();
     const parsed = makeParsed();
 
     const firstResult = extractRelations(ctx, parsed);
-    expect(isErr(firstResult)).toBe(false);
+    expect(firstResult).toEqual([]);
 
     ctx.closed = true;
 
-    const secondResult = extractRelations(ctx, parsed);
-    expect(isErr(secondResult)).toBe(true);
-    if (isErr(secondResult)) {
-      expect(secondResult.data.type).toBe('closed');
-    }
+    expect(() => extractRelations(ctx, parsed)).toThrow(GildashError);
   });
 });

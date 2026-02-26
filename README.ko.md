@@ -49,7 +49,7 @@ gildash는 TypeScript 코드베이스를 로컬 SQLite 데이터베이스에 인
 bun add @zipbul/gildash
 ```
 
-> **피어 의존성** — [`@zipbul/result`](https://www.npmjs.com/package/@zipbul/result)가 필요합니다. 모든 public 메서드는 `Result<T, GildashError>`를 반환합니다.
+> **선택적 피어 의존성** — `typescript` (>=5.0.0)는 `semantic: true` 사용 시에만 필요합니다.
 
 <br>
 
@@ -57,7 +57,6 @@ bun add @zipbul/gildash
 
 ```ts
 import { Gildash } from '@zipbul/gildash';
-import { isErr } from '@zipbul/result';
 
 // 1. 열기 — 최초 실행 시 전체 .ts 파일 인덱싱, 이후 파일 변경 감시
 const ledger = await Gildash.open({
@@ -65,10 +64,8 @@ const ledger = await Gildash.open({
 });
 
 // 2. 검색 — 이름으로 심볼 찾기
-const result = ledger.searchSymbols({ text: 'UserService', kind: 'class' });
-if (!isErr(result)) {
-  result.forEach(s => console.log(`${s.name} → ${s.filePath}`));
-}
+const symbols = ledger.searchSymbols({ text: 'UserService', kind: 'class' });
+symbols.forEach(s => console.log(`${s.name} → ${s.filePath}`));
 
 // 3. 종료 — 리소스 해제
 await ledger.close();
@@ -201,16 +198,18 @@ await ledger.close({ cleanup: true });   // DB 파일까지 삭제
 
 ## ❌ 에러 처리
 
-모든 public 메서드는 [`@zipbul/result`](https://www.npmjs.com/package/@zipbul/result)의 `Result<T, GildashError>`를 반환합니다. `isErr()`로 에러를 분기합니다:
+public 메서드는 값을 직접 반환하고, 실패 시 `GildashError`를 throw합니다. `instanceof`로 분기합니다:
 
 ```ts
-import { isErr } from '@zipbul/result';
+import { Gildash, GildashError } from '@zipbul/gildash';
 
-const result = ledger.searchSymbols({ text: 'foo' });
-if (isErr(result)) {
-  console.error(result.data.type, result.data.message);
-} else {
-  console.log(`${result.length}개 심볼 발견`);
+try {
+  const symbols = ledger.searchSymbols({ text: 'foo' });
+  console.log(`${symbols.length}개 심볼 발견`);
+} catch (e) {
+  if (e instanceof GildashError) {
+    console.error(`[${e.type}] ${e.message}`);
+  }
 }
 ```
 
@@ -230,9 +229,9 @@ if (isErr(result)) {
 | `watchMode` | `boolean` | `true` | `false`이면 파일 워처 비활성화 (스캔 전용 모드) |
 | `semantic` | `boolean` | `false` | tsc TypeChecker 기반 시맨틱 분석 활성화 |
 
-**반환**: `Promise<Gildash>` (`Result`로 래핑됨)
+**반환**: `Promise<Gildash>`. 실패 시 `GildashError`를 throw합니다.
 
-> **참고:** `semantic: true`는 프로젝트 루트에 `tsconfig.json`이 필요합니다. 없으면 `Gildash.open()`이 `GildashError`를 반환합니다.
+> **참고:** `semantic: true`는 프로젝트 루트에 `tsconfig.json`이 필요합니다. 없으면 `Gildash.open()`이 `GildashError`를 throw합니다.
 
 <br>
 
@@ -242,34 +241,34 @@ if (isErr(result)) {
 
 | 메서드 | 반환 타입 | 설명 |
 |--------|-----------|------|
-| `searchSymbols(query)` | `Result<SymbolSearchResult[]>` | FTS5 전문검색 + exact/regex/decorator 필터 |
-| `searchRelations(query)` | `Result<StoredCodeRelation[]>` | 파일, 심볼, 관계 유형 필터 |
-| `searchAllSymbols(query)` | `Result<SymbolSearchResult[]>` | 전체 프로젝트 심볼 검색 |
-| `searchAllRelations(query)` | `Result<StoredCodeRelation[]>` | 전체 프로젝트 관계 검색 |
-| `listIndexedFiles(project?)` | `Result<FileRecord[]>` | 인덱싱된 파일 목록 |
-| `getSymbolsByFile(filePath)` | `Result<SymbolSearchResult[]>` | 단일 파일의 모든 심볼 |
+| `searchSymbols(query)` | `SymbolSearchResult[]` | FTS5 전문검색 + exact/regex/decorator 필터 |
+| `searchRelations(query)` | `StoredCodeRelation[]` | 파일, 심볼, 관계 유형 필터 |
+| `searchAllSymbols(query)` | `SymbolSearchResult[]` | 전체 프로젝트 심볼 검색 |
+| `searchAllRelations(query)` | `StoredCodeRelation[]` | 전체 프로젝트 관계 검색 |
+| `listIndexedFiles(project?)` | `FileRecord[]` | 인덱싱된 파일 목록 |
+| `getSymbolsByFile(filePath)` | `SymbolSearchResult[]` | 단일 파일의 모든 심볼 |
 
 ### 의존성 그래프
 
 | 메서드 | 반환 타입 | 설명 |
 |--------|-----------|------|
-| `getDependencies(filePath)` | `Result<string[]>` | `filePath`가 import하는 파일 목록 |
-| `getDependents(filePath)` | `Result<string[]>` | `filePath`를 import하는 파일 목록 |
-| `getAffected(changedFiles)` | `Promise<Result<string[]>>` | 전이적 영향 범위 |
-| `hasCycle(project?)` | `Promise<Result<boolean>>` | 순환 의존성 감지 |
-| `getCyclePaths(project?, opts?)` | `Promise<Result<string[][]>>` | 모든 순환 경로 (Tarjan SCC + Johnson's). `opts.maxCycles`로 개수 제한 가능. |
-| `getImportGraph(project?)` | `Promise<Result<Map>>` | 전체 인접 리스트 |
-| `getTransitiveDependencies(filePath)` | `Promise<Result<string[]>>` | 전방 전이적 BFS |
+| `getDependencies(filePath)` | `string[]` | `filePath`가 import하는 파일 목록 |
+| `getDependents(filePath)` | `string[]` | `filePath`를 import하는 파일 목록 |
+| `getAffected(changedFiles)` | `Promise<string[]>` | 전이적 영향 범위 |
+| `hasCycle(project?)` | `Promise<boolean>` | 순환 의존성 감지 |
+| `getCyclePaths(project?, opts?)` | `Promise<string[][]>` | 모든 순환 경로 (Tarjan SCC + Johnson's). `opts.maxCycles`로 개수 제한 가능. |
+| `getImportGraph(project?)` | `Promise<Map>` | 전체 인접 리스트 |
+| `getTransitiveDependencies(filePath)` | `Promise<string[]>` | 전방 전이적 BFS |
 
 ### 분석
 
 | 메서드 | 반환 타입 | 설명 |
 |--------|-----------|------|
-| `getFullSymbol(name, filePath)` | `Result<FullSymbol>` | 멤버, jsDoc, 데코레이터, 타입 정보 |
-| `getFileStats(filePath)` | `Result<FileStats>` | 라인 수, 심볼 수, 파일 크기 |
-| `getFanMetrics(filePath)` | `Promise<Result<FanMetrics>>` | fan-in/fan-out 결합도 |
-| `getModuleInterface(filePath)` | `Result<ModuleInterface>` | 공개 export와 메타데이터 |
-| `getInternalRelations(filePath)` | `Result<StoredCodeRelation[]>` | 파일 내부 관계 |
+| `getFullSymbol(name, filePath)` | `FullSymbol \| null` | 멤버, jsDoc, 데코레이터, 타입 정보 |
+| `getFileStats(filePath)` | `FileStats` | 라인 수, 심볼 수, 파일 크기 |
+| `getFanMetrics(filePath)` | `Promise<FanMetrics>` | fan-in/fan-out 결합도 |
+| `getModuleInterface(filePath)` | `ModuleInterface` | 공개 export와 메타데이터 |
+| `getInternalRelations(filePath)` | `StoredCodeRelation[]` | 파일 내부 관계 |
 | `diffSymbols(before, after)` | `SymbolDiff` | 스냅샷 diff (추가/삭제/수정) |
 
 ### 시맨틱 (opt-in)
@@ -278,10 +277,10 @@ if (isErr(result)) {
 
 | 메서드 | 반환 타입 | 설명 |
 |--------|-----------|------|
-| `getResolvedType(name, filePath)` | `Result<ResolvedType \| null>` | tsc TypeChecker로 resolved type 조회 |
-| `getSemanticReferences(name, filePath)` | `Result<SemanticReference[]>` | 심볼의 모든 참조 위치 |
-| `getImplementations(name, filePath)` | `Result<Implementation[]>` | 인터페이스/추상 클래스 구현체 |
-| `getSemanticModuleInterface(filePath)` | `Result<SemanticModuleInterface>` | 모듈 export 목록 + resolved type |
+| `getResolvedType(name, filePath)` | `ResolvedType \| null` | tsc TypeChecker로 resolved type 조회 |
+| `getSemanticReferences(name, filePath)` | `SemanticReference[]` | 심볼의 모든 참조 위치 |
+| `getImplementations(name, filePath)` | `Implementation[]` | 인터페이스/추상 클래스 구현체 |
+| `getSemanticModuleInterface(filePath)` | `SemanticModuleInterface` | 모듈 export 목록 + resolved type |
 
 `getFullSymbol()`은 semantic 활성 시 자동으로 `resolvedType` 필드를 보강합니다.
 `searchSymbols({ resolvedType })`로 resolved type 문자열 기반 필터링이 가능합니다.
@@ -290,25 +289,25 @@ if (isErr(result)) {
 
 | 메서드 | 반환 타입 | 설명 |
 |--------|-----------|------|
-| `findPattern(pattern, opts?)` | `Promise<Result<PatternMatch[]>>` | AST 구조적 검색 (ast-grep) |
-| `resolveSymbol(name, filePath)` | `Result<ResolvedSymbol>` | re-export 체인을 따라 원본 추적 |
-| `getHeritageChain(name, filePath)` | `Promise<Result<HeritageNode>>` | extends/implements 트리 |
-| `batchParse(filePaths, opts?)` | `Promise<Result<Map>>` | 다중 파일 동시 파싱. `opts`: oxc-parser `ParserOptions`. |
+| `findPattern(pattern, opts?)` | `Promise<PatternMatch[]>` | AST 구조적 검색 (ast-grep) |
+| `resolveSymbol(name, filePath)` | `ResolvedSymbol` | re-export 체인을 따라 원본 추적 |
+| `getHeritageChain(name, filePath)` | `Promise<HeritageNode>` | extends/implements 트리 |
+| `batchParse(filePaths, opts?)` | `Promise<Map>` | 다중 파일 동시 파싱. `opts`: oxc-parser `ParserOptions`. |
 
 ### 라이프사이클 & 저수준
 
 | 메서드 | 반환 타입 | 설명 |
 |--------|-----------|------|
-| `reindex()` | `Promise<Result<IndexResult>>` | 강제 전체 재인덱싱 (owner만 가능) |
+| `reindex()` | `Promise<IndexResult>` | 강제 전체 재인덱싱 (owner만 가능) |
 | `onIndexed(callback)` | `() => void` | 인덱싱 완료 이벤트 구독 |
-| `parseSource(filePath, src, opts?)` | `Result<ParsedFile>` | 단일 파일 파싱 & 캐시. `opts`: oxc-parser `ParserOptions`. |
-| `extractSymbols(parsed)` | `Result<ExtractedSymbol[]>` | 파싱된 AST에서 심볼 추출 |
-| `extractRelations(parsed)` | `Result<CodeRelation[]>` | 파싱된 AST에서 관계 추출 |
+| `parseSource(filePath, src, opts?)` | `ParsedFile` | 단일 파일 파싱 & 캐시. `opts`: oxc-parser `ParserOptions`. |
+| `extractSymbols(parsed)` | `ExtractedSymbol[]` | 파싱된 AST에서 심볼 추출 |
+| `extractRelations(parsed)` | `CodeRelation[]` | 파싱된 AST에서 관계 추출 |
 | `getParsedAst(filePath)` | `ParsedFile \| undefined` | 캐시된 AST 조회 (읽기 전용) |
-| `getFileInfo(filePath)` | `Result<FileRecord \| null>` | 파일 메타데이터 (해시, mtime, 크기) |
-| `getStats(project?)` | `Result<SymbolStats>` | 심볼/파일 통계 |
+| `getFileInfo(filePath)` | `FileRecord \| null` | 파일 메타데이터 (해시, mtime, 크기) |
+| `getStats(project?)` | `SymbolStats` | 심볼/파일 통계 |
 | `projects` | `ProjectBoundary[]` | 탐지된 프로젝트 경계 |
-| `close(opts?)` | `Promise<Result<void>>` | 종료 (`{ cleanup: true }`로 DB 삭제 가능) |
+| `close(opts?)` | `Promise<void>` | 종료 (`{ cleanup: true }`로 DB 삭제 가능) |
 
 <br>
 
@@ -362,10 +361,10 @@ interface IndexResult {
   };
 }
 
-interface GildashError {
-  type: GildashErrorType;
-  message: string;
-  cause?: unknown;
+class GildashError extends Error {
+  readonly type: GildashErrorType;
+  readonly message: string;
+  readonly cause?: unknown;          // Error에서 상속
 }
 ```
 
@@ -412,7 +411,26 @@ Gildash (파사드)
 
 <br>
 
-## ⬆️ 0.5.0에서 업그레이드
+## ⬆️ 업그레이드
+
+### 0.5.x → 0.6.0
+
+**Breaking:** `@zipbul/result`가 더 이상 public API의 일부가 아닙니다. 모든 메서드가 값을 직접 반환하고, 실패 시 `GildashError`를 throw합니다.
+
+```diff
+- import { isErr } from '@zipbul/result';
+- const result = ledger.searchSymbols({ text: 'foo' });
+- if (isErr(result)) { console.error(result.data.message); }
+- else { console.log(result); }
++ const symbols = ledger.searchSymbols({ text: 'foo' }); // 실패 시 GildashError throw
+```
+
+- `@zipbul/result`를 의존성에서 제거하세요 (더 이상 피어 의존성이 아닙니다)
+- `isErr()` 체크를 `try/catch` + `instanceof GildashError`로 교체하세요
+- `getFullSymbol()`, `getFileInfo()`, `getResolvedType()`은 찾지 못하면 에러 대신 `null`을 반환합니다
+- `resolveSymbol()`은 순환 re-export 시 throw 대신 `{ circular: true }`를 반환합니다
+
+### 0.4.x → 0.5.0
 
 데이터베이스 디렉토리가 `.zipbul/`에서 `.gildash/`로 변경되었습니다. 데이터베이스는 `<projectRoot>/.gildash/gildash.db`에 저장됩니다.
 

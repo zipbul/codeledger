@@ -1,6 +1,6 @@
 import { describe, it, expect, mock, beforeEach, afterEach, spyOn } from 'bun:test';
-import { err, isErr } from '@zipbul/result';
-import { gildashError } from '../errors';
+import { err } from '@zipbul/result';
+import { GildashError, gildashError } from '../errors';
 import type { GildashContext, CoordinatorLike, WatcherLike } from './context';
 import { ProjectWatcher } from '../watcher/project-watcher';
 
@@ -204,10 +204,8 @@ describe('initializeContext', () => {
   it('should create context with all DI overrides as owner', async () => {
     const opts = makeInitOptions();
 
-    const result = await initializeContext(opts);
+    const ctx = await initializeContext(opts);
 
-    expect(isErr(result)).toBe(false);
-    const ctx = result as GildashContext;
     expect(ctx.projectRoot).toBe('/test/project');
     expect(ctx.role).toBe('owner');
     expect(ctx.closed).toBe(false);
@@ -219,10 +217,9 @@ describe('initializeContext', () => {
       discoverProjectsFn: mock(async () => [{ project: 'my-proj', path: '/test/project' }]),
     });
 
-    const result = await initializeContext(opts);
+    const ctx = await initializeContext(opts);
 
-    expect(isErr(result)).toBe(false);
-    expect((result as GildashContext).defaultProject).toBe('my-proj');
+    expect(ctx.defaultProject).toBe('my-proj');
   });
 
   it('should use basename when boundaries is empty', async () => {
@@ -230,10 +227,9 @@ describe('initializeContext', () => {
       discoverProjectsFn: mock(async () => []),
     });
 
-    const result = await initializeContext(opts);
+    const ctx = await initializeContext(opts);
 
-    expect(isErr(result)).toBe(false);
-    expect((result as GildashContext).defaultProject).toBe('project');
+    expect(ctx.defaultProject).toBe('project');
   });
 
   it('should create semanticLayer when semantic is true', async () => {
@@ -243,10 +239,9 @@ describe('initializeContext', () => {
       semanticLayerFactory: mock(() => semanticLayer),
     });
 
-    const result = await initializeContext(opts);
+    const ctx = await initializeContext(opts);
 
-    expect(isErr(result)).toBe(false);
-    expect((result as GildashContext).semanticLayer).toBe(semanticLayer as any);
+    expect(ctx.semanticLayer).toBe(semanticLayer as any);
   });
 
   it('should create reader with healthcheck timer when role is reader', async () => {
@@ -254,80 +249,61 @@ describe('initializeContext', () => {
       acquireWatcherRoleFn: mock(() => 'reader'),
     });
 
-    const result = await initializeContext(opts);
+    const ctx = await initializeContext(opts);
 
-    expect(isErr(result)).toBe(false);
-    const ctx = result as GildashContext;
     expect(ctx.role).toBe('reader');
     expect(ctx.coordinator).toBeNull();
     expect(ctx.timer).not.toBeNull();
   });
 
-  it('should return err when projectRoot is not absolute', async () => {
+  it('should throw when projectRoot is not absolute', async () => {
     const opts = makeInitOptions({ projectRoot: 'relative/path' });
 
-    const result = await initializeContext(opts);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('validation');
+    await expect(initializeContext(opts)).rejects.toThrow(GildashError);
   });
 
-  it('should return err when projectRoot does not exist', async () => {
+  it('should throw when projectRoot does not exist', async () => {
     const opts = makeInitOptions({ existsSyncFn: mock(() => false) });
 
-    const result = await initializeContext(opts);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('validation');
+    await expect(initializeContext(opts)).rejects.toThrow(GildashError);
   });
 
-  it('should return err when db.open fails', async () => {
+  it('should throw when db.open fails', async () => {
     const db = makeDb();
     db.open = mock(() => err(gildashError('store', 'db open failed')));
     const opts = makeInitOptions({ dbConnectionFactory: mock(() => db) });
 
-    const result = await initializeContext(opts);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('store');
+    await expect(initializeContext(opts)).rejects.toThrow(GildashError);
   });
 
-  it('should return err when semantic layer creation fails and close db', async () => {
+  it('should throw when semantic layer creation fails and close db', async () => {
     const db = makeDb();
     const opts = makeInitOptions({
       dbConnectionFactory: mock(() => db),
       semantic: true,
-      semanticLayerFactory: mock(() => err(gildashError('semantic', 'tsc failed'))),
+      semanticLayerFactory: mock(() => { throw new GildashError('semantic', 'tsc failed'); }),
     });
 
-    const result = await initializeContext(opts);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('semantic');
+    await expect(initializeContext(opts)).rejects.toThrow(GildashError);
     expect(db.close).toHaveBeenCalledTimes(1);
   });
 
-  it('should return err on outer catch and close db', async () => {
+  it('should throw on outer catch and close db', async () => {
     const db = makeDb();
     const opts = makeInitOptions({
       dbConnectionFactory: mock(() => db),
       discoverProjectsFn: mock(async () => { throw new Error('discover crash'); }),
     });
 
-    const result = await initializeContext(opts);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('store');
+    await expect(initializeContext(opts)).rejects.toThrow(GildashError);
     expect(db.close).toHaveBeenCalledTimes(1);
   });
 
   it('should register signal handlers when watchMode is true', async () => {
     const opts = makeInitOptions({ watchMode: true });
 
-    const result = await initializeContext(opts);
+    const ctx = await initializeContext(opts);
 
-    expect(isErr(result)).toBe(false);
-    const ctx = result as GildashContext;
     expect(ctx.signalHandlers.length).toBeGreaterThan(0);
     expect(processOnSpy).toHaveBeenCalled();
   });
@@ -336,10 +312,8 @@ describe('initializeContext', () => {
     const opts = makeInitOptions();
     delete (opts as any).watchMode;
 
-    const result = await initializeContext(opts);
+    const ctx = await initializeContext(opts);
 
-    expect(isErr(result)).toBe(false);
-    const ctx = result as GildashContext;
     expect(ctx.signalHandlers.length).toBeGreaterThan(0);
   });
 });
@@ -361,7 +335,7 @@ describe('closeContext', () => {
       signalHandlers: [['SIGTERM', () => {}]],
     });
 
-    const result = await closeContext(ctx);
+    await closeContext(ctx);
 
     expect(ctx.closed).toBe(true);
     expect(coordinator.shutdown).toHaveBeenCalledTimes(1);
@@ -373,9 +347,8 @@ describe('closeContext', () => {
     const db = makeDb();
     const ctx = makeCtx({ closed: true, db: db as any });
 
-    const result = await closeContext(ctx);
+    await closeContext(ctx);
 
-    expect(result).toBeUndefined();
     expect(db.close).not.toHaveBeenCalled();
   });
 
@@ -391,16 +364,15 @@ describe('closeContext', () => {
   it('should skip dispose when no semanticLayer', async () => {
     const ctx = makeCtx({ semanticLayer: null });
 
-    const result = await closeContext(ctx);
+    await closeContext(ctx);
 
     expect(ctx.closed).toBe(true);
-    // no error → successful close
   });
 
   it('should skip shutdown when no coordinator', async () => {
     const ctx = makeCtx({ coordinator: null });
 
-    const result = await closeContext(ctx);
+    await closeContext(ctx);
 
     expect(ctx.closed).toBe(true);
   });
@@ -408,7 +380,7 @@ describe('closeContext', () => {
   it('should skip close when no watcher', async () => {
     const ctx = makeCtx({ watcher: null });
 
-    const result = await closeContext(ctx);
+    await closeContext(ctx);
 
     expect(ctx.closed).toBe(true);
   });
@@ -421,42 +393,33 @@ describe('closeContext', () => {
     expect(globalThis.clearInterval).not.toHaveBeenCalled();
   });
 
-  it('should capture semanticLayer dispose error', async () => {
+  it('should throw on semanticLayer dispose error', async () => {
     const ctx = makeCtx({
       semanticLayer: {
         dispose: mock(() => { throw new Error('dispose fail'); }),
       } as any,
     });
 
-    const result = await closeContext(ctx);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('close');
+    await expect(closeContext(ctx)).rejects.toThrow(GildashError);
   });
 
-  it('should capture coordinator shutdown error', async () => {
+  it('should throw on coordinator shutdown error', async () => {
     const coord = makeCoordinator();
     coord.shutdown = mock(async () => { throw new Error('shutdown fail'); });
     const ctx = makeCtx({ coordinator: coord });
 
-    const result = await closeContext(ctx);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('close');
+    await expect(closeContext(ctx)).rejects.toThrow(GildashError);
   });
 
-  it('should capture watcher close error', async () => {
+  it('should throw on watcher close error', async () => {
     const watcher = makeWatcher();
     watcher.close = mock(async () => err(gildashError('watcher', 'close error')));
     const ctx = makeCtx({ watcher: watcher as any });
 
-    const result = await closeContext(ctx);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.data.type).toBe('close');
+    await expect(closeContext(ctx)).rejects.toThrow(GildashError);
   });
 
-  it('should capture multiple close errors', async () => {
+  it('should throw with multiple close errors', async () => {
     const coord = makeCoordinator();
     coord.shutdown = mock(async () => { throw new Error('coord fail'); });
     const ctx = makeCtx({
@@ -466,13 +429,14 @@ describe('closeContext', () => {
       } as any,
     });
 
-    const result = await closeContext(ctx);
-
-    expect(isErr(result)).toBe(true);
-    if (isErr(result)) {
-      expect(result.data.type).toBe('close');
-      expect(Array.isArray(result.data.cause)).toBe(true);
-      expect((result.data.cause as unknown[]).length).toBeGreaterThanOrEqual(2);
+    try {
+      await closeContext(ctx);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('close');
+      expect(Array.isArray((e as GildashError).cause)).toBe(true);
+      expect(((e as GildashError).cause as unknown[]).length).toBeGreaterThanOrEqual(2);
     }
   });
 
@@ -592,9 +556,7 @@ describe('setupOwnerInfrastructure', () => {
     startSpy.mockRestore();
   });
 
-  // PRUNE-HP [HP] createWatcherCallback: delete event → calls semanticLayer.notifyFileDeleted
   it('should call semanticLayer.notifyFileDeleted on delete event', async () => {
-    // Arrange
     const coordinator = makeCoordinator();
     const watcher = makeWatcher();
     const notifyFileDeleted = mock(() => {});
@@ -611,12 +573,10 @@ describe('setupOwnerInfrastructure', () => {
 
     await setupOwnerInfrastructure(ctx, { isWatchMode: true });
 
-    // Act — capture watcher callback and invoke with delete event
     const startCall = (watcher.start as ReturnType<typeof mock>).mock.calls[0];
     const watcherCallback = startCall![0] as (event: any) => void;
     watcherCallback({ filePath: '/project/src/removed.ts', eventType: 'delete' });
 
-    // Assert
     expect(notifyFileDeleted).toHaveBeenCalledWith('/project/src/removed.ts');
   });
 });
@@ -628,7 +588,7 @@ describe('setupOwnerInfrastructure', () => {
 describe('registerSignalHandlers', () => {
   it('should register handlers for SIGTERM SIGINT and beforeExit', () => {
     const ctx = makeCtx();
-    const closeFn = mock(async () => undefined as any);
+    const closeFn = mock(async () => {});
 
     registerSignalHandlers(ctx, closeFn);
 
@@ -638,11 +598,10 @@ describe('registerSignalHandlers', () => {
 
   it('should call closeFn when handler fires', () => {
     const ctx = makeCtx();
-    const closeFn = mock(async () => undefined as any);
+    const closeFn = mock(async () => {});
 
     registerSignalHandlers(ctx, closeFn);
 
-    // Invoke the first registered handler
     const [, handler] = ctx.signalHandlers[0]!;
     handler();
 
@@ -651,7 +610,7 @@ describe('registerSignalHandlers', () => {
 
   it('should push handlers to ctx.signalHandlers', () => {
     const ctx = makeCtx();
-    const closeFn = mock(async () => undefined as any);
+    const closeFn = mock(async () => {});
 
     registerSignalHandlers(ctx, closeFn);
 
@@ -663,7 +622,7 @@ describe('registerSignalHandlers', () => {
 
   it('should use process.on beforeExit for beforeExit signal', () => {
     const ctx = makeCtx();
-    const closeFn = mock(async () => undefined as any);
+    const closeFn = mock(async () => {});
 
     registerSignalHandlers(ctx, closeFn);
 
@@ -702,12 +661,9 @@ describe('lifecycle state transitions', () => {
       }),
     });
 
-    const result = await initializeContext(opts);
-    expect(isErr(result)).toBe(false);
-    const ctx = result as GildashContext;
+    const ctx = await initializeContext(opts);
     expect(ctx.coordinator).toBeNull();
 
-    // Get healthcheck callback (reader timer creates exactly one setInterval)
     const healthcheck = capturedIntervalCallbacks[capturedIntervalCallbacks.length - 1]!;
     await healthcheck();
 
@@ -726,19 +682,15 @@ describe('lifecycle state transitions', () => {
       coordinatorFactory: mock(() => coordinator),
     });
 
-    const result = await initializeContext(opts);
-    expect(isErr(result)).toBe(false);
-    const ctx = result as GildashContext;
+    const ctx = await initializeContext(opts);
 
     const healthcheck = capturedIntervalCallbacks[capturedIntervalCallbacks.length - 1]!;
     await healthcheck();
 
-    // Rollback: coordinator should be null
     expect(ctx.coordinator).toBeNull();
   });
 
   it('should shutdown after max healthcheck retries', async () => {
-    const acquireFn = mock(() => { throw new Error('health fail'); });
     let internalCallCount = 0;
     const opts = makeInitOptions({
       acquireWatcherRoleFn: mock(() => {
@@ -748,18 +700,14 @@ describe('lifecycle state transitions', () => {
       }),
     });
 
-    const result = await initializeContext(opts);
-    expect(isErr(result)).toBe(false);
-    const ctx = result as GildashContext;
+    const ctx = await initializeContext(opts);
 
     const healthcheck = capturedIntervalCallbacks[capturedIntervalCallbacks.length - 1]!;
 
-    // Invoke MAX_HEALTHCHECK_RETRIES times
     for (let i = 0; i < MAX_HEALTHCHECK_RETRIES; i++) {
       await healthcheck();
     }
 
-    // After max retries, closeContext should have been called
     expect(ctx.closed).toBe(true);
   });
 
@@ -771,9 +719,8 @@ describe('lifecycle state transitions', () => {
     expect(ctx.closed).toBe(true);
     expect(db.close).toHaveBeenCalledTimes(1);
 
-    // Second close
     await closeContext(ctx);
-    expect(db.close).toHaveBeenCalledTimes(1); // not called again
+    expect(db.close).toHaveBeenCalledTimes(1);
   });
 
   it('should invalidate graphCache via onIndexed callback in setupOwnerInfrastructure', async () => {
@@ -791,7 +738,6 @@ describe('lifecycle state transitions', () => {
 
     await setupOwnerInfrastructure(ctx, { isWatchMode: false });
 
-    // The last onIndexed call is the graphCache invalidator
     expect(graphCacheInvalidator).not.toBeNull();
     graphCacheInvalidator!();
     expect(ctx.graphCache).toBeNull();
@@ -813,14 +759,11 @@ describe('lifecycle state transitions', () => {
       watcherFactory: mock(() => watcher),
     });
 
-    const result = await initializeContext(opts);
-    expect(isErr(result)).toBe(false);
-    const ctx = result as GildashContext;
+    const ctx = await initializeContext(opts);
 
     const healthcheck = capturedIntervalCallbacks[capturedIntervalCallbacks.length - 1]!;
     await healthcheck();
 
-    // Rollback happened, logger.error should have been called for watcher close
     expect((ctx.logger.error as any).mock.calls.length).toBeGreaterThan(0);
     expect(ctx.watcher).toBeNull();
   });
@@ -834,12 +777,9 @@ describe('lifecycle state transitions', () => {
         throw new Error('health fail');
       }),
     });
-    // Force db.close to throw (causing closeContext to return err, but catch handles rejection)
     opts._db.close = mock(() => { throw new Error('db close fail during shutdown'); });
 
-    const result = await initializeContext(opts);
-    expect(isErr(result)).toBe(false);
-    const ctx = result as GildashContext;
+    const ctx = await initializeContext(opts);
 
     const healthcheck = capturedIntervalCallbacks[capturedIntervalCallbacks.length - 1]!;
 
@@ -847,7 +787,6 @@ describe('lifecycle state transitions', () => {
       await healthcheck();
     }
 
-    // closeContext was called and its catch was exercised
     expect(ctx.closed).toBe(true);
   });
 });

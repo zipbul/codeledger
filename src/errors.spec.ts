@@ -1,5 +1,47 @@
 import { describe, expect, it } from "bun:test";
-import { gildashError } from "./errors";
+import { GildashError, gildashError } from "./errors";
+
+describe("GildashError", () => {
+  it("should be an instance of Error", () => {
+    const error = new GildashError("parse", "parse failed");
+
+    expect(error).toBeInstanceOf(Error);
+    expect(error).toBeInstanceOf(GildashError);
+  });
+
+  it("should have name set to GildashError", () => {
+    const error = new GildashError("store", "store failed");
+
+    expect(error.name).toBe("GildashError");
+  });
+
+  it("should have a stack trace", () => {
+    const error = new GildashError("search", "search failed");
+
+    expect(error.stack).toBeDefined();
+    expect(error.stack).toContain("GildashError");
+  });
+
+  it("should pass cause through Error options", () => {
+    const cause = new Error("root cause");
+    const error = new GildashError("index", "index failed", { cause });
+
+    expect(error.cause).toBe(cause);
+  });
+
+  it("should not have cause when options is omitted", () => {
+    const error = new GildashError("closed", "closed");
+
+    expect("cause" in error).toBe(false);
+  });
+
+  it("should store type and message", () => {
+    const error = new GildashError("validation", "invalid input");
+
+    expect(error.type).toBe("validation");
+    expect(error.message).toBe("invalid input");
+  });
+});
 
 describe("gildashError", () => {
   it("should return object with type and message and no cause property when cause is undefined", () => {

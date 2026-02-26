@@ -50,7 +50,7 @@ gildash indexes your TypeScript codebase into a local SQLite database, then lets
 bun add @zipbul/gildash
 ```
 
-> **Peer dependency** — [`@zipbul/result`](https://www.npmjs.com/package/@zipbul/result) is required. All public methods return `Result<T, GildashError>`.
+> **Optional peer** — `typescript` (>=5.0.0) is needed only when using `semantic: true`.
 
 <br>
 
@@ -58,7 +58,6 @@ bun add @zipbul/gildash
 
 ```ts
 import { Gildash } from '@zipbul/gildash';
-import { isErr } from '@zipbul/result';
 
 // 1. Open — indexes every .ts file on first run, then watches for changes
 const ledger = await Gildash.open({
@@ -66,10 +65,8 @@ const ledger = await Gildash.open({
 });
 
 // 2. Search — find symbols by name
-const result = ledger.searchSymbols({ text: 'UserService', kind: 'class' });
-if (!isErr(result)) {
-  result.forEach(s => console.log(`${s.name} → ${s.filePath}`));
-}
+const symbols = ledger.searchSymbols({ text: 'UserService', kind: 'class' });
+symbols.forEach(s => console.log(`${s.name} → ${s.filePath}`));
 
 // 3. Close — release resources
 await ledger.close();
@@ -202,16 +199,18 @@ await ledger.close({ cleanup: true });   // delete DB files after use
 
 ## ❌ Error Handling
 
-Every public method returns `Result<T, GildashError>` from [`@zipbul/result`](https://www.npmjs.com/package/@zipbul/result). Use `isErr()` to branch:
+Public methods return values directly and throw `GildashError` on failure. Use `instanceof` to branch:
 
 ```ts
-import { isErr } from '@zipbul/result';
+import { Gildash, GildashError } from '@zipbul/gildash';
 
-const result = ledger.searchSymbols({ text: 'foo' });
-if (isErr(result)) {
-  console.error(result.data.type, result.data.message);
-} else {
-  console.log(`Found ${result.length} symbols`);
+try {
+  const symbols = ledger.searchSymbols({ text: 'foo' });
+  console.log(`Found ${symbols.length} symbols`);
+} catch (e) {
+  if (e instanceof GildashError) {
+    console.error(`[${e.type}] ${e.message}`);
+  }
 }
 ```
 
@@ -231,9 +230,9 @@ if (isErr(result)) {
 | `watchMode` | `boolean` | `true` | `false` disables the file watcher (scan-only mode) |
 | `semantic` | `boolean` | `false` | Enable tsc TypeChecker-backed semantic analysis |
 
-Returns `Promise<Gildash>` (wrapped in `Result`).
+Returns `Promise<Gildash>`. Throws `GildashError` on failure.
 
-> **Note:** `semantic: true` requires a `tsconfig.json` in the project root. If not found, `Gildash.open()` returns a `GildashError`.
+> **Note:** `semantic: true` requires a `tsconfig.json` in the project root. If not found, `Gildash.open()` throws a `GildashError`.
 
 <br>
 
@@ -243,34 +242,34 @@ Returns `Promise<Gildash>` (wrapped in `Result`).
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `searchSymbols(query)` | `Result<SymbolSearchResult[]>` | FTS5 full-text + exact / regex / decorator filters |
-| `searchRelations(query)` | `Result<StoredCodeRelation[]>` | Filter by file, symbol, or relation type |
-| `searchAllSymbols(query)` | `Result<SymbolSearchResult[]>` | Cross-project symbol search |
-| `searchAllRelations(query)` | `Result<StoredCodeRelation[]>` | Cross-project relation search |
-| `listIndexedFiles(project?)` | `Result<FileRecord[]>` | All indexed files for a project |
-| `getSymbolsByFile(filePath)` | `Result<SymbolSearchResult[]>` | All symbols in a single file |
+| `searchSymbols(query)` | `SymbolSearchResult[]` | FTS5 full-text + exact / regex / decorator filters |
+| `searchRelations(query)` | `StoredCodeRelation[]` | Filter by file, symbol, or relation type |
+| `searchAllSymbols(query)` | `SymbolSearchResult[]` | Cross-project symbol search |
+| `searchAllRelations(query)` | `StoredCodeRelation[]` | Cross-project relation search |
+| `listIndexedFiles(project?)` | `FileRecord[]` | All indexed files for a project |
+| `getSymbolsByFile(filePath)` | `SymbolSearchResult[]` | All symbols in a single file |
 
 ### Dependency Graph
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `getDependencies(filePath)` | `Result<string[]>` | Files imported by `filePath` |
-| `getDependents(filePath)` | `Result<string[]>` | Files that import `filePath` |
-| `getAffected(changedFiles)` | `Promise<Result<string[]>>` | Transitive impact set |
-| `hasCycle(project?)` | `Promise<Result<boolean>>` | Circular dependency check |
-| `getCyclePaths(project?, opts?)` | `Promise<Result<string[][]>>` | All cycle paths (Tarjan SCC + Johnson's). `opts.maxCycles` limits results. |
-| `getImportGraph(project?)` | `Promise<Result<Map>>` | Full adjacency list |
-| `getTransitiveDependencies(filePath)` | `Promise<Result<string[]>>` | Forward transitive BFS |
+| `getDependencies(filePath)` | `string[]` | Files imported by `filePath` |
+| `getDependents(filePath)` | `string[]` | Files that import `filePath` |
+| `getAffected(changedFiles)` | `Promise<string[]>` | Transitive impact set |
+| `hasCycle(project?)` | `Promise<boolean>` | Circular dependency check |
+| `getCyclePaths(project?, opts?)` | `Promise<string[][]>` | All cycle paths (Tarjan SCC + Johnson's). `opts.maxCycles` limits results. |
+| `getImportGraph(project?)` | `Promise<Map>` | Full adjacency list |
+| `getTransitiveDependencies(filePath)` | `Promise<string[]>` | Forward transitive BFS |
 
 ### Analysis
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `getFullSymbol(name, filePath)` | `Result<FullSymbol>` | Members, jsDoc, decorators, type info |
-| `getFileStats(filePath)` | `Result<FileStats>` | Line count, symbol count, size |
-| `getFanMetrics(filePath)` | `Promise<Result<FanMetrics>>` | Fan-in / fan-out coupling |
-| `getModuleInterface(filePath)` | `Result<ModuleInterface>` | Public exports with metadata |
-| `getInternalRelations(filePath)` | `Result<StoredCodeRelation[]>` | Intra-file relations |
+| `getFullSymbol(name, filePath)` | `FullSymbol \| null` | Members, jsDoc, decorators, type info |
+| `getFileStats(filePath)` | `FileStats` | Line count, symbol count, size |
+| `getFanMetrics(filePath)` | `Promise<FanMetrics>` | Fan-in / fan-out coupling |
+| `getModuleInterface(filePath)` | `ModuleInterface` | Public exports with metadata |
+| `getInternalRelations(filePath)` | `StoredCodeRelation[]` | Intra-file relations |
 | `diffSymbols(before, after)` | `SymbolDiff` | Snapshot diff (added / removed / modified) |
 
 ### Semantic (opt-in)
@@ -279,10 +278,10 @@ Requires `semantic: true` at open time.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `getResolvedType(name, filePath)` | `Result<ResolvedType \| null>` | Resolved type via tsc TypeChecker |
-| `getSemanticReferences(name, filePath)` | `Result<SemanticReference[]>` | All references to a symbol |
-| `getImplementations(name, filePath)` | `Result<Implementation[]>` | Interface / abstract class implementations |
-| `getSemanticModuleInterface(filePath)` | `Result<SemanticModuleInterface>` | Module exports with resolved types |
+| `getResolvedType(name, filePath)` | `ResolvedType \| null` | Resolved type via tsc TypeChecker |
+| `getSemanticReferences(name, filePath)` | `SemanticReference[]` | All references to a symbol |
+| `getImplementations(name, filePath)` | `Implementation[]` | Interface / abstract class implementations |
+| `getSemanticModuleInterface(filePath)` | `SemanticModuleInterface` | Module exports with resolved types |
 
 `getFullSymbol()` automatically enriches the result with a `resolvedType` field when semantic is enabled.
 `searchSymbols({ resolvedType })` filters symbols by their resolved type string.
@@ -291,25 +290,25 @@ Requires `semantic: true` at open time.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `findPattern(pattern, opts?)` | `Promise<Result<PatternMatch[]>>` | AST structural search (ast-grep) |
-| `resolveSymbol(name, filePath)` | `Result<ResolvedSymbol>` | Follow re-export chain to original |
-| `getHeritageChain(name, filePath)` | `Promise<Result<HeritageNode>>` | extends / implements tree |
-| `batchParse(filePaths, opts?)` | `Promise<Result<Map>>` | Concurrent multi-file parsing. `opts`: oxc-parser `ParserOptions`. |
+| `findPattern(pattern, opts?)` | `Promise<PatternMatch[]>` | AST structural search (ast-grep) |
+| `resolveSymbol(name, filePath)` | `ResolvedSymbol` | Follow re-export chain to original |
+| `getHeritageChain(name, filePath)` | `Promise<HeritageNode>` | extends / implements tree |
+| `batchParse(filePaths, opts?)` | `Promise<Map>` | Concurrent multi-file parsing. `opts`: oxc-parser `ParserOptions`. |
 
 ### Lifecycle & Low-level
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `reindex()` | `Promise<Result<IndexResult>>` | Force full re-index (owner only) |
+| `reindex()` | `Promise<IndexResult>` | Force full re-index (owner only) |
 | `onIndexed(callback)` | `() => void` | Subscribe to index-complete events |
-| `parseSource(filePath, src, opts?)` | `Result<ParsedFile>` | Parse & cache a single file. `opts`: oxc-parser `ParserOptions`. |
-| `extractSymbols(parsed)` | `Result<ExtractedSymbol[]>` | Extract symbols from parsed AST |
-| `extractRelations(parsed)` | `Result<CodeRelation[]>` | Extract relations from parsed AST |
+| `parseSource(filePath, src, opts?)` | `ParsedFile` | Parse & cache a single file. `opts`: oxc-parser `ParserOptions`. |
+| `extractSymbols(parsed)` | `ExtractedSymbol[]` | Extract symbols from parsed AST |
+| `extractRelations(parsed)` | `CodeRelation[]` | Extract relations from parsed AST |
 | `getParsedAst(filePath)` | `ParsedFile \| undefined` | Cached AST lookup (read-only) |
-| `getFileInfo(filePath)` | `Result<FileRecord \| null>` | File metadata (hash, mtime, size) |
-| `getStats(project?)` | `Result<SymbolStats>` | Symbol / file count statistics |
+| `getFileInfo(filePath)` | `FileRecord \| null` | File metadata (hash, mtime, size) |
+| `getStats(project?)` | `SymbolStats` | Symbol / file count statistics |
 | `projects` | `ProjectBoundary[]` | Discovered project boundaries |
-| `close(opts?)` | `Promise<Result<void>>` | Shutdown (pass `{ cleanup: true }` to delete DB) |
+| `close(opts?)` | `Promise<void>` | Shutdown (pass `{ cleanup: true }` to delete DB) |
 
 <br>
 
@@ -433,6 +432,7 @@ interface ResolvedSymbol {
   originalName: string;
   originalFilePath: string;
   reExportChain: Array<{ filePath: string; exportedAs: string }>;
+  circular: boolean;    // true when re-export chain contains a cycle
 }
 
 interface HeritageNode {
@@ -472,10 +472,10 @@ interface FileRecord {
 
 // ── Errors ──────────────────────────────────────────────────────────────
 
-interface GildashError {
-  type: GildashErrorType;   // see Error Types table below
-  message: string;
-  cause?: unknown;
+class GildashError extends Error {
+  readonly type: GildashErrorType;   // see Error Types table below
+  readonly message: string;
+  readonly cause?: unknown;          // inherited from Error
 }
 ```
 
@@ -522,7 +522,26 @@ When multiple processes share the same SQLite database, gildash enforces a singl
 
 <br>
 
-## ⬆️ Upgrading from 0.5.0
+## ⬆️ Upgrading
+
+### From 0.5.x to 0.6.0
+
+**Breaking:** `@zipbul/result` is no longer part of the public API. All methods now return values directly and throw `GildashError` on failure.
+
+```diff
+- import { isErr } from '@zipbul/result';
+- const result = ledger.searchSymbols({ text: 'foo' });
+- if (isErr(result)) { console.error(result.data.message); }
+- else { console.log(result); }
++ const symbols = ledger.searchSymbols({ text: 'foo' }); // throws GildashError
+```
+
+- Remove `@zipbul/result` from your dependencies (no longer a peer dependency)
+- Replace `isErr()` checks with `try/catch` using `instanceof GildashError`
+- `getFullSymbol()`, `getFileInfo()`, `getResolvedType()` return `null` instead of an error when not found
+- `resolveSymbol()` returns `{ circular: true }` for circular re-exports instead of throwing
+
+### From 0.4.x to 0.5.0
 
 The database directory was renamed from `.zipbul/` to `.gildash/`. The database is now stored at `<projectRoot>/.gildash/gildash.db`.
 

@@ -1,8 +1,6 @@
-import { err, type Result } from '@zipbul/result';
 import path from 'node:path';
 import type { SymbolSearchResult } from '../search/symbol-search';
-import type { GildashError } from '../errors';
-import { gildashError } from '../errors';
+import { GildashError } from '../errors';
 import type { ResolvedType, SemanticReference, Implementation, SemanticModuleInterface } from '../semantic/types';
 import type { GildashContext } from './context';
 
@@ -41,17 +39,18 @@ export function getResolvedType(
   symbolName: string,
   filePath: string,
   project?: string,
-): Result<ResolvedType | null, GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
-  if (!ctx.semanticLayer) return err(gildashError('semantic', 'Gildash: semantic layer is not enabled'));
+): ResolvedType | null {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
   try {
     const resolved = resolveSymbolPosition(ctx, symbolName, filePath, project);
     if (!resolved) {
-      return err(gildashError('search', `Gildash: symbol '${symbolName}' not found in '${filePath}'`));
+      return null;
     }
     return ctx.semanticLayer.collectTypeAt(resolved.absPath, resolved.position);
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getResolvedType failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getResolvedType failed', { cause: e });
   }
 }
 
@@ -61,17 +60,18 @@ export function getSemanticReferences(
   symbolName: string,
   filePath: string,
   project?: string,
-): Result<SemanticReference[], GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
-  if (!ctx.semanticLayer) return err(gildashError('semantic', 'Gildash: semantic layer is not enabled'));
+): SemanticReference[] {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
   try {
     const resolved = resolveSymbolPosition(ctx, symbolName, filePath, project);
     if (!resolved) {
-      return err(gildashError('search', `Gildash: symbol '${symbolName}' not found in '${filePath}'`));
+      throw new GildashError('search', `Gildash: symbol '${symbolName}' not found in '${filePath}'`);
     }
     return ctx.semanticLayer.findReferences(resolved.absPath, resolved.position);
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getSemanticReferences failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getSemanticReferences failed', { cause: e });
   }
 }
 
@@ -81,17 +81,18 @@ export function getImplementations(
   symbolName: string,
   filePath: string,
   project?: string,
-): Result<Implementation[], GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
-  if (!ctx.semanticLayer) return err(gildashError('semantic', 'Gildash: semantic layer is not enabled'));
+): Implementation[] {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
   try {
     const resolved = resolveSymbolPosition(ctx, symbolName, filePath, project);
     if (!resolved) {
-      return err(gildashError('search', `Gildash: symbol '${symbolName}' not found in '${filePath}'`));
+      throw new GildashError('search', `Gildash: symbol '${symbolName}' not found in '${filePath}'`);
     }
     return ctx.semanticLayer.findImplementations(resolved.absPath, resolved.position);
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getImplementations failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getImplementations failed', { cause: e });
   }
 }
 
@@ -99,12 +100,13 @@ export function getImplementations(
 export function getSemanticModuleInterface(
   ctx: GildashContext,
   filePath: string,
-): Result<SemanticModuleInterface, GildashError> {
-  if (ctx.closed) return err(gildashError('closed', 'Gildash: instance is closed'));
-  if (!ctx.semanticLayer) return err(gildashError('semantic', 'Gildash: semantic layer is not enabled'));
+): SemanticModuleInterface {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
   try {
     return ctx.semanticLayer.getModuleInterface(filePath);
   } catch (e) {
-    return err(gildashError('search', 'Gildash: getSemanticModuleInterface failed', e));
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getSemanticModuleInterface failed', { cause: e });
   }
 }

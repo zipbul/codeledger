@@ -1,4 +1,4 @@
-import { err, isErr, type Result } from '@zipbul/result';
+import { isErr } from '@zipbul/result';
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { DbConnection } from '../store/connection';
@@ -23,8 +23,7 @@ import { relationSearch as defaultRelationSearch } from '../search/relation-sear
 import { patternSearch as defaultPatternSearch } from '../search/pattern-search';
 import type { PatternMatch } from '../search/pattern-search';
 import { SemanticLayer } from '../semantic/index';
-import { gildashError } from '../errors';
-import type { GildashError } from '../errors';
+import { GildashError, gildashError } from '../errors';
 import { DATA_DIR, DB_FILE } from '../constants';
 import type { GildashContext, CoordinatorLike, WatcherLike, DbStore } from './context';
 import type { GildashOptions, Logger } from './types';
@@ -61,7 +60,7 @@ export interface GildashInternalOptions {
   loadTsconfigPathsFn?: typeof loadTsconfigPaths;
   readFileFn?: (filePath: string) => Promise<string>;
   unlinkFn?: (filePath: string) => Promise<void>;
-  semanticLayerFactory?: (tsconfigPath: string) => Result<SemanticLayer, GildashError>;
+  semanticLayerFactory?: (tsconfigPath: string) => SemanticLayer;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────
@@ -156,7 +155,7 @@ export async function setupOwnerInfrastructure(
 /** Register SIGTERM / SIGINT / beforeExit handlers. */
 export function registerSignalHandlers(
   ctx: GildashContext,
-  closeFn: () => Promise<Result<void, GildashError> | undefined>,
+  closeFn: () => Promise<void>,
 ): void {
   const signals: Array<NodeJS.Signals | 'beforeExit'> = ['SIGTERM', 'SIGINT', 'beforeExit'];
   for (const sig of signals) {
@@ -179,7 +178,7 @@ export function registerSignalHandlers(
 /** Initialize a GildashContext (replaces the old `Gildash.open()` body). */
 export async function initializeContext(
   options: GildashOptions & GildashInternalOptions,
-): Promise<Result<GildashContext, GildashError>> {
+): Promise<GildashContext> {
   const {
     projectRoot,
     extensions = ['.ts', '.mts', '.cts'],
@@ -210,17 +209,17 @@ export async function initializeContext(
   } = options;
 
   if (!path.isAbsolute(projectRoot)) {
-    return err(gildashError('validation', `Gildash: projectRoot must be an absolute path, got: "${projectRoot}"`));
+    throw new GildashError('validation', `Gildash: projectRoot must be an absolute path, got: "${projectRoot}"`);
   }
   if (!existsSyncFn(projectRoot)) {
-    return err(gildashError('validation', `Gildash: projectRoot does not exist: "${projectRoot}"`));
+    throw new GildashError('validation', `Gildash: projectRoot does not exist: "${projectRoot}"`);
   }
 
   const db = dbConnectionFactory
     ? dbConnectionFactory()
     : new DbConnection({ projectRoot });
   const openResult = db.open();
-  if (isErr(openResult)) return openResult;
+  if (isErr(openResult)) throw openResult.data;
   try {
 
   const boundaries = await discoverProjectsFn(projectRoot);
@@ -296,14 +295,20 @@ export async function initializeContext(
 
   if (semantic) {
     const tsconfigPath = path.join(projectRoot, 'tsconfig.json');
-    const semanticResult = semanticLayerFactory
-      ? semanticLayerFactory(tsconfigPath)
-      : SemanticLayer.create(tsconfigPath);
-    if (isErr(semanticResult)) {
-      db.close();
-      return semanticResult;
+    try {
+      if (semanticLayerFactory) {
+        ctx.semanticLayer = semanticLayerFactory(tsconfigPath);
+      } else {
+        const semanticResult = SemanticLayer.create(tsconfigPath);
+        if (isErr(semanticResult)) {
+          throw semanticResult.data;
+        }
+        ctx.semanticLayer = semanticResult;
+      }
+    } catch (e) {
+      if (e instanceof GildashError) throw e;
+      throw new GildashError('semantic', 'Gildash: semantic layer creation failed', { cause: e });
     }
-    ctx.semanticLayer = semanticResult;
   }
 
   if (role === 'owner') {
@@ -363,7 +368,8 @@ export async function initializeContext(
   return ctx;
   } catch (error) {
     db.close();
-    return err(gildashError('store', 'Gildash: initialization failed', error));
+    if (error instanceof GildashError) throw error;
+    throw new GildashError('store', 'Gildash: initialization failed', { cause: error });
   }
 }
 
@@ -371,7 +377,7 @@ export async function initializeContext(
 export async function closeContext(
   ctx: GildashContext,
   opts?: { cleanup?: boolean },
-): Promise<Result<void, GildashError>> {
+): Promise<void> {
   if (ctx.closed) return;
   ctx.closed = true;
 
@@ -434,6 +440,6 @@ export async function closeContext(
   }
 
   if (closeErrors.length > 0) {
-    return err(gildashError('close', 'Gildash: one or more errors occurred during close()', closeErrors));
+    throw new GildashError('close', 'Gildash: one or more errors occurred during close()', { cause: closeErrors });
   }
 }
