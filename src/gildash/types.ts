@@ -1,3 +1,4 @@
+import type { ParsedFile } from '../parser/types';
 import type { SymbolSearchResult } from '../search/symbol-search';
 import type { SymbolKind } from '../extractor/types';
 import type { ResolvedType } from '../semantic/types';
@@ -124,6 +125,17 @@ export interface ResolvedSymbol {
   reExportChain: Array<{ filePath: string; exportedAs: string }>;
   /** Whether a circular re-export chain was detected. */
   circular: boolean;
+}
+
+/**
+ * Result of a batch parse operation.
+ * Contains both successful parses and failure details.
+ */
+export interface BatchParseResult {
+  /** Successfully parsed files. */
+  parsed: Map<string, ParsedFile>;
+  /** Files that failed to parse, with error details. */
+  failures: Array<{ filePath: string; error: Error }>;
 }
 
 /**

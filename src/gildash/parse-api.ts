@@ -3,6 +3,7 @@ import type { ParsedFile } from '../parser/types';
 import type { ParserOptions } from 'oxc-parser';
 import { GildashError } from '../errors';
 import type { GildashContext } from './context';
+import type { BatchParseResult } from './types';
 
 /** Parse a TypeScript source string into an AST and cache the result. */
 export function parseSource(
@@ -18,28 +19,34 @@ export function parseSource(
   return result;
 }
 
-/** Parse multiple files concurrently and return a map of results. */
+/** Parse multiple files concurrently and return results with failure details. */
 export async function batchParse(
   ctx: GildashContext,
   filePaths: string[],
   options?: ParserOptions,
-): Promise<Map<string, ParsedFile>> {
+): Promise<BatchParseResult> {
   if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
-  const result = new Map<string, ParsedFile>();
+  const parsed = new Map<string, ParsedFile>();
+  const failures: Array<{ filePath: string; error: Error }> = [];
   await Promise.all(
     filePaths.map(async (fp) => {
       try {
         const text = await ctx.readFileFn(fp);
-        const parsed = ctx.parseSourceFn(fp, text, options);
-        if (!isErr(parsed)) {
-          result.set(fp, parsed as ParsedFile);
+        const result = ctx.parseSourceFn(fp, text, options);
+        if (!isErr(result)) {
+          parsed.set(fp, result as ParsedFile);
+        } else {
+          failures.push({ filePath: fp, error: result.data });
         }
-      } catch {
-        // silently exclude failed files
+      } catch (e) {
+        failures.push({
+          filePath: fp,
+          error: e instanceof Error ? e : new Error(String(e)),
+        });
       }
     }),
   );
-  return result;
+  return { parsed, failures };
 }
 
 /** Retrieve a previously-parsed AST from the internal LRU cache. */

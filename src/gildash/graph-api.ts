@@ -3,18 +3,33 @@ import { DependencyGraph } from '../search/dependency-graph';
 import type { GildashContext } from './context';
 import type { FanMetrics } from './types';
 
+/** Graph cache TTL — matches healthcheck interval so readers stay fresh. */
+export const GRAPH_CACHE_TTL_MS = 15_000;
+
 /** Invalidate the cached DependencyGraph (called after every index run). */
 export function invalidateGraphCache(ctx: GildashContext): void {
   ctx.graphCache = null;
   ctx.graphCacheKey = null;
+  ctx.graphCacheBuiltAt = null;
 }
 
 /**
  * Return a cached or freshly-built DependencyGraph for the given project.
  * Builds once per key; subsequent calls with the same key return the cached instance.
+ * TTL-based expiry ensures readers don't hold stale graphs indefinitely.
  */
 export function getOrBuildGraph(ctx: GildashContext, project?: string): DependencyGraph {
   const key = project ?? '__cross__';
+
+  // TTL-based invalidation for readers (who don't get onIndexed callbacks)
+  if (ctx.graphCache && ctx.graphCacheBuiltAt !== null) {
+    if (Date.now() - ctx.graphCacheBuiltAt > GRAPH_CACHE_TTL_MS) {
+      ctx.graphCache = null;
+      ctx.graphCacheKey = null;
+      ctx.graphCacheBuiltAt = null;
+    }
+  }
+
   if (ctx.graphCache && ctx.graphCacheKey === key) {
     return ctx.graphCache;
   }
@@ -26,6 +41,7 @@ export function getOrBuildGraph(ctx: GildashContext, project?: string): Dependen
   g.build();
   ctx.graphCache = g;
   ctx.graphCacheKey = key;
+  ctx.graphCacheBuiltAt = Date.now();
   return g;
 }
 

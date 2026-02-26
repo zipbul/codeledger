@@ -10,6 +10,8 @@ import type { FileRecord } from '../store/repositories/file.repository';
 import type { PatternMatch } from '../search/pattern-search';
 import type { ResolvedType, SemanticReference, Implementation, SemanticModuleInterface } from '../semantic/types';
 import type { GildashContext } from './context';
+import type { FileChangeEvent } from '../watcher/types';
+import { GildashError } from '../errors';
 import type {
   Logger,
   GildashOptions,
@@ -20,6 +22,7 @@ import type {
   FileStats,
   FanMetrics,
   ResolvedSymbol,
+  BatchParseResult,
 } from './types';
 import type { GildashInternalOptions } from './lifecycle';
 import { initializeContext, closeContext } from './lifecycle';
@@ -42,6 +45,7 @@ export type {
   FileStats,
   FanMetrics,
   ResolvedSymbol,
+  BatchParseResult,
 } from './types';
 export type { GildashInternalOptions } from './lifecycle';
 
@@ -97,7 +101,7 @@ export class Gildash {
     return parseApi.parseSource(this._ctx, filePath, sourceText, options);
   }
 
-  async batchParse(filePaths: string[], options?: ParserOptions): Promise<Map<string, ParsedFile>> {
+  async batchParse(filePaths: string[], options?: ParserOptions): Promise<BatchParseResult> {
     return parseApi.batchParse(this._ctx, filePaths, options);
   }
 
@@ -241,5 +245,17 @@ export class Gildash {
 
   async getHeritageChain(symbolName: string, filePath: string, project?: string): Promise<HeritageNode> {
     return miscApi.getHeritageChain(this._ctx, symbolName, filePath, project);
+  }
+
+  onFileChanged(callback: (event: FileChangeEvent) => void): () => void {
+    return miscApi.onFileChanged(this._ctx, callback);
+  }
+
+  onError(callback: (error: GildashError) => void): () => void {
+    return miscApi.onError(this._ctx, callback);
+  }
+
+  onRoleChanged(callback: (newRole: 'owner' | 'reader') => void): () => void {
+    return miscApi.onRoleChanged(this._ctx, callback);
   }
 }

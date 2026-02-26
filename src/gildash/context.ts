@@ -139,6 +139,7 @@ export interface GildashContext {
   readonly updateHeartbeatFn: UpdateHeartbeatFn;
   readonly watcherFactory?: () => WatcherLike;
   readonly coordinatorFactory?: () => CoordinatorLike;
+  readonly instanceId: string;
 
   // ─── Mutable state ────────────────────────────────────────────────
   closed: boolean;
@@ -149,7 +150,11 @@ export interface GildashContext {
   tsconfigPaths: TsconfigPaths | null;
   boundaries: ProjectBoundary[];
   onIndexedCallbacks: Set<(result: IndexResult) => void>;
+  onFileChangedCallbacks: Set<(event: FileChangeEvent) => void>;
+  onErrorCallbacks: Set<(error: GildashError) => void>;
+  onRoleChangedCallbacks: Set<(newRole: 'owner' | 'reader') => void>;
   graphCache: DependencyGraph | null;
   graphCacheKey: string | null;
+  graphCacheBuiltAt: number | null;
   semanticLayer: SemanticLayerLike | null;
 }

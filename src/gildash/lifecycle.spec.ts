@@ -160,9 +160,14 @@ function makeCtx(overrides?: Partial<GildashContext>): GildashContext {
     signalHandlers: [],
     tsconfigPaths: null,
     boundaries: [],
+    instanceId: 'test-uuid',
     onIndexedCallbacks: new Set(),
+    onFileChangedCallbacks: new Set(),
+    onErrorCallbacks: new Set(),
+    onRoleChangedCallbacks: new Set(),
     graphCache: null,
     graphCacheKey: null,
+    graphCacheBuiltAt: null,
     semanticLayer: null,
     ...overrides,
   } as unknown as GildashContext;
@@ -725,9 +730,9 @@ describe('lifecycle state transitions', () => {
 
   it('should invalidate graphCache via onIndexed callback in setupOwnerInfrastructure', async () => {
     const coordinator = makeCoordinator();
-    let graphCacheInvalidator: Function | null = null;
+    const capturedCallbacks: Function[] = [];
     coordinator.onIndexed = mock((cb: any) => {
-      graphCacheInvalidator = cb;
+      capturedCallbacks.push(cb);
       return () => {};
     });
     const ctx = makeCtx({
@@ -738,8 +743,11 @@ describe('lifecycle state transitions', () => {
 
     await setupOwnerInfrastructure(ctx, { isWatchMode: false });
 
-    expect(graphCacheInvalidator).not.toBeNull();
-    graphCacheInvalidator!();
+    // The second onIndexed callback is the incremental invalidation one
+    // Trigger full invalidation path by exceeding the 100-file threshold
+    const graphCacheInvalidator = capturedCallbacks[capturedCallbacks.length - 1]!;
+    const manyFiles = Array.from({ length: 101 }, (_, i) => `file${i}.ts`);
+    graphCacheInvalidator({ changedFiles: manyFiles, deletedFiles: [], failedFiles: [] });
     expect(ctx.graphCache).toBeNull();
     expect(ctx.graphCacheKey).toBeNull();
   });

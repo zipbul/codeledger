@@ -25,13 +25,15 @@ import type { PatternMatch } from '../search/pattern-search';
 import { SemanticLayer } from '../semantic/index';
 import { GildashError, gildashError } from '../errors';
 import { DATA_DIR, DB_FILE } from '../constants';
+import { invalidateGraphCache } from './graph-api';
+import type { IDependencyGraphRepo } from '../search/dependency-graph';
 import type { GildashContext, CoordinatorLike, WatcherLike, DbStore } from './context';
 import type { GildashOptions, Logger } from './types';
 
 // ─── Constants ──────────────────────────────────────────────────────
 
 export const HEARTBEAT_INTERVAL_MS = 30_000;
-export const HEALTHCHECK_INTERVAL_MS = 60_000;
+export const HEALTHCHECK_INTERVAL_MS = 15_000;
 export const MAX_HEALTHCHECK_RETRIES = 10;
 
 // ─── Internal Options ───────────────────────────────────────────────
@@ -70,6 +72,13 @@ function createWatcherCallback(
   coordinator: CoordinatorLike,
 ): (event: FileChangeEvent) => void {
   return (event: FileChangeEvent) => {
+    // Fire onFileChanged callbacks
+    for (const cb of ctx.onFileChangedCallbacks) {
+      try { cb(event); } catch (e) {
+        ctx.logger.error('[Gildash] onFileChanged callback threw:', e);
+      }
+    }
+
     coordinator.handleWatcherEvent?.(event);
     if (ctx.semanticLayer) {
       if (event.eventType === 'delete') {
@@ -77,7 +86,10 @@ function createWatcherCallback(
       } else {
         ctx.readFileFn(event.filePath).then(content => {
           ctx.semanticLayer?.notifyFileChanged(event.filePath, content);
-        }).catch(() => {});
+        }).catch((readErr) => {
+          ctx.logger.error('[Gildash] failed to read file for semantic layer', event.filePath, readErr);
+          ctx.semanticLayer?.notifyFileDeleted(event.filePath);
+        });
       }
     }
   };
@@ -123,9 +135,24 @@ export async function setupOwnerInfrastructure(
   for (const cb of ctx.onIndexedCallbacks) {
     c.onIndexed(cb);
   }
-  c.onIndexed(() => {
-    ctx.graphCache = null;
-    ctx.graphCacheKey = null;
+  c.onIndexed((result) => {
+    const total = result.changedFiles.length + result.deletedFiles.length;
+    if (ctx.graphCache && total > 0 && total < 100) {
+      const repo = ctx.relationRepo as unknown as IDependencyGraphRepo;
+      ctx.graphCache.patchFiles(result.changedFiles, result.deletedFiles, (filePath) => {
+        const projects = [ctx.defaultProject, ...ctx.boundaries.map(b => b.project)];
+        return projects.flatMap(p =>
+          repo.getByType(p, 'imports')
+            .concat(repo.getByType(p, 'type-references'))
+            .concat(repo.getByType(p, 're-exports')),
+        )
+          .filter(r => r.srcFilePath === filePath || r.dstFilePath === filePath)
+          .map(r => ({ srcFilePath: r.srcFilePath, dstFilePath: r.dstFilePath }));
+      });
+      ctx.graphCacheBuiltAt = Date.now();
+    } else {
+      invalidateGraphCache(ctx);
+    }
   });
 
   if (opts.isWatchMode) {
@@ -238,10 +265,11 @@ export async function initializeContext(
       })();
 
   const isWatchMode = watchMode ?? true;
+  const instanceId = crypto.randomUUID();
   let role: 'owner' | 'reader';
   if (isWatchMode) {
     role = await Promise.resolve(
-      acquireWatcherRoleFnOpt(db, process.pid, {}),
+      acquireWatcherRoleFnOpt(db, process.pid, { instanceId }),
     );
   } else {
     role = 'owner';
@@ -276,6 +304,7 @@ export async function initializeContext(
     updateHeartbeatFn: updateHeartbeatFnOpt,
     watcherFactory,
     coordinatorFactory,
+    instanceId,
 
     closed: false,
     coordinator: null,
@@ -285,8 +314,12 @@ export async function initializeContext(
     tsconfigPaths: null,
     boundaries,
     onIndexedCallbacks: new Set(),
+    onFileChangedCallbacks: new Set(),
+    onErrorCallbacks: new Set(),
+    onRoleChangedCallbacks: new Set(),
     graphCache: null,
     graphCacheKey: null,
+    graphCacheBuiltAt: null,
     semanticLayer: null,
   };
 
@@ -319,10 +352,16 @@ export async function initializeContext(
     const healthcheck = async () => {
       try {
         const newRole = await Promise.resolve(
-          ctx.acquireWatcherRoleFn(ctx.db, process.pid, {}),
+          ctx.acquireWatcherRoleFn(ctx.db, process.pid, { instanceId: ctx.instanceId }),
         );
         retryCount = 0;
         if (newRole === 'owner') {
+          // Fire onRoleChanged callbacks
+          for (const cb of ctx.onRoleChangedCallbacks) {
+            try { cb('owner'); } catch (e) {
+              ctx.logger.error('[Gildash] onRoleChanged callback threw:', e);
+            }
+          }
           clearInterval(ctx.timer!);
           ctx.timer = null;
           try {
@@ -347,6 +386,15 @@ export async function initializeContext(
         }
       } catch (healthErr) {
         retryCount++;
+        // Fire onError callbacks
+        const gErr = healthErr instanceof GildashError
+          ? healthErr
+          : new GildashError('watcher', 'Gildash: healthcheck error', { cause: healthErr });
+        for (const cb of ctx.onErrorCallbacks) {
+          try { cb(gErr); } catch (e) {
+            ctx.logger.error('[Gildash] onError callback threw:', e);
+          }
+        }
         ctx.logger.error('[Gildash] healthcheck error', healthErr);
         if (retryCount >= MAX_HEALTHCHECK_RETRIES) {
           ctx.logger.error('[Gildash] healthcheck failed too many times, shutting down');

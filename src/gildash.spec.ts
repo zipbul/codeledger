@@ -14,9 +14,9 @@ function makeDbMock() {
     close: mock(() => {}),
     transaction: mock((fn: (tx: any) => any) => fn(null)),
     immediateTransaction: mock((fn: () => any) => fn()),
-    selectOwner: mock(() => undefined as { pid: number; heartbeat_at: string } | undefined),
-    insertOwner: mock((pid: number) => {}),
-    replaceOwner: mock((pid: number) => {}),
+    selectOwner: mock(() => undefined as { pid: number; heartbeat_at: string; instance_id: string | null } | undefined),
+    insertOwner: mock((pid: number, instanceId?: string) => {}),
+    replaceOwner: mock((pid: number, instanceId?: string) => {}),
     touchOwner: mock((pid: number) => {}),
     deleteOwner: mock((pid: number) => {}),
   };
@@ -208,14 +208,14 @@ describe('Gildash', () => {
     spySetInterval.mockRestore();
   });
 
-  it('should start a 60-second healthcheck interval when role is reader', async () => {
+  it('should start a 15-second healthcheck interval when role is reader', async () => {
     const spySetInterval = spyOn(globalThis, 'setInterval');
     const opts = makeOptions({ role: 'reader' });
 
     const ledger = await openOrThrow(opts);
 
     const intervals = (spySetInterval.mock.calls as any[]).map((c) => c[1]);
-    expect(intervals).toContain(60_000);
+    expect(intervals).toContain(15_000);
 
     await ledger.close();
     spySetInterval.mockRestore();
@@ -564,8 +564,10 @@ describe('Gildash', () => {
     // Set a non-null graphCache to detect invalidation
     ledger._ctx.graphCache = {} as any;
     ledger._ctx.graphCacheKey = 'test-key';
+    // Use >= 100 files to trigger full invalidation (not incremental patch)
+    const manyFiles = Array.from({ length: 101 }, (_, i) => `file${i}.ts`);
     coordinator.onIndexedCb?.({
-      indexedFiles: 1, changedFiles: ['a.ts'], deletedFiles: [],
+      indexedFiles: 101, changedFiles: manyFiles, deletedFiles: [],
       totalSymbols: 2, totalRelations: 1, durationMs: 5,
     });
 
@@ -652,7 +654,7 @@ describe('Gildash', () => {
     const cb = mock((r: any) => {});
     ledger.onIndexed(cb);
 
-    jest.advanceTimersByTime(60_000);
+    jest.advanceTimersByTime(15_000);
     for (let i = 0; i < 6; i++) await Promise.resolve();
 
     expect(coordinator.onIndexed).toHaveBeenCalledWith(cb);
@@ -726,7 +728,7 @@ describe('Gildash', () => {
 
     const ledger = await openOrThrow(opts);
 
-    jest.advanceTimersByTime(60_000);
+    jest.advanceTimersByTime(15_000);
     for (let i = 0; i < 10; i++) await Promise.resolve();
 
     await expect(ledger.close()).resolves.toBeUndefined();
@@ -745,7 +747,7 @@ describe('Gildash', () => {
     const ledger = await openOrThrow(opts);
 
     for (let i = 0; i < 10; i++) {
-      jest.advanceTimersByTime(60_000);
+      jest.advanceTimersByTime(15_000);
       for (let j = 0; j < 10; j++) await Promise.resolve();
     }
 
@@ -765,7 +767,7 @@ describe('Gildash', () => {
     const ledger = await openOrThrow(opts);
 
     for (let i = 0; i < 9; i++) {
-      jest.advanceTimersByTime(60_000);
+      jest.advanceTimersByTime(15_000);
       for (let j = 0; j < 10; j++) await Promise.resolve();
     }
 
@@ -792,10 +794,10 @@ describe('Gildash', () => {
 
     const ledger = await openOrThrow(opts);
 
-    jest.advanceTimersByTime(60_000);
+    jest.advanceTimersByTime(15_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
 
-    jest.advanceTimersByTime(60_000);
+    jest.advanceTimersByTime(15_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
 
     expect(watcher.start).toHaveBeenCalledTimes(2);
@@ -816,7 +818,7 @@ describe('Gildash', () => {
 
     const ledger = await openOrThrow(opts);
 
-    jest.advanceTimersByTime(60_000);
+    jest.advanceTimersByTime(15_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
 
     expect(opts.db.close).not.toHaveBeenCalled();
@@ -841,16 +843,16 @@ describe('Gildash', () => {
     const ledger = await openOrThrow(opts);
 
     for (let i = 0; i < 5; i++) {
-      jest.advanceTimersByTime(60_000);
+      jest.advanceTimersByTime(15_000);
       for (let j = 0; j < 10; j++) await Promise.resolve();
     }
 
-    jest.advanceTimersByTime(60_000);
+    jest.advanceTimersByTime(15_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
 
     expect(opts.db.close).not.toHaveBeenCalled();
 
-    jest.advanceTimersByTime(60_000);
+    jest.advanceTimersByTime(15_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
 
     expect(watcher.start).toHaveBeenCalledTimes(2);
@@ -1044,7 +1046,7 @@ describe('Gildash', () => {
 
     const ledger = await openOrThrow(opts);
 
-    jest.advanceTimersByTime(60_000);
+    jest.advanceTimersByTime(15_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
 
     opts.updateHeartbeatFn.mockClear();
@@ -1069,7 +1071,7 @@ describe('Gildash', () => {
 
     const ledger = await openOrThrow(opts);
 
-    jest.advanceTimersByTime(60_000);
+    jest.advanceTimersByTime(15_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
 
     expect(opts.db.close).not.toHaveBeenCalled();
@@ -1092,7 +1094,7 @@ describe('Gildash', () => {
 
     const ledger = await openOrThrow(opts);
 
-    jest.advanceTimersByTime(60_000);
+    jest.advanceTimersByTime(15_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
 
     expect(opts.db.close).not.toHaveBeenCalled();
@@ -1132,7 +1134,7 @@ describe('Gildash', () => {
 
     const ledger = await openOrThrow(opts);
 
-    jest.advanceTimersByTime(60_000);
+    jest.advanceTimersByTime(15_000);
     for (let j = 0; j < 10; j++) await Promise.resolve();
 
     capturedCb!({ filePath: 'src/b.ts', type: 'create' });
@@ -1158,7 +1160,7 @@ describe('Gildash', () => {
     (ledger._ctx.db as any).close = mock(() => { throw new Error('db close fail'); });
 
     for (let i = 0; i < 10; i++) {
-      jest.advanceTimersByTime(60_000);
+      jest.advanceTimersByTime(15_000);
       for (let j = 0; j < 10; j++) await Promise.resolve();
     }
 
@@ -1348,7 +1350,7 @@ describe('Gildash', () => {
     });
 
     for (let i = 0; i < 10; i++) {
-      jest.advanceTimersByTime(60_000);
+      jest.advanceTimersByTime(15_000);
       for (let j = 0; j < 10; j++) await Promise.resolve();
     }
 
@@ -2254,11 +2256,11 @@ describe('Gildash', () => {
 
       const result = await ledger.batchParse(['/project/src/a.ts', '/project/src/b.ts']);
 
-      const map = result as Map<string, any>;
-      expect(map).toBeInstanceOf(Map);
-      expect(map.size).toBe(2);
-      expect(map.has('/project/src/a.ts')).toBe(true);
-      expect(map.has('/project/src/b.ts')).toBe(true);
+      expect(result.parsed).toBeInstanceOf(Map);
+      expect(result.parsed.size).toBe(2);
+      expect(result.parsed.has('/project/src/a.ts')).toBe(true);
+      expect(result.parsed.has('/project/src/b.ts')).toBe(true);
+      expect(result.failures).toHaveLength(0);
       await ledger.close();
     });
 
@@ -2268,7 +2270,7 @@ describe('Gildash', () => {
 
       const result = await ledger.batchParse([]);
 
-      expect((result as Map<string, any>).size).toBe(0);
+      expect(result.parsed.size).toBe(0);
       await ledger.close();
     });
 
@@ -2282,9 +2284,9 @@ describe('Gildash', () => {
 
       const result = await ledger.batchParse(['/project/src/ok.ts', '/project/src/fail.ts']);
 
-      const map = result as Map<string, any>;
-      expect(map.has('/project/src/ok.ts')).toBe(true);
-      expect(map.has('/project/src/fail.ts')).toBe(false);
+      expect(result.parsed.has('/project/src/ok.ts')).toBe(true);
+      expect(result.parsed.has('/project/src/fail.ts')).toBe(false);
+      expect(result.failures).toHaveLength(1);
       await ledger.close();
     });
 
@@ -2310,9 +2312,9 @@ describe('Gildash', () => {
 
       const result = await ledger.batchParse(['/project/src/ok.ts', '/project/src/broken.ts']);
 
-      const map = result as Map<string, any>;
-      expect(map.has('/project/src/ok.ts')).toBe(true);
-      expect(map.has('/project/src/broken.ts')).toBe(false);
+      expect(result.parsed.has('/project/src/ok.ts')).toBe(true);
+      expect(result.parsed.has('/project/src/broken.ts')).toBe(false);
+      expect(result.failures).toHaveLength(1);
       await ledger.close();
     });
 
@@ -2323,7 +2325,7 @@ describe('Gildash', () => {
 
       const result = await ledger.batchParse(['/project/src/single.ts']);
 
-      expect((result as Map<string, any>).size).toBe(1);
+      expect(result.parsed.size).toBe(1);
       await ledger.close();
     });
 
@@ -3768,7 +3770,7 @@ describe('Gildash', () => {
 
       const ledger = await openOrThrow(opts);
 
-      jest.advanceTimersByTime(60_000);
+      jest.advanceTimersByTime(15_000);
       for (let j = 0; j < 20; j++) await Promise.resolve();
 
       expect(capturedCb).not.toBeNull();
@@ -3805,7 +3807,7 @@ describe('Gildash', () => {
 
       const ledger = await openOrThrow(opts);
 
-      jest.advanceTimersByTime(60_000);
+      jest.advanceTimersByTime(15_000);
       for (let j = 0; j < 30; j++) await Promise.resolve();
 
       expect(sl.notifyFileChanged).toHaveBeenCalledTimes(2);
@@ -3836,7 +3838,7 @@ describe('Gildash', () => {
 
       const ledger = await openOrThrow(opts);
 
-      jest.advanceTimersByTime(60_000);
+      jest.advanceTimersByTime(15_000);
       for (let j = 0; j < 20; j++) await Promise.resolve();
 
       capturedCb!({ eventType: 'change', filePath: '/project/src/a.ts' });
@@ -3876,7 +3878,7 @@ describe('Gildash', () => {
 
       const ledger = await openOrThrow(opts);
 
-      jest.advanceTimersByTime(60_000);
+      jest.advanceTimersByTime(15_000);
       for (let j = 0; j < 30; j++) await Promise.resolve();
 
       expect(sl.notifyFileChanged).toHaveBeenCalledTimes(1);
@@ -3907,7 +3909,7 @@ describe('Gildash', () => {
 
       const ledger = await openOrThrow(opts);
 
-      jest.advanceTimersByTime(60_000);
+      jest.advanceTimersByTime(15_000);
       for (let j = 0; j < 20; j++) await Promise.resolve();
 
       capturedCb!({ eventType: 'delete', filePath: '/project/src/a.ts' });
@@ -3962,7 +3964,7 @@ describe('Gildash', () => {
 
       const ledger = await openOrThrow(opts);
 
-      jest.advanceTimersByTime(60_000);
+      jest.advanceTimersByTime(15_000);
       for (let j = 0; j < 20; j++) await Promise.resolve();
 
       // Set non-null graphCache to detect invalidation after promotion
@@ -3970,8 +3972,10 @@ describe('Gildash', () => {
       ledger._ctx.graphCacheKey = 'test-key';
 
       // After promotion, the coordinator's onIndexedCb is the internal callback
+      // Use >= 100 files to trigger full invalidation (not incremental patch)
+      const manyFiles = Array.from({ length: 101 }, (_, i) => `file${i}.ts`);
       coordinator.onIndexedCb?.({
-        indexedFiles: 1, changedFiles: ['a.ts'], deletedFiles: [],
+        indexedFiles: 101, changedFiles: manyFiles, deletedFiles: [],
         totalSymbols: 2, totalRelations: 1, durationMs: 5,
       });
 

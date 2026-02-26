@@ -581,7 +581,7 @@ describe('Gildash integration', () => {
         join(tmpDir, 'src', 'utils.ts'),
         join(tmpDir, 'src', 'app.ts'),
       ]);
-      expect(result.size).toBe(2);
+      expect(result.parsed.size).toBe(2);
     });
 
     it('should include only successful parses in batchParse result when one file fails', async () => {
@@ -589,8 +589,8 @@ describe('Gildash integration', () => {
         join(tmpDir, 'src', 'utils.ts'),
         join(tmpDir, 'nonexistent', 'missing.ts'),
       ]);
-      expect(result.size).toBe(1);
-      expect(result.has(join(tmpDir, 'src', 'utils.ts'))).toBe(true);
+      expect(result.parsed.size).toBe(1);
+      expect(result.parsed.has(join(tmpDir, 'src', 'utils.ts'))).toBe(true);
     });
 
     it('should find structural patterns in indexed files via findPattern', async () => {

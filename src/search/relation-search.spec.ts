@@ -243,15 +243,12 @@ describe('relationSearch', () => {
     expect(results[0]!.meta).toBeUndefined();
   });
 
-  // 6. [NE] malformed JSON → meta=undefined, console.error called
-  it('should set meta to undefined and log error when metaJson is malformed JSON', () => {
-    const spyError = spyOn(console, 'error').mockImplementation(() => {});
+  // 6. [NE] malformed JSON → meta=undefined
+  it('should set meta to undefined when metaJson is malformed JSON', () => {
     mockSearchRelations = mock(() => [makeRelationRecord({ metaJson: '{broken' })]);
     mockRepo = { searchRelations: mockSearchRelations } as IRelationRepo;
     const results = relationSearch({ relationRepo: mockRepo, query: {} });
     expect(results[0]!.meta).toBeUndefined();
-    expect(spyError).toHaveBeenCalled();
-    spyError.mockRestore();
   });
 
   // 7. [NE] mixed [null, valid] records → [undefined, parsed]

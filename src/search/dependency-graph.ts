@@ -68,6 +68,68 @@ export class DependencyGraph {
   }
 
   /**
+   * Incrementally patch the graph after a set of files changed or were deleted.
+   *
+   * For small change-sets this is much cheaper than a full {@link build}.
+   *
+   * @param changedFiles  - Files whose edges may have changed.
+   * @param deletedFiles  - Files that were removed from the project.
+   * @param getRelationsForFile - Callback to query current relations for a file.
+   */
+  patchFiles(
+    changedFiles: string[],
+    deletedFiles: string[],
+    getRelationsForFile: (filePath: string) => Array<{ srcFilePath: string; dstFilePath: string }>,
+  ): void {
+    const affectedFiles = new Set([...changedFiles, ...deletedFiles]);
+
+    // Remove all edges involving affected files
+    for (const file of affectedFiles) {
+      const outgoing = this.adjacencyList.get(file);
+      if (outgoing) {
+        for (const dst of outgoing) {
+          this.reverseAdjacencyList.get(dst)?.delete(file);
+        }
+        outgoing.clear();
+      }
+
+      const incoming = this.reverseAdjacencyList.get(file);
+      if (incoming) {
+        for (const src of incoming) {
+          this.adjacencyList.get(src)?.delete(file);
+        }
+        incoming.clear();
+      }
+    }
+
+    // Remove deleted files entirely
+    for (const file of deletedFiles) {
+      this.adjacencyList.delete(file);
+      this.reverseAdjacencyList.delete(file);
+    }
+
+    // Re-add edges for changed (non-deleted) files
+    for (const file of changedFiles) {
+      const relations = getRelationsForFile(file);
+      for (const rel of relations) {
+        if (!this.adjacencyList.has(rel.srcFilePath)) {
+          this.adjacencyList.set(rel.srcFilePath, new Set());
+        }
+        this.adjacencyList.get(rel.srcFilePath)!.add(rel.dstFilePath);
+
+        if (!this.adjacencyList.has(rel.dstFilePath)) {
+          this.adjacencyList.set(rel.dstFilePath, new Set());
+        }
+
+        if (!this.reverseAdjacencyList.has(rel.dstFilePath)) {
+          this.reverseAdjacencyList.set(rel.dstFilePath, new Set());
+        }
+        this.reverseAdjacencyList.get(rel.dstFilePath)!.add(rel.srcFilePath);
+      }
+    }
+  }
+
+  /**
    * Return the files that `filePath` directly imports.
    *
    * @param filePath - Absolute file path.

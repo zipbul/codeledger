@@ -122,11 +122,12 @@ describe('batchParse', () => {
     });
     const ctx = makeCtx({ readFileFn: readFn as any, parseSourceFn: parseFn as any });
 
-    const map = await batchParse(ctx, ['/src/a.ts', '/src/b.ts']);
+    const result = await batchParse(ctx, ['/src/a.ts', '/src/b.ts']);
 
-    expect(map.size).toBe(2);
-    expect(map.get('/src/a.ts')).toBe(parsedA);
-    expect(map.get('/src/b.ts')).toBe(parsedB);
+    expect(result.parsed.size).toBe(2);
+    expect(result.parsed.get('/src/a.ts')).toBe(parsedA);
+    expect(result.parsed.get('/src/b.ts')).toBe(parsedB);
+    expect(result.failures).toHaveLength(0);
   });
 
   it('should pass readFileFn result as sourceText and forward options to parseSourceFn', async () => {
@@ -154,7 +155,7 @@ describe('batchParse', () => {
     expect(parseFn).toHaveBeenCalledTimes(0);
   });
 
-  it('should exclude files where readFileFn throws', async () => {
+  it('should report files where readFileFn throws as failures', async () => {
     const readFn = mock(async (fp: string) => {
       if (fp === '/src/bad.ts') throw new Error('read fail');
       return 'ok';
@@ -162,14 +163,16 @@ describe('batchParse', () => {
     const parseFn = mock(() => makeParsed());
     const ctx = makeCtx({ readFileFn: readFn as any, parseSourceFn: parseFn as any });
 
-    const map = await batchParse(ctx, ['/src/bad.ts', '/src/good.ts']);
+    const result = await batchParse(ctx, ['/src/bad.ts', '/src/good.ts']);
 
-    expect(map.size).toBe(1);
-    expect(map.has('/src/bad.ts')).toBe(false);
-    expect(map.has('/src/good.ts')).toBe(true);
+    expect(result.parsed.size).toBe(1);
+    expect(result.parsed.has('/src/bad.ts')).toBe(false);
+    expect(result.parsed.has('/src/good.ts')).toBe(true);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]!.filePath).toBe('/src/bad.ts');
   });
 
-  it('should exclude files where parseSourceFn returns err', async () => {
+  it('should report files where parseSourceFn returns err as failures', async () => {
     const readFn = mock(async () => 'code');
     const parseFn = mock((fp: string) => {
       if (fp === '/src/bad.ts') return err(gildashError('parse', 'fail'));
@@ -177,19 +180,22 @@ describe('batchParse', () => {
     });
     const ctx = makeCtx({ readFileFn: readFn as any, parseSourceFn: parseFn as any });
 
-    const map = await batchParse(ctx, ['/src/bad.ts', '/src/good.ts']);
+    const result = await batchParse(ctx, ['/src/bad.ts', '/src/good.ts']);
 
-    expect(map.size).toBe(1);
-    expect(map.has('/src/bad.ts')).toBe(false);
-    expect(map.has('/src/good.ts')).toBe(true);
+    expect(result.parsed.size).toBe(1);
+    expect(result.parsed.has('/src/bad.ts')).toBe(false);
+    expect(result.parsed.has('/src/good.ts')).toBe(true);
+    expect(result.failures).toHaveLength(1);
+    expect(result.failures[0]!.filePath).toBe('/src/bad.ts');
   });
 
-  it('should return empty Map when filePaths is empty', async () => {
+  it('should return empty parsed Map and no failures when filePaths is empty', async () => {
     const ctx = makeCtx();
 
-    const map = await batchParse(ctx, []);
+    const result = await batchParse(ctx, []);
 
-    expect(map.size).toBe(0);
+    expect(result.parsed.size).toBe(0);
+    expect(result.failures).toHaveLength(0);
   });
 
   it('should handle mixed failures: 1 readFileFn throw + 1 parseSourceFn err + 1 success', async () => {
@@ -204,17 +210,18 @@ describe('batchParse', () => {
     });
     const ctx = makeCtx({ readFileFn: readFn as any, parseSourceFn: parseFn as any });
 
-    const map = await batchParse(ctx, ['/src/read-fail.ts', '/src/parse-fail.ts', '/src/ok.ts']);
+    const result = await batchParse(ctx, ['/src/read-fail.ts', '/src/parse-fail.ts', '/src/ok.ts']);
 
-    expect(map.size).toBe(1);
-    expect(map.has('/src/ok.ts')).toBe(true);
+    expect(result.parsed.size).toBe(1);
+    expect(result.parsed.has('/src/ok.ts')).toBe(true);
+    expect(result.failures).toHaveLength(2);
   });
 
   it('should throw GildashError after ctx transitions from open to closed', async () => {
     const ctx = makeCtx();
 
     const first = await batchParse(ctx, []);
-    expect(first.size).toBe(0);
+    expect(first.parsed.size).toBe(0);
 
     ctx.closed = true;
 

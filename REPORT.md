@@ -21,17 +21,17 @@
 | 지표 | 수치 |
 |------|------|
 | 버전 | v0.7.0 (8번째 릴리즈) |
-| 소스 파일 | 105개 |
-| 소스 LOC | ~28,600줄 |
+| 소스 파일 | 63개 (비테스트 .ts) |
+| 소스 LOC | ~7,800줄 |
 | 테스트 파일 | 52개 (spec + test) |
-| 테스트 LOC | ~22,800줄 (코드 대비 80%) |
+| 테스트 LOC | ~22,800줄 (코드 대비 ~292%) |
 | 테스트 수 | **1,568개 전체 통과** |
 | 함수 커버리지 | **99.82%** |
 | 라인 커버리지 | **99.84%** |
 | 타입체크 | 에러 0건 |
 | 빌드 | 정상 (51 모듈 → 79KB) |
 | TODO/FIXME | **0건** |
-| 공개 API | 34개 메서드, 전부 구현 완료 |
+| 공개 API | 37개 메서드, 전부 구현 완료 |
 
 **판정: 기능적으로 완성된 상태.** 스텁이나 미구현 API가 없고, 코드에 TODO/FIXME가 단 하나도 없다.
 
@@ -51,7 +51,7 @@ Gildash (Facade — src/gildash/)
 └── Common      — 프로젝트 탐색, tsconfig 리졸버, 해셔, LRU 캐시 (src/common/)
 ```
 
-### 모듈별 규모
+### 모듈별 규모 (테스트 포함)
 
 | 모듈 | 파일 수 | LOC | 주요 구성 |
 |------|---------|-----|----------|
@@ -101,18 +101,17 @@ Owner/Reader 패턴이 완전 구현: 하트비트(30초), 헬스체크(60초), 
 | 항목 | 상세 |
 |------|------|
 | **사용 예제 부족** | README에 기본 사용법은 있으나, 실제 프로젝트에서 활용하는 심층 예제(CLI 도구 구축, IDE 플러그인 연동 등)가 없다 |
-| **API 레퍼런스 문서 없음** | 34개 메서드의 JSDoc은 있으나, 별도 API 문서 사이트가 없다 |
+| **API 레퍼런스 문서 없음** | 37개 메서드의 JSDoc은 있으나, 별도 API 문서 사이트가 없다 |
 | **벤치마크/성능 데이터 없음** | 대규모 코드베이스(10만줄+ 프로젝트)에서의 인덱싱 시간, 메모리 사용량 등 성능 지표가 공개되지 않았다 |
 
 ### 5-2. 기능적 한계
 
 | 항목 | 상세 |
 |------|------|
-| **JavaScript 지원 불명확** | oxc-parser는 JS도 파싱 가능하나, 프로젝트 전체가 TypeScript 코드베이스를 전제로 설계됨. `.js`/`.jsx` 파일의 인덱싱 품질이 검증되지 않음 |
+| **JavaScript/TSX 기본 미포함** | 기본 확장자가 `['.ts', '.mts', '.cts']`로 설정됨. `extensions` 옵션으로 `.tsx`, `.js` 등을 추가할 수 있으나, 기본 설정에서는 제외 |
 | **시맨틱 레이어 옵트인** | tsc 연동이 선택적(`semantic: true`)이라 기본 모드에서는 타입 정보 없이 AST 수준 분석만 가능. 시맨틱 없이는 정확한 참조 해석 불가 |
 | **이름 기반 위치 탐색의 한계** | `semantic/index.ts`에서 심볼 위치를 찾을 때 단순 텍스트 검색 + 단어 경계 검증을 사용. 동일 이름 심볼이 같은 파일에 여러 번 나오면 첫 번째 매치만 반환될 수 있음 |
 | **외부 패키지 인덱싱 제거** | v0.6.0에서 `indexExternalPackages()`가 삭제됨. node_modules 내부 타입 추적이 불가 |
-| **getDeadExports() 제거** | v0.5.0에서 삭제. 미사용 export 탐지 기능이 사라짐 |
 
 ### 5-3. 기술적 제약
 
@@ -121,7 +120,6 @@ Owner/Reader 패턴이 완전 구현: 하트비트(30초), 헬스체크(60초), 
 | **SQLite 단일 작성자** | WAL 모드이지만 쓰기는 Owner 프로세스 하나만 가능. 대규모 모노레포에서 병렬 인덱싱 불가 |
 | **파서 캐시 고정 크기** | LRU 캐시 기본 500개. TTL 없이 크기 기반 퇴거만 함. 대규모 프로젝트에서 메모리 사용 예측 어려움 |
 | **그래프 캐시 무효화** | 인덱스 실행마다 전체 캐시 무효화. 점진적(incremental) 그래프 업데이트가 아님 |
-| **빈 마이그레이션 존재** | `0003_majestic_mongu.sql`이 빈 파일. 정리되지 않은 상태 |
 | **Bun 종속성** | `bun:sqlite`, `bun:test` 등 Bun 전용 API에 강하게 결합. Node.js 환경에서 사용 불가 |
 
 ### 5-4. 커버리지 사각지대 (미미하지만 존재)
@@ -136,7 +134,7 @@ Owner/Reader 패턴이 완전 구현: 하트비트(30초), 헬스체크(60초), 
 
 ---
 
-## 6. 공개 API 목록 (34개 메서드)
+## 6. 공개 API 목록 (37개 메서드)
 
 ### Parse (3)
 
@@ -161,14 +159,13 @@ Owner/Reader 패턴이 완전 구현: 하트비트(30초), 헬스체크(60초), 
 - `getFullSymbol(name, filePath, project?)` → FullSymbol | null
 - `getFileStats(filePath, project?)` → FileStats
 
-### Query/Metadata (4)
+### Query/Metadata (3)
 
 - `getFileInfo(filePath, project?)` → FileRecord | null
 - `getSymbolsByFile(filePath, project?)` → SymbolSearchResult[]
 - `getModuleInterface(filePath, project?)` → ModuleInterface
-- `getFanMetrics(filePath, project?)` → FanMetrics
 
-### Graph (7)
+### Graph (8)
 
 - `getDependencies(filePath, project?, limit?)` → string[]
 - `getDependents(filePath, project?, limit?)` → string[]
@@ -177,6 +174,7 @@ Owner/Reader 패턴이 완전 구현: 하트비트(30초), 헬스체크(60초), 
 - `getImportGraph(project?)` → Map<string, string[]>
 - `getTransitiveDependencies(filePath, project?)` → string[]
 - `getCyclePaths(project?, options?)` → string[][]
+- `getFanMetrics(filePath, project?)` → FanMetrics
 
 ### Semantic (4)
 
@@ -185,7 +183,7 @@ Owner/Reader 패턴이 완전 구현: 하트비트(30초), 헬스체크(60초), 
 - `getImplementations(name, filePath, project?)` → Implementation[]
 - `getSemanticModuleInterface(filePath)` → SemanticModuleInterface
 
-### Utility (5)
+### Utility (6)
 
 - `diffSymbols(before, after)` → SymbolDiff
 - `onIndexed(callback)` → () => void
@@ -209,9 +207,48 @@ Owner/Reader 패턴이 완전 구현: 하트비트(30초), 헬스체크(60초), 
 | 테스트 품질 | A+ | 1,568 테스트, 99.8% 커버리지 |
 | 아키텍처 | A | 모듈 분리 우수, 파사드 패턴 적용 |
 | 에러 처리 | A+ | 전 메서드 일관된 throw 패턴 |
-| 기능 완성도 | A | 34 API 전부 구현, 핵심 기능 완비 |
+| 기능 완성도 | A | 37 API 전부 구현, 핵심 기능 완비 |
 | 문서화 | B+ | README/CHANGELOG 있으나 API 문서 미흡 |
 | 확장성 | B | SQLite 단일 작성자, Bun 전용 |
 | 생태계/채택 | C+ | 사용 예제/벤치마크/플러그인 부재 |
 
 **결론**: 엔지니어링 품질은 **프로덕션 레디 수준**으로 매우 높다. 코드 자체의 결함은 발견되지 않았다. 향후 과제는 코드 품질이 아닌 **생태계 확장**(문서, 벤치마크, 사용 사례, 플러그인)과 **스케일링**(대규모 프로젝트 대응, 병렬 인덱싱)에 있다.
+
+---
+
+## 8. 패키지 개선 권장
+
+### 8-1. 코드 품질
+
+| 항목 | 상세 |
+|------|------|
+| **Owner/Reader 하트비트 타이밍 갭** | Owner 30초 하트비트 / Reader 60초 체크 / 90초 스테일 → 최악 120초 미감지. Reader 체크 간격 단축 또는 스테일 임계치 하향 권장 |
+| **Reader 그래프 캐시 stale** | Reader가 Owner 인덱싱 결과를 즉시 미반영. Reader는 `onIndexed` 콜백을 받지 않아 캐시가 무기한 유지됨. 타임스탬프 기반 캐시 만료 또는 DB 인덱스 버전 폴링 권장 |
+| **그래프 캐시 전체 무효화** | 인덱스 실행마다 전체 캐시 무효화. 대부분 프로젝트에서 rebuild 비용은 미미하나, 10,000+ 파일 규모에서는 변경 영향 범위만 무효화하는 incremental 전략 검토 가치 있음 |
+| **Watcher→Semantic 무음 에러** | `lifecycle.ts:78-81`에서 `.catch(() => {})`. 파일 읽기 실패 시 시맨틱 레이어가 변경을 감지 못함. 삭제된 파일도 `notifyFileDeleted` 대신 무시됨 |
+| **PID 재활용 경합** | `ownership.ts`에서 Owner 생존을 `process.kill(pid, 0)`으로 확인. OS가 PID 재활용 시 무관한 프로세스를 Owner로 오인하여 Reader 승격 교착 가능. PID + UUID 조합 권장 |
+| **batchParse 무음 실패** | `parse-api.ts:37-39`에서 파싱 실패 파일이 결과에서 조용히 제외됨. 호출자가 어떤 파일이 실패했는지 알 수 없음 |
+
+### 8-2. 성능 / 확장성
+
+| 항목 | 상세 |
+|------|------|
+| **Relations 테이블 커버링 인덱스** | 2열 복합 인덱스 `(project, srcFilePath)`, `(dstProject, dstFilePath)`, `(project, type)`이 존재하며 주요 쿼리(`getOutgoing`/`getIncoming`/`getByType`)를 커버. 다만 범용 `searchRelations()`에서 타입+경로 동시 필터 시 3열 커버링 인덱스 부재로 추가 스캔 발생 가능 |
+| **대규모 배치 처리** | 전체 인덱싱 시 `Promise.allSettled()`로 모든 파일을 동시 로드. 10,000+ 파일에서 OOM 위험 및 `EMFILE`(기본 ulimit 1024 초과) 위험 → 청크 단위 처리 권장 |
+
+### 8-3. 기능 확장
+
+| 항목 | 상세 |
+|------|------|
+| **이벤트 시스템 강화** | `onIndexed()` 하나뿐. `onFileChanged()`, `onError()`, `onRoleChanged()` 등 세분화 권장 |
+
+### 8-4. 테스트 보강
+
+| 항목 | 상세 |
+|------|------|
+| **스트레스 테스트** | 10,000+ 파일 프로젝트 시뮬레이션으로 메모리/성능 한계 검증 |
+| **Chaos 테스트** | Owner 강제 종료 → Reader 자동 승격, 다중 Reader 경합 시나리오 |
+| **Property-Based 테스트** | Tarjan SCC, Johnson's cycles 등 그래프 알고리즘에 fast-check 적용 |
+| **벤치마크 스위트** | 실제 오픈소스 프로젝트 대상 인덱싱 시간, 메모리, 검색 응답 시간 측정 |
+
+monorepo 지원안됨

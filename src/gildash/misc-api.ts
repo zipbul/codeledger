@@ -1,6 +1,7 @@
 import type { SymbolSearchResult } from '../search/symbol-search';
 import type { CodeRelation } from '../extractor/types';
 import type { IndexResult } from '../indexer/index-coordinator';
+import type { FileChangeEvent } from '../watcher/types';
 import type { PatternMatch } from '../search/pattern-search';
 import { GildashError } from '../errors';
 import type { GildashContext } from './context';
@@ -122,6 +123,33 @@ export function resolveSymbol(
     currentFile = nextFile;
     currentName = nextName;
   }
+}
+
+/** Register a callback that fires whenever a watched file changes. */
+export function onFileChanged(
+  ctx: GildashContext,
+  callback: (event: FileChangeEvent) => void,
+): () => void {
+  ctx.onFileChangedCallbacks.add(callback);
+  return () => { ctx.onFileChangedCallbacks.delete(callback); };
+}
+
+/** Register a callback that fires on internal errors (e.g. healthcheck failures). */
+export function onError(
+  ctx: GildashContext,
+  callback: (error: GildashError) => void,
+): () => void {
+  ctx.onErrorCallbacks.add(callback);
+  return () => { ctx.onErrorCallbacks.delete(callback); };
+}
+
+/** Register a callback that fires when the watcher role changes (reader → owner). */
+export function onRoleChanged(
+  ctx: GildashContext,
+  callback: (newRole: 'owner' | 'reader') => void,
+): () => void {
+  ctx.onRoleChangedCallbacks.add(callback);
+  return () => { ctx.onRoleChangedCallbacks.delete(callback); };
 }
 
 /** Search for an AST structural pattern across indexed TypeScript files. */

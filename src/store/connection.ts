@@ -147,25 +147,25 @@ export class DbConnection {
     return rows.map((r) => r.name);
   }
 
-  selectOwner(): { pid: number; heartbeat_at: string } | undefined {
+  selectOwner(): { pid: number; heartbeat_at: string; instance_id: string | null } | undefined {
     const row = this.requireClient()
-      .prepare('SELECT pid, heartbeat_at FROM watcher_owner WHERE id = 1')
-      .get() as { pid: number; heartbeat_at: string } | null;
+      .prepare('SELECT pid, heartbeat_at, instance_id FROM watcher_owner WHERE id = 1')
+      .get() as { pid: number; heartbeat_at: string; instance_id: string | null } | null;
     return row ?? undefined;
   }
 
-  insertOwner(pid: number): void {
+  insertOwner(pid: number, instanceId?: string): void {
     const now = new Date().toISOString();
     this.requireClient()
-      .prepare('INSERT INTO watcher_owner (id, pid, started_at, heartbeat_at) VALUES (1, ?, ?, ?)')
-      .run(pid, now, now);
+      .prepare('INSERT INTO watcher_owner (id, pid, started_at, heartbeat_at, instance_id) VALUES (1, ?, ?, ?, ?)')
+      .run(pid, now, now, instanceId ?? null);
   }
 
-  replaceOwner(pid: number): void {
+  replaceOwner(pid: number, instanceId?: string): void {
     const now = new Date().toISOString();
     this.requireClient()
-      .prepare('INSERT OR REPLACE INTO watcher_owner (id, pid, started_at, heartbeat_at) VALUES (1, ?, ?, ?)')
-      .run(pid, now, now);
+      .prepare('INSERT OR REPLACE INTO watcher_owner (id, pid, started_at, heartbeat_at, instance_id) VALUES (1, ?, ?, ?, ?)')
+      .run(pid, now, now, instanceId ?? null);
   }
 
   touchOwner(pid: number): void {

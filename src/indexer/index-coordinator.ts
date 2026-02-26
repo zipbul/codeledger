@@ -18,6 +18,7 @@ import type { RelationRecord } from '../store/repositories/relation.repository';
 import type { Logger } from '../gildash';
 
 export const WATCHER_DEBOUNCE_MS = 100;
+export const FILE_READ_BATCH_SIZE = 50;
 
 /**
  * Summary returned after an indexing run completes.
@@ -380,21 +381,25 @@ export class IndexCoordinator {
     if (useTransaction) {
       const { projectRoot, boundaries } = this.opts;
       const { parseCache } = this.opts;
-      const prereadResults = await Promise.allSettled(
-        changed.map(async (file) => {
-          const absPath = toAbsolutePath(projectRoot, file.filePath);
-          const bunFile = Bun.file(absPath);
-          const text = await bunFile.text();
-          const contentHash = file.contentHash || hashString(text);
-          return { filePath: file.filePath, text, contentHash, mtimeMs: bunFile.lastModified, size: bunFile.size };
-        }),
-      );
-      const preread = prereadResults
-        .filter((r): r is PromiseFulfilledResult<{ filePath: string; text: string; contentHash: string; mtimeMs: number; size: number }> => r.status === 'fulfilled')
-        .map((r) => r.value);
-      for (const r of prereadResults) {
-        if (r.status === 'rejected') {
-          this.logger.error('[IndexCoordinator] Failed to pre-read file:', r.reason);
+      type PrereadEntry = { filePath: string; text: string; contentHash: string; mtimeMs: number; size: number };
+      const preread: PrereadEntry[] = [];
+      for (let i = 0; i < changed.length; i += FILE_READ_BATCH_SIZE) {
+        const chunk = changed.slice(i, i + FILE_READ_BATCH_SIZE);
+        const chunkResults = await Promise.allSettled(
+          chunk.map(async (file) => {
+            const absPath = toAbsolutePath(projectRoot, file.filePath);
+            const bunFile = Bun.file(absPath);
+            const text = await bunFile.text();
+            const contentHash = file.contentHash || hashString(text);
+            return { filePath: file.filePath, text, contentHash, mtimeMs: bunFile.lastModified, size: bunFile.size };
+          }),
+        );
+        for (const r of chunkResults) {
+          if (r.status === 'fulfilled') {
+            preread.push(r.value);
+          } else {
+            this.logger.error('[IndexCoordinator] Failed to pre-read file:', r.reason);
+          }
         }
       }
 

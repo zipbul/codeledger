@@ -73,6 +73,7 @@ export const relations = sqliteTable(
     index('idx_relations_src').on(table.project, table.srcFilePath),
     index('idx_relations_dst').on(table.dstProject, table.dstFilePath),
     index('idx_relations_type').on(table.project, table.type),
+    index('idx_relations_project_type_src').on(table.project, table.type, table.srcFilePath),
     foreignKey({
       columns: [table.project, table.srcFilePath],
       foreignColumns: [files.project, files.filePath],
@@ -91,6 +92,7 @@ export const watcherOwner = sqliteTable(
     pid: integer('pid').notNull(),
     startedAt: text('started_at').notNull(),
     heartbeatAt: text('heartbeat_at').notNull(),
+    instanceId: text('instance_id'),
   },
   (table) => [check('watcher_owner_singleton', sql`${table.id} = 1`)],
 );

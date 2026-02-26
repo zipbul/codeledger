@@ -78,7 +78,7 @@ export function relationSearch(options: {
       try {
         meta = JSON.parse(r.metaJson) as Record<string, unknown>;
       } catch {
-        console.error('[relationSearch] malformed metaJson:', r.metaJson);
+        // malformed JSON → meta stays undefined
       }
     }
     return {
