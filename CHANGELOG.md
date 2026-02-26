@@ -1,5 +1,57 @@
 # @zipbul/gildash
 
+## 0.6.0
+
+### Minor Changes
+
+- [#29](https://github.com/zipbul/gildash/pull/29) [`f3a53f7`](https://github.com/zipbul/gildash/commit/f3a53f77c77510e06120c6b91e10cd724fb1cbd7) Thanks [@parkrevil](https://github.com/parkrevil)! - ### Semantic Layer (tsc TypeChecker integration)
+
+  Enable tsc TypeChecker-based semantic analysis via `Gildash.open({ semantic: true })`.
+
+  #### New APIs
+
+  - `getResolvedType(symbolName, filePath)` — resolve the type of a symbol
+  - `getSemanticReferences(symbolName, filePath)` — find all references to a symbol
+  - `getImplementations(symbolName, filePath)` — find interface / abstract class implementations
+  - `getSemanticModuleInterface(filePath)` — list module exports with resolved types
+  - `getFullSymbol()` — automatically enriches result with `resolvedType` when semantic is enabled
+  - `searchSymbols({ resolvedType })` — filter symbols by resolved type string
+
+  #### Internal modules
+
+  - `SemanticLayer` facade (manages tsc Program / TypeChecker / LanguageService)
+  - `TscProgram` — tsconfig parsing + incremental update
+  - `TypeCollector` — position / file-based type collection
+  - `ReferenceResolver` — wraps tsc `findReferences`
+  - `ImplementationFinder` — wraps tsc `findImplementations`
+  - `SymbolGraph` — symbol node graph with LRU cache
+
+  #### Characteristics
+
+  - `semantic: false` (default): tsc is never loaded; existing behavior is 100% unchanged
+  - `semantic: true` without a `tsconfig.json`: returns `GildashError`
+  - Watcher mode: incremental updates are applied automatically on file changes
+
+  ### Relation FK & cross-project support
+
+  - `StoredCodeRelation` type: a `CodeRelation` enriched with `dstProject` (destination project identifier), returned by `searchRelations`, `searchAllRelations`, and `getInternalRelations`.
+  - `RelationSearchQuery.dstProject` filter: narrow relation searches by destination project.
+  - `DependencyGraph` accepts `additionalProjects` to build a cross-project import graph.
+
+  ### Indexing stability
+
+  - Two-pass indexing: `knownFiles` set populated before extraction prevents false "unresolved" markers on circular or forward references.
+  - `node_modules` paths are now unconditionally excluded from indexing. The hard-coded filter in `detectChanges` cannot be overridden by `ignorePatterns`, and the default `ignorePatterns` includes `**/node_modules/**`.
+
+  ### Removed
+
+  - `indexExternalPackages()` API and `MakeExternalCoordinatorFn` type — external package indexing is no longer supported.
+  - `resolveBareSpecifier()` utility — bare specifier resolution against `node_modules` is removed.
+
+  ### Internal structure
+
+  - `gildash.ts` façade decomposed into focused API modules (`extract-api`, `graph-api`, `lifecycle`, `misc-api`, `parse-api`, `query-api`, `semantic-api`) for maintainability.
+
 ## 0.5.1
 
 ### Patch Changes

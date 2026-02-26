@@ -9,6 +9,7 @@ function makeImport(srcFilePath: string, dstFilePath: string): RelationRecord {
     type: 'imports',
     srcFilePath,
     srcSymbolName: null,
+    dstProject: 'test-project',
     dstFilePath,
     dstSymbolName: null,
     metaJson: null,
@@ -781,5 +782,21 @@ describe('DependencyGraph', () => {
 
     // K3 has: [A,B], [B,C], [A,C], [A,B,C], [A,C,B] = 5 elementary circuits
     expect(paths).toHaveLength(5);
+  });
+
+  it('should call getByType for both primary and additional projects when additionalProjects is set', () => {
+    const extraGraph = new DependencyGraph({
+      relationRepo: mockRepo,
+      project: 'proj-a',
+      additionalProjects: ['proj-b'],
+    });
+
+    extraGraph.build();
+
+    const calledProjects = new Set(
+      (mockGetByType as unknown as { mock: { calls: Array<[string, string]> } }).mock.calls.map(c => c[0]),
+    );
+    expect(calledProjects).toContain('proj-a');
+    expect(calledProjects).toContain('proj-b');
   });
 });

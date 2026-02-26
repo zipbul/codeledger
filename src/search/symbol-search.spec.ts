@@ -323,4 +323,31 @@ describe('symbolSearch', () => {
     expect(opts.decorator).toBe('Component');
     expect(opts.kind).toBe('class');
   });
+
+  // ── resolvedType 필터 ──────────────────────────────────────────────────────
+
+  // [HP] resolvedType 전달 → opts.resolvedType 설정됨
+  it('should pass resolvedType to searchByQuery when resolvedType is set in query', () => {
+    const query: SymbolSearchQuery = { resolvedType: 'string' };
+    symbolSearch({ symbolRepo: mockRepo, query });
+    const opts = mockSearchByQuery.mock.calls[0]![0] as Record<string, unknown>;
+    expect(opts.resolvedType).toBe('string');
+  });
+
+  // [ED] resolvedType 미설정 → opts.resolvedType undefined
+  it('should not set resolvedType in opts when resolvedType is absent from query', () => {
+    const query: SymbolSearchQuery = { kind: 'function' };
+    symbolSearch({ symbolRepo: mockRepo, query });
+    const opts = mockSearchByQuery.mock.calls[0]![0] as Record<string, unknown>;
+    expect(opts.resolvedType).toBeUndefined();
+  });
+
+  // [CO] resolvedType + kind 동시 → 둘 다 opts에 설정됨
+  it('should pass both resolvedType and kind to searchByQuery when both are set', () => {
+    const query: SymbolSearchQuery = { resolvedType: 'Promise<void>', kind: 'function' };
+    symbolSearch({ symbolRepo: mockRepo, query });
+    const opts = mockSearchByQuery.mock.calls[0]![0] as Record<string, unknown>;
+    expect(opts.resolvedType).toBe('Promise<void>');
+    expect(opts.kind).toBe('function');
+  });
 });

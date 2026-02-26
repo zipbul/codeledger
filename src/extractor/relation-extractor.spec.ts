@@ -76,8 +76,8 @@ describe('extractRelations', () => {
 
     const relations = extractRelations(FAKE_AST, FILE, tsconfigPaths);
 
-    expect(mockBuildImportMap).toHaveBeenCalledWith(FAKE_AST, FILE, tsconfigPaths);
-    expect(mockExtractImports).toHaveBeenCalledWith(FAKE_AST, FILE, tsconfigPaths);
+    expect(mockBuildImportMap).toHaveBeenCalledWith(FAKE_AST, FILE, tsconfigPaths, expect.any(Function));
+    expect(mockExtractImports).toHaveBeenCalledWith(FAKE_AST, FILE, tsconfigPaths, expect.any(Function));
     expect(mockExtractCalls).toHaveBeenCalledWith(FAKE_AST, FILE, SENTINEL_MAP);
     expect(mockExtractHeritage).toHaveBeenCalledWith(FAKE_AST, FILE, SENTINEL_MAP);
     const rel = relations.find((r) => r.type === 'imports');
@@ -107,5 +107,23 @@ describe('extractRelations', () => {
 
     const relations = extractRelations(FAKE_AST, FILE);
     expect(relations.some((r) => r.type === 'implements')).toBe(true);
+  });
+
+  it('should forward custom resolveImportFn to buildImportMap when 4th argument is provided', () => {
+    const customResolver = mock((): string[] => []);
+
+    extractRelations(FAKE_AST, FILE, undefined, customResolver);
+
+    const buildImportMapCall = mockBuildImportMap.mock.calls[0] as unknown[];
+    expect(buildImportMapCall?.[3]).toBe(customResolver);
+  });
+
+  it('should forward custom resolveImportFn to extractImports when 4th argument is provided', () => {
+    const customResolver = mock((): string[] => []);
+
+    extractRelations(FAKE_AST, FILE, undefined, customResolver);
+
+    const extractImportsCall = mockExtractImports.mock.calls[0] as unknown[];
+    expect(extractImportsCall?.[3]).toBe(customResolver);
   });
 });

@@ -7,6 +7,7 @@ export interface RelationRecord {
   type: string;
   srcFilePath: string;
   srcSymbolName: string | null;
+  dstProject: string;
   dstFilePath: string;
   dstSymbolName: string | null;
   metaJson: string | null;
@@ -20,24 +21,27 @@ export class RelationRepository {
     srcFilePath: string,
     rels: ReadonlyArray<Partial<RelationRecord>>,
   ): void {
-    this.db.drizzleDb
-      .delete(relationsTable)
-      .where(and(eq(relationsTable.project, project), eq(relationsTable.srcFilePath, srcFilePath)))
-      .run();
+    this.db.transaction((tx) => {
+      tx.drizzleDb
+        .delete(relationsTable)
+        .where(and(eq(relationsTable.project, project), eq(relationsTable.srcFilePath, srcFilePath)))
+        .run();
 
-    if (!rels.length) return;
+      if (!rels.length) return;
 
-    for (const rel of rels) {
-      this.db.drizzleDb.insert(relationsTable).values({
-        project,
-        type: rel.type ?? 'unknown',
-        srcFilePath: rel.srcFilePath ?? srcFilePath,
-        srcSymbolName: rel.srcSymbolName ?? null,
-        dstFilePath: rel.dstFilePath ?? '',
-        dstSymbolName: rel.dstSymbolName ?? null,
-        metaJson: rel.metaJson ?? null,
-      }).run();
-    }
+      for (const rel of rels) {
+        tx.drizzleDb.insert(relationsTable).values({
+          project,
+          type: rel.type ?? 'unknown',
+          srcFilePath: rel.srcFilePath ?? srcFilePath,
+          srcSymbolName: rel.srcSymbolName ?? null,
+          dstProject: rel.dstProject ?? project,
+          dstFilePath: rel.dstFilePath ?? '',
+          dstSymbolName: rel.dstSymbolName ?? null,
+          metaJson: rel.metaJson ?? null,
+        }).run();
+      }
+    });
   }
 
   getOutgoing(project: string, srcFilePath: string, srcSymbolName?: string): RelationRecord[] {
@@ -48,6 +52,7 @@ export class RelationRepository {
           type: relationsTable.type,
           srcFilePath: relationsTable.srcFilePath,
           srcSymbolName: relationsTable.srcSymbolName,
+          dstProject: relationsTable.dstProject,
           dstFilePath: relationsTable.dstFilePath,
           dstSymbolName: relationsTable.dstSymbolName,
           metaJson: relationsTable.metaJson,
@@ -72,6 +77,7 @@ export class RelationRepository {
         type: relationsTable.type,
         srcFilePath: relationsTable.srcFilePath,
         srcSymbolName: relationsTable.srcSymbolName,
+        dstProject: relationsTable.dstProject,
         dstFilePath: relationsTable.dstFilePath,
         dstSymbolName: relationsTable.dstSymbolName,
         metaJson: relationsTable.metaJson,
@@ -86,13 +92,15 @@ export class RelationRepository {
       .all();
   }
 
-  getIncoming(project: string, dstFilePath: string): RelationRecord[] {
+  getIncoming(opts: { dstProject: string; dstFilePath: string }): RelationRecord[] {
+    const { dstProject, dstFilePath } = opts;
     return this.db.drizzleDb
       .select({
         project: relationsTable.project,
         type: relationsTable.type,
         srcFilePath: relationsTable.srcFilePath,
         srcSymbolName: relationsTable.srcSymbolName,
+        dstProject: relationsTable.dstProject,
         dstFilePath: relationsTable.dstFilePath,
         dstSymbolName: relationsTable.dstSymbolName,
         metaJson: relationsTable.metaJson,
@@ -100,7 +108,7 @@ export class RelationRepository {
       .from(relationsTable)
       .where(
         and(
-          eq(relationsTable.project, project),
+          eq(relationsTable.dstProject, dstProject),
           eq(relationsTable.dstFilePath, dstFilePath),
         ),
       )
@@ -114,6 +122,7 @@ export class RelationRepository {
         type: relationsTable.type,
         srcFilePath: relationsTable.srcFilePath,
         srcSymbolName: relationsTable.srcSymbolName,
+        dstProject: relationsTable.dstProject,
         dstFilePath: relationsTable.dstFilePath,
         dstSymbolName: relationsTable.dstSymbolName,
         metaJson: relationsTable.metaJson,
@@ -138,6 +147,7 @@ export class RelationRepository {
   searchRelations(opts: {
     srcFilePath?: string;
     srcSymbolName?: string;
+    dstProject?: string;
     dstFilePath?: string;
     dstSymbolName?: string;
     type?: string;
@@ -150,6 +160,7 @@ export class RelationRepository {
         type: relationsTable.type,
         srcFilePath: relationsTable.srcFilePath,
         srcSymbolName: relationsTable.srcSymbolName,
+        dstProject: relationsTable.dstProject,
         dstFilePath: relationsTable.dstFilePath,
         dstSymbolName: relationsTable.dstSymbolName,
         metaJson: relationsTable.metaJson,
@@ -164,6 +175,9 @@ export class RelationRepository {
           opts.srcSymbolName !== undefined
             ? eq(relationsTable.srcSymbolName, opts.srcSymbolName)
             : undefined,
+          opts.dstProject !== undefined
+            ? eq(relationsTable.dstProject, opts.dstProject)
+            : undefined,
           opts.dstFilePath !== undefined
             ? eq(relationsTable.dstFilePath, opts.dstFilePath)
             : undefined,
@@ -177,28 +191,38 @@ export class RelationRepository {
       .all();
   }
 
-  retargetRelations(
-    project: string,
-    oldFile: string,
-    oldSymbol: string | null,
-    newFile: string,
-    newSymbol: string | null,
-  ): void {
+  retargetRelations(opts: {
+    dstProject: string;
+    oldFile: string;
+    oldSymbol: string | null;
+    newFile: string;
+    newSymbol: string | null;
+    newDstProject?: string;
+  }): void {
+    const { dstProject, oldFile, oldSymbol, newFile, newSymbol, newDstProject } = opts;
     const condition = oldSymbol === null
       ? and(
-          eq(relationsTable.project, project),
+          eq(relationsTable.dstProject, dstProject),
           eq(relationsTable.dstFilePath, oldFile),
           isNull(relationsTable.dstSymbolName),
         )
       : and(
-          eq(relationsTable.project, project),
+          eq(relationsTable.dstProject, dstProject),
           eq(relationsTable.dstFilePath, oldFile),
           eq(relationsTable.dstSymbolName, oldSymbol),
         );
 
+    const setValues: { dstFilePath: string; dstSymbolName: string | null; dstProject?: string } = {
+      dstFilePath: newFile,
+      dstSymbolName: newSymbol,
+    };
+    if (newDstProject !== undefined) {
+      setValues.dstProject = newDstProject;
+    }
+
     this.db.drizzleDb
       .update(relationsTable)
-      .set({ dstFilePath: newFile, dstSymbolName: newSymbol })
+      .set(setValues)
       .where(condition)
       .run();
   }

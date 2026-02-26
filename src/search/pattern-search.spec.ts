@@ -10,6 +10,10 @@ mock.module('@ast-grep/napi', () => ({
 import { patternSearch } from './pattern-search';
 
 beforeEach(() => {
+  mock.module('@ast-grep/napi', () => ({
+    Lang: { TypeScript: 'TypeScript' },
+    findInFiles: mockFindInFiles,
+  }));
   mockFindInFiles.mockClear();
   mockFindInFiles.mockImplementation(async (_lang, _config, callback) => {
     callback(null, []);

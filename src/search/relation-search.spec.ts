@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, mock, spyOn } from 'bun:test';
 import type { RelationRecord } from '../store/repositories/relation.repository';
 import { relationSearch } from './relation-search';
-import type { IRelationRepo, RelationSearchQuery } from './relation-search';
+import type { IRelationRepo, RelationSearchQuery, StoredCodeRelation } from './relation-search';
 import type { CodeRelation } from '../extractor/types';
 
 function makeRelationRecord(overrides: Partial<RelationRecord> = {}): RelationRecord {
@@ -10,6 +10,7 @@ function makeRelationRecord(overrides: Partial<RelationRecord> = {}): RelationRe
     type: 'imports',
     srcFilePath: 'src/a.ts',
     srcSymbolName: null,
+    dstProject: 'test-project',
     dstFilePath: 'src/b.ts',
     dstSymbolName: null,
     metaJson: null,
@@ -312,5 +313,21 @@ describe('relationSearch', () => {
     const r2 = relationSearch({ relationRepo: mockRepo, query: {} });
     expect(r1[0]!.meta).toEqual({ k: 42 });
     expect(r2[0]!.meta).toEqual({ k: 42 });
+  });
+
+  it('should include dstProject in the returned relation when record has dstProject set', () => {
+    mockSearchRelations.mockReturnValue([makeRelationRecord({ dstProject: 'ext-project' })]);
+
+    const results = relationSearch({ relationRepo: mockRepo, query: {} }) as StoredCodeRelation[];
+    expect(results[0]?.dstProject).toBe('ext-project');
+  });
+
+  it('should forward dstProject filter to searchRelations when dstProject is set in query', () => {
+    mockSearchRelations.mockReturnValue([]);
+
+    relationSearch({ relationRepo: mockRepo, query: { dstProject: 'ext-project' } });
+
+    const callArgs = (mockSearchRelations as { mock: { calls: any[][] } }).mock.calls[0]?.[0];
+    expect(callArgs?.dstProject).toBe('ext-project');
   });
 });

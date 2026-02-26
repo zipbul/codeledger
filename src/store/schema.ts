@@ -42,6 +42,7 @@ export const symbols = sqliteTable(
     detailJson: text('detail_json'),
     contentHash: text('content_hash').notNull(),
     indexedAt: text('indexed_at').notNull(),
+    resolvedType: text('resolved_type'),
   },
   (table) => [
     index('idx_symbols_project_file').on(table.project, table.filePath),
@@ -63,20 +64,21 @@ export const relations = sqliteTable(
     type: text('type').notNull(),
     srcFilePath: text('src_file_path').notNull(),
     srcSymbolName: text('src_symbol_name'),
+    dstProject: text('dst_project').notNull(),
     dstFilePath: text('dst_file_path').notNull(),
     dstSymbolName: text('dst_symbol_name'),
     metaJson: text('meta_json'),
   },
   (table) => [
     index('idx_relations_src').on(table.project, table.srcFilePath),
-    index('idx_relations_dst').on(table.project, table.dstFilePath),
+    index('idx_relations_dst').on(table.dstProject, table.dstFilePath),
     index('idx_relations_type').on(table.project, table.type),
     foreignKey({
       columns: [table.project, table.srcFilePath],
       foreignColumns: [files.project, files.filePath],
     }).onDelete('cascade'),
     foreignKey({
-      columns: [table.project, table.dstFilePath],
+      columns: [table.dstProject, table.dstFilePath],
       foreignColumns: [files.project, files.filePath],
     }).onDelete('cascade'),
   ],

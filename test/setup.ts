@@ -34,9 +34,15 @@ import * as realProjectDiscovery from '../src/common/project-discovery';
 import * as realFileIndexer from '../src/indexer/file-indexer';
 import * as realSymbolIndexer from '../src/indexer/symbol-indexer';
 import * as realRelationIndexer from '../src/indexer/relation-indexer';
+import * as realIndexCoordinator from '../src/indexer/index-coordinator';
+import * as realDependencyGraph from '../src/search/dependency-graph';
 import * as realCommentParser from 'comment-parser';
 import * as realNodePath from 'node:path';
 import * as realNodeFs from 'node:fs';
+import * as realAstGrepNapi from '@ast-grep/napi';
+import * as realDrizzleBunSqlite from 'drizzle-orm/bun-sqlite';
+import * as realDrizzleMigrator from 'drizzle-orm/bun-sqlite/migrator';
+import * as realBunSqlite from 'bun:sqlite';
 
 const origAstUtils = { ...realAstUtils };
 const origSourcePosition = { ...realSourcePosition };
@@ -54,9 +60,15 @@ const origProjectDiscovery = { ...realProjectDiscovery };
 const origFileIndexer = { ...realFileIndexer };
 const origSymbolIndexer = { ...realSymbolIndexer };
 const origRelationIndexer = { ...realRelationIndexer };
+const origIndexCoordinator = { ...realIndexCoordinator };
+const origDependencyGraph = { ...realDependencyGraph };
 const origCommentParser = { ...realCommentParser };
 const origNodePath = { ...realNodePath };
 const origNodeFs = { ...realNodeFs };
+const origAstGrepNapi = { ...realAstGrepNapi };
+const origDrizzleBunSqlite = { ...realDrizzleBunSqlite };
+const origDrizzleMigrator = { ...realDrizzleMigrator };
+const origBunSqlite = { ...realBunSqlite };
 
 // ── Global cleanup after every test ──
 afterEach(() => {
@@ -77,9 +89,15 @@ afterEach(() => {
   mock.module('../src/indexer/file-indexer', () => origFileIndexer);
   mock.module('../src/indexer/symbol-indexer', () => origSymbolIndexer);
   mock.module('../src/indexer/relation-indexer', () => origRelationIndexer);
+  mock.module('../src/indexer/index-coordinator', () => origIndexCoordinator);
+  mock.module('../src/search/dependency-graph', () => origDependencyGraph);
   mock.module('comment-parser', () => origCommentParser);
   mock.module('node:path', () => origNodePath);
   mock.module('node:fs', () => origNodeFs);
+  mock.module('@ast-grep/napi', () => origAstGrepNapi);
+  mock.module('drizzle-orm/bun-sqlite', () => origDrizzleBunSqlite);
+  mock.module('drizzle-orm/bun-sqlite/migrator', () => origDrizzleMigrator);
+  mock.module('bun:sqlite', () => origBunSqlite);
 
   // Restore spy implementations + clear call history.
   mock.restore();

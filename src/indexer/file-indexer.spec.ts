@@ -228,4 +228,68 @@ describe('detectChanges', () => {
       expect(result.deleted).toContain('src/deleted.ts');
     });
   });
+
+  // ─── node_modules hard-exclude ────────────────────────────────────
+
+  it('should exclude top-level node_modules path from results', async () => {
+    mockGlob.mockImplementation(async function* () {
+      yield 'node_modules/lodash/index.ts';
+      yield 'src/app.ts';
+    });
+    spyOn(Bun, 'file').mockReturnValue(makeBunFile({ size: 50, lastModified: 500 }));
+    const fileRepo = makeFileRepo(new Map());
+
+    const result = await detectChanges({ projectRoot: PROJECT_ROOT, extensions: EXTENSIONS, ignorePatterns: [], fileRepo: fileRepo as any });
+
+    expect(result.changed.some((f) => f.filePath === 'node_modules/lodash/index.ts')).toBe(false);
+    expect(result.changed.some((f) => f.filePath === 'src/app.ts')).toBe(true);
+  });
+
+  it('should exclude nested node_modules path from results', async () => {
+    mockGlob.mockImplementation(async function* () {
+      yield 'packages/a/node_modules/express/index.ts';
+      yield 'packages/a/src/index.ts';
+    });
+    spyOn(Bun, 'file').mockReturnValue(makeBunFile({ size: 50, lastModified: 500 }));
+    const fileRepo = makeFileRepo(new Map());
+
+    const result = await detectChanges({ projectRoot: PROJECT_ROOT, extensions: EXTENSIONS, ignorePatterns: [], fileRepo: fileRepo as any });
+
+    expect(result.changed.some((f) => f.filePath === 'packages/a/node_modules/express/index.ts')).toBe(false);
+    expect(result.changed.some((f) => f.filePath === 'packages/a/src/index.ts')).toBe(true);
+  });
+
+  it('should not exclude file whose name contains node_modules as substring', async () => {
+    mockGlob.mockImplementation(async function* () { yield 'src/node_modules_helper.ts'; });
+    spyOn(Bun, 'file').mockReturnValue(makeBunFile({ size: 50, lastModified: 500 }));
+    const fileRepo = makeFileRepo(new Map());
+
+    const result = await detectChanges({ projectRoot: PROJECT_ROOT, extensions: EXTENSIONS, ignorePatterns: [], fileRepo: fileRepo as any });
+
+    expect(result.changed.some((f) => f.filePath === 'src/node_modules_helper.ts')).toBe(true);
+  });
+
+  it('should exclude node_modules even when ignorePatterns is empty', async () => {
+    mockGlob.mockImplementation(async function* () { yield 'node_modules/pkg/index.ts'; });
+    spyOn(Bun, 'file').mockReturnValue(makeBunFile({ size: 50, lastModified: 500 }));
+    const fileRepo = makeFileRepo(new Map());
+
+    const result = await detectChanges({ projectRoot: PROJECT_ROOT, extensions: EXTENSIONS, ignorePatterns: [], fileRepo: fileRepo as any });
+
+    expect(result.changed).toEqual([]);
+    expect(result.unchanged).toEqual([]);
+  });
+
+  it('should report previously indexed node_modules file as deleted', async () => {
+    mockGlob.mockImplementation(async function* () { yield 'node_modules/pkg/index.ts'; });
+    spyOn(Bun, 'file').mockReturnValue(makeBunFile({ size: 50, lastModified: 500 }));
+    const existing = new Map([
+      ['node_modules/pkg/index.ts', { filePath: 'node_modules/pkg/index.ts', mtimeMs: 500, size: 50, contentHash: 'abc' }],
+    ]);
+    const fileRepo = makeFileRepo(existing);
+
+    const result = await detectChanges({ projectRoot: PROJECT_ROOT, extensions: EXTENSIONS, ignorePatterns: [], fileRepo: fileRepo as any });
+
+    expect(result.deleted).toContain('node_modules/pkg/index.ts');
+  });
 });

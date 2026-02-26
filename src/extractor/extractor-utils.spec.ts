@@ -223,6 +223,34 @@ describe('resolveImport', () => {
     expect(resolveImport('/project/src/index.ts', './utils.mjs')).toEqual(['/project/src/utils.mts']);
     expect(resolveImport('/project/src/index.ts', './utils.cjs')).toEqual(['/project/src/utils.cts']);
   });
+
+  it('should include .d.ts and /index.d.ts candidates when relative import has no extension', () => {
+    mockDirname.mockReturnValue('/project/src');
+    mockResolve.mockReturnValue('/project/src/utils');
+    mockExtname.mockReturnValue('');
+
+    const result = resolveImport('/project/src/index.ts', './utils');
+
+    expect(result).toContain('/project/src/utils.d.ts');
+    expect(result).toContain('/project/src/utils/index.d.ts');
+  });
+
+  it('should place .d.ts after .ts and before /index.ts in candidate order', () => {
+    mockDirname.mockReturnValue('/project/src');
+    mockResolve.mockReturnValue('/project/src/utils');
+    mockExtname.mockReturnValue('');
+
+    const result = resolveImport('/project/src/index.ts', './utils');
+
+    const tsIdx = result.indexOf('/project/src/utils.ts');
+    const dtsIdx = result.indexOf('/project/src/utils.d.ts');
+    const indexTsIdx = result.indexOf('/project/src/utils/index.ts');
+    const indexDtsIdx = result.indexOf('/project/src/utils/index.d.ts');
+
+    expect(tsIdx).toBeLessThan(dtsIdx);
+    expect(dtsIdx).toBeLessThan(indexTsIdx);
+    expect(indexTsIdx).toBeLessThan(indexDtsIdx);
+  });
 });
 
 describe('buildImportMap', () => {
@@ -338,3 +366,4 @@ describe('buildImportMap', () => {
     expect([...m1.entries()]).toEqual([...m2.entries()]);
   });
 });
+

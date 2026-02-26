@@ -124,10 +124,10 @@ describe('RelationRepository.retargetRelations — null symbol (file-level move)
     ]);
 
     // src/old.ts → src/new.ts 파일 이동 반영 (null→null)
-    relationRepo.retargetRelations('test-project', 'src/old.ts', null, 'src/new.ts', null);
+    relationRepo.retargetRelations({ dstProject: 'test-project', oldFile: 'src/old.ts', oldSymbol: null, newFile: 'src/new.ts', newSymbol: null });
 
     // src/new.ts에 들어오는 관계가 갱신되어야 한다
-    const incoming = relationRepo.getIncoming('test-project', 'src/new.ts');
+    const incoming = relationRepo.getIncoming({ dstProject: 'test-project', dstFilePath: 'src/new.ts' });
     expect(incoming.length).toBeGreaterThan(0);
     expect(incoming[0]!.dstFilePath).toBe('src/new.ts');
     expect(incoming[0]!.dstSymbolName).toBeNull();

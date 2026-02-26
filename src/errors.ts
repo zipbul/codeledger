@@ -10,7 +10,8 @@ export type GildashErrorType =
   | 'search'
   | 'closed'
   | 'validation'
-  | 'close';
+  | 'close'
+  | 'semantic';
 
 /**
  * Plain-object error value used throughout Gildash's Result-based error handling.

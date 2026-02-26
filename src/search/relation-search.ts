@@ -2,6 +2,14 @@ import type { CodeRelation } from '../extractor/types';
 import type { RelationRecord } from '../store/repositories/relation.repository';
 
 /**
+ * A {@link CodeRelation} enriched with the destination project identifier
+ * as stored in the relation index.
+ */
+export interface StoredCodeRelation extends CodeRelation {
+  dstProject: string;
+}
+
+/**
  * Filters for {@link relationSearch}.
  *
  * All fields are optional. Omitted fields impose no constraint.
@@ -15,6 +23,8 @@ export interface RelationSearchQuery {
   dstFilePath?: string;
   /** Destination symbol name. */
   dstSymbolName?: string;
+  /** Destination project. */
+  dstProject?: string;
   /** Relationship type: `'imports'`, `'calls'`, `'extends'`, or `'implements'`. */
   type?: CodeRelation['type'];
   /** Limit results to this project. */
@@ -29,6 +39,7 @@ export interface IRelationRepo {
     srcSymbolName?: string;
     dstFilePath?: string;
     dstSymbolName?: string;
+    dstProject?: string;
     type?: string;
     project?: string;
     limit: number;
@@ -45,7 +56,7 @@ export function relationSearch(options: {
   relationRepo: IRelationRepo;
   project?: string;
   query: RelationSearchQuery;
-}): CodeRelation[] {
+}): StoredCodeRelation[] {
   const { relationRepo, project, query } = options;
   const effectiveProject = query.project ?? project;
   const limit = query.limit ?? 500;
@@ -55,6 +66,7 @@ export function relationSearch(options: {
     srcSymbolName: query.srcSymbolName,
     dstFilePath: query.dstFilePath,
     dstSymbolName: query.dstSymbolName,
+    dstProject: query.dstProject,
     type: query.type,
     project: effectiveProject,
     limit,
@@ -75,6 +87,7 @@ export function relationSearch(options: {
       srcSymbolName: r.srcSymbolName,
       dstFilePath: r.dstFilePath,
       dstSymbolName: r.dstSymbolName,
+      dstProject: r.dstProject,
       metaJson: r.metaJson ?? undefined,
       meta,
     };

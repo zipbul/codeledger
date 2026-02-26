@@ -27,6 +27,7 @@ export class DependencyGraph {
     private readonly options: {
       relationRepo: IDependencyGraphRepo;
       project: string;
+      additionalProjects?: string[];
     },
   ) {}
 
@@ -39,11 +40,12 @@ export class DependencyGraph {
     this.adjacencyList = new Map();
     this.reverseAdjacencyList = new Map();
 
-    const relations = [
-      ...this.options.relationRepo.getByType(this.options.project, 'imports'),
-      ...this.options.relationRepo.getByType(this.options.project, 'type-references'),
-      ...this.options.relationRepo.getByType(this.options.project, 're-exports'),
-    ];
+    const projects = [this.options.project, ...(this.options.additionalProjects ?? [])];
+    const relations = projects.flatMap(p => [
+      ...this.options.relationRepo.getByType(p, 'imports'),
+      ...this.options.relationRepo.getByType(p, 'type-references'),
+      ...this.options.relationRepo.getByType(p, 're-exports'),
+    ]);
 
     for (const rel of relations) {
       const { srcFilePath, dstFilePath } = rel;

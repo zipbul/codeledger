@@ -21,6 +21,7 @@ function makeChainMock() {
 function makeDbMock() {
   const chain = makeChainMock();
   const db = { drizzleDb: chain } as unknown as DbConnection;
+  (db as unknown as Record<string, unknown>)['transaction'] = (fn: (tx: DbConnection) => unknown) => fn(db);
   return { db, chain };
 }
 
@@ -30,6 +31,7 @@ function makeRelRecord(overrides: Partial<RelationRecord> = {}): Partial<Relatio
     type: 'imports',
     srcFilePath: 'src/index.ts',
     srcSymbolName: null,
+    dstProject: 'test-project',
     dstFilePath: 'src/utils.ts',
     dstSymbolName: null,
     metaJson: null,
@@ -94,7 +96,7 @@ describe('RelationRepository', () => {
     chain['all']!.mockReturnValue(records as unknown[]);
 
     const repo = new RelationRepository(db);
-    const result = repo.getIncoming('test-project', 'src/utils.ts');
+    const result = repo.getIncoming({ dstProject: 'test-project', dstFilePath: 'src/utils.ts' });
 
     expect(result).toEqual(records);
   });
@@ -149,7 +151,7 @@ describe('RelationRepository', () => {
     const repo = new RelationRepository(db);
 
     expect(() =>
-      repo.retargetRelations('test-project', 'src/old.ts', 'OldFn', 'src/new.ts', 'NewFn'),
+      repo.retargetRelations({ dstProject: 'test-project', oldFile: 'src/old.ts', oldSymbol: 'OldFn', newFile: 'src/new.ts', newSymbol: 'NewFn' }),
     ).not.toThrow();
     expect(chain['update']).toHaveBeenCalled();
     expect(chain['run']).toHaveBeenCalled();
@@ -160,7 +162,7 @@ describe('RelationRepository', () => {
     const repo = new RelationRepository(db);
 
     expect(() =>
-      repo.retargetRelations('test-project', 'src/old.ts', null, 'src/new.ts', null),
+      repo.retargetRelations({ dstProject: 'test-project', oldFile: 'src/old.ts', oldSymbol: null, newFile: 'src/new.ts', newSymbol: null }),
     ).not.toThrow();
     expect(chain['update']).toHaveBeenCalled();
     expect(chain['run']).toHaveBeenCalled();
@@ -214,5 +216,28 @@ describe('RelationRepository', () => {
       repo.searchRelations({ srcFilePath: 'src/a.ts', type: 'imports', limit: 5 }),
     ).not.toThrow();
     expect(chain['all']).toHaveBeenCalled();
+  });
+
+  it('should include explicit dstProject in insert values when replaceFileRelations receives dstProject field', () => {
+    const { db, chain } = makeDbMock();
+    const repo = new RelationRepository(db);
+
+    repo.replaceFileRelations('proj-a', 'src/a.ts', [
+      makeRelRecord({ type: 'imports', dstFilePath: 'src/b.ts', dstProject: 'proj-b' }),
+    ]);
+
+    const insertedValues = (chain['values'] as { mock: { calls: any[][] } }).mock.calls[0]?.[0];
+    expect(insertedValues?.dstProject).toBe('proj-b');
+  });
+
+  it('should fallback dstProject to project when replaceFileRelations receives no dstProject field', () => {
+    const { db, chain } = makeDbMock();
+    const repo = new RelationRepository(db);
+
+    const relNoProject: Partial<RelationRecord> = { type: 'imports', dstFilePath: 'src/b.ts' };
+    repo.replaceFileRelations('proj-a', 'src/a.ts', [relNoProject]);
+
+    const insertedValues = (chain['values'] as { mock: { calls: any[][] } }).mock.calls[0]?.[0];
+    expect(insertedValues?.dstProject).toBe('proj-a');
   });
 });

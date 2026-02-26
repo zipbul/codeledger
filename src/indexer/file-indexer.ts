@@ -39,6 +39,8 @@ export async function detectChanges(opts: DetectChangesOptions): Promise<DetectC
   for await (const relativePath of fsPromises.glob('**/*', { cwd: projectRoot })) {
     if (!extensions.some((ext) => relativePath.endsWith(ext))) continue;
 
+    if (relativePath.startsWith('node_modules/') || relativePath.includes('/node_modules/')) continue;
+
     if (ignoreGlobs.some((g) => g.match(relativePath))) continue;
 
     seenPaths.add(relativePath);

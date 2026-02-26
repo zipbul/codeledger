@@ -13,7 +13,9 @@ export function resolveImport(
     if (extension === '') {
       return [
         resolved + '.ts',
+        resolved + '.d.ts',
         resolved + '/index.ts',
+        resolved + '/index.d.ts',
         resolved + '.mts',
         resolved + '/index.mts',
         resolved + '.cts',

@@ -34,7 +34,7 @@ export class DbConnection {
       this.client = new Database(this.dbPath);
 
       this.client.run('PRAGMA journal_mode = WAL');
-      this.client.run('PRAGMA foreign_keys = ON');
+      this.client.run('PRAGMA foreign_keys = OFF'); // disabled during migration; re-enabled below
       this.client.run('PRAGMA busy_timeout = 5000');
 
       this.drizzle = drizzle(this.client, { schema });
@@ -42,6 +42,15 @@ export class DbConnection {
       migrate(this.drizzle, {
         migrationsFolder: join(import.meta.dirname, 'migrations'),
       });
+
+      // Verify FK integrity after migration, then re-enable enforcement.
+      const violations = this.client.prepare('PRAGMA foreign_key_check').all();
+      if (violations.length > 0) {
+        throw new Error(
+          `FK integrity violation after migration: ${JSON.stringify(violations.slice(0, 5))}`,
+        );
+      }
+      this.client.run('PRAGMA foreign_keys = ON');
 
       // bun:sqlite Database.function() is not available in all Bun versions.
       // Regex filtering falls back to JS-layer post-processing when this is absent.

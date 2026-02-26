@@ -57,6 +57,17 @@ class MockDatabase {
   }
 }
 
+/** MockDatabase variant that exposes Database.function() for regexp registration */
+let capturedRegexpFn: ((pattern: string, value: string) => number) | null = null;
+
+class MockDatabaseWithFunction extends MockDatabase {
+  function(name: string, fn: (...args: unknown[]) => unknown) {
+    if (name === 'regexp') {
+      capturedRegexpFn = fn as (pattern: string, value: string) => number;
+    }
+  }
+}
+
 mock.module('bun:sqlite', () => ({ Database: MockDatabase }));
 
 import { isErr } from '@zipbul/result';
@@ -79,6 +90,13 @@ beforeEach(() => {
     existsSync: mockExistsSync,
     unlinkSync: mockUnlinkSync,
   }));
+  mock.module('drizzle-orm/bun-sqlite', () => ({
+    drizzle: mockDrizzleFn,
+  }));
+  mock.module('drizzle-orm/bun-sqlite/migrator', () => ({
+    migrate: mockMigrateFn,
+  }));
+  mock.module('bun:sqlite', () => ({ Database: MockDatabase }));
 });
 
 describe('DbConnection', () => {
@@ -239,5 +257,40 @@ describe('DbConnection', () => {
 
     const runs = (capturedInst.run.mock.calls as [string][]).map(([sql]) => sql);
     expect(runs.some((sql) => sql?.includes('SAVEPOINT'))).toBe(true);
+  });
+
+  // ─── regexp custom function coverage ───
+
+  it('should register regexp function and return 1 when pattern matches value', () => {
+    capturedRegexpFn = null;
+    mock.module('bun:sqlite', () => ({ Database: MockDatabaseWithFunction }));
+    const { DbConnection: Conn } = require('./connection');
+    const db = new Conn({ projectRoot: '/fake' });
+    db.open();
+
+    expect(capturedRegexpFn).not.toBeNull();
+    expect(capturedRegexpFn!('foo', 'foobar')).toBe(1);
+  });
+
+  it('should return 0 from regexp function when pattern does not match value', () => {
+    capturedRegexpFn = null;
+    mock.module('bun:sqlite', () => ({ Database: MockDatabaseWithFunction }));
+    const { DbConnection: Conn } = require('./connection');
+    const db = new Conn({ projectRoot: '/fake' });
+    db.open();
+
+    expect(capturedRegexpFn).not.toBeNull();
+    expect(capturedRegexpFn!('xyz', 'foobar')).toBe(0);
+  });
+
+  it('should return 0 from regexp function when pattern is an invalid regex', () => {
+    capturedRegexpFn = null;
+    mock.module('bun:sqlite', () => ({ Database: MockDatabaseWithFunction }));
+    const { DbConnection: Conn } = require('./connection');
+    const db = new Conn({ projectRoot: '/fake' });
+    db.open();
+
+    expect(capturedRegexpFn).not.toBeNull();
+    expect(capturedRegexpFn!('[invalid', 'foobar')).toBe(0);
   });
 });

@@ -52,7 +52,7 @@ function makeSymbolRecord(overrides: Partial<{
 
 function makeRelationRecord(overrides: Partial<{
   project: string; type: string; srcFilePath: string;
-  srcSymbolName: string | null; dstFilePath: string;
+  srcSymbolName: string | null; dstProject: string; dstFilePath: string;
   dstSymbolName: string | null; metaJson: string | null;
 }> = {}) {
   return {
@@ -60,6 +60,7 @@ function makeRelationRecord(overrides: Partial<{
     type: 'imports',
     srcFilePath: 'src/index.ts',
     srcSymbolName: null,
+    dstProject: 'test-project',
     dstFilePath: 'src/utils.ts',
     dstSymbolName: null,
     metaJson: null,
@@ -426,12 +427,12 @@ describe('RelationRepository', () => {
 
   it('should return incoming relations when destination file has incoming edges', () => {
     relationRepo.replaceFileRelations('test-project', 'src/index.ts', [makeRelationRecord()]);
-    const result = relationRepo.getIncoming('test-project', 'src/utils.ts');
+    const result = relationRepo.getIncoming({ dstProject: 'test-project', dstFilePath: 'src/utils.ts' });
     expect(result.length).toBe(1);
   });
 
   it('should return empty array when querying incoming relations for unknown destination file', () => {
-    expect(relationRepo.getIncoming('test-project', 'src/nothing.ts')).toEqual([]);
+    expect(relationRepo.getIncoming({ dstProject: 'test-project', dstFilePath: 'src/nothing.ts' })).toEqual([]);
   });
 
   it('should return only matching type when getByType is called with type filter', () => {
@@ -453,12 +454,12 @@ describe('RelationRepository', () => {
     relationRepo.replaceFileRelations('test-project', 'src/index.ts', [
       makeRelationRecord({ dstFilePath: 'src/utils.ts', dstSymbolName: 'OldFn' }),
     ]);
-    relationRepo.retargetRelations(
-      'test-project',
-      'src/utils.ts', 'OldFn',
-      'src/new.ts', 'NewFn',
-    );
-    const updated = relationRepo.getIncoming('test-project', 'src/new.ts');
+    relationRepo.retargetRelations({
+      dstProject: 'test-project',
+      oldFile: 'src/utils.ts', oldSymbol: 'OldFn',
+      newFile: 'src/new.ts', newSymbol: 'NewFn',
+    });
+    const updated = relationRepo.getIncoming({ dstProject: 'test-project', dstFilePath: 'src/new.ts' });
     expect(updated.some((r) => r.dstSymbolName === 'NewFn')).toBe(true);
   });
 
@@ -471,7 +472,7 @@ describe('RelationRepository', () => {
   it('should cascade-delete relations when dst file is deleted', () => {
     relationRepo.replaceFileRelations('test-project', 'src/index.ts', [makeRelationRecord({ dstFilePath: 'src/utils.ts' })]);
     fileRepo.deleteFile('test-project', 'src/utils.ts');
-    expect(relationRepo.getIncoming('test-project', 'src/utils.ts')).toEqual([]);
+    expect(relationRepo.getIncoming({ dstProject: 'test-project', dstFilePath: 'src/utils.ts' })).toEqual([]);
   });
 
   it('should not return relations when querying different project', () => {
