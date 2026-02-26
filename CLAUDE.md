@@ -57,9 +57,9 @@ The `Gildash` class in `src/gildash/` is the public facade. All submodules are w
 - Each module exports public API via its `index.ts`. Internal implementation details stay unexported.
 - Changesets required for releases (`.changeset/`). Use `minor` for features, `patch` for fixes.
 
-## Current State (v0.6.0 branch)
+## Error Handling
 
-Active migration from `Result<T, GildashError>` to throw-based error handling (see `PLAN.0.6.md`):
+Public API uses throw-based error handling:
 
 | Return pattern | Use case |
 |---|---|
@@ -69,4 +69,4 @@ Active migration from `Result<T, GildashError>` to throw-based error handling (s
 | `boolean` | Existence/state query |
 | `void` | Side effects (close, index) |
 
-`GildashError` is now a class extending `Error` with a `type` field (`'watcher' | 'parse' | 'extract' | 'index' | 'store' | 'search' | 'closed' | 'validation' | 'semantic'`).
+`GildashError` is a class extending `Error` with a `type` field (`'watcher' | 'parse' | 'extract' | 'index' | 'store' | 'search' | 'closed' | 'validation' | 'semantic'`). Internal submodules may use `Result<T, GildashError>` freely; the `Gildash` facade boundary unwraps Results and throws.
