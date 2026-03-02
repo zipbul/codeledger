@@ -1,5 +1,37 @@
 # @zipbul/gildash
 
+## 0.8.0
+
+### Minor Changes
+
+- [#34](https://github.com/zipbul/gildash/pull/34) [`20d1ceb`](https://github.com/zipbul/gildash/commit/20d1ceb1a383cd4fb88ea67084858a043fb61f91) Thanks [@parkrevil](https://github.com/parkrevil)! - Implement all 13 recommendations from REPORT.md Section 8.
+
+  ### Code Quality
+
+  - Fix heartbeat timing gap: reduce healthcheck interval to 15s, stale threshold to 60s
+  - Add TTL-based graph cache expiry for readers (15s)
+  - Add incremental graph cache invalidation via `patchFiles()`
+  - Fix silent `.catch(() => {})` in watcher→semantic file read errors
+  - Prevent PID recycling race condition with UUID-based instance identification
+  - **BREAKING**: `batchParse()` now returns `BatchParseResult` (with `parsed` + `failures`) instead of `Map<string, ParsedFile>`
+
+  ### Performance
+
+  - Add covering index on `relations(project, type, src_file_path)`
+  - Chunk large batch file reads into groups of 50 to prevent EMFILE/OOM
+
+  ### Features
+
+  - Add event system: `onFileChanged()`, `onError()`, `onRoleChanged()`
+  - Add `patchFiles()` method to `DependencyGraph` for incremental updates
+
+  ### Testing
+
+  - Add stress test suite (10,000 files)
+  - Add chaos test suite (ownership contention, PID recycling)
+  - Add property-based tests for graph algorithms (fast-check)
+  - Add benchmark suite (indexing, search, graph operations)
+
 ## 0.7.0
 
 ### Minor Changes
