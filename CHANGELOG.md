@@ -1,5 +1,11 @@
 # @zipbul/gildash
 
+## 0.8.1
+
+### Patch Changes
+
+- [`4ce58c5`](https://github.com/zipbul/gildash/commit/4ce58c595921bb563d7bea972efa6b36b36b271e) Thanks [@parkrevil](https://github.com/parkrevil)! - fix: ensure ResolvedType and SemanticReference types are included in published dist
+
 ## 0.8.0
 
 ### Minor Changes
