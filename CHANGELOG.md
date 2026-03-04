@@ -1,5 +1,11 @@
 # @zipbul/gildash
 
+## 0.8.2
+
+### Patch Changes
+
+- [`5f7a441`](https://github.com/zipbul/gildash/commit/5f7a441d40ee183da5ab5f69bdaaa08166e1d6eb) Thanks [@parkrevil](https://github.com/parkrevil)! - chore: remove sourcemap generation from build
+
 ## 0.8.1
 
 ### Patch Changes
