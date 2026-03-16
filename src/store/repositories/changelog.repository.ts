@@ -17,26 +17,30 @@ export interface ChangelogRecord {
   indexRunId: string;
 }
 
+const BATCH_CHUNK_SIZE = 80;
+
 export class ChangelogRepository {
   constructor(private readonly db: DbConnection) {}
 
   insertBatch(
     rows: ReadonlyArray<Omit<ChangelogRecord, 'id'>>,
   ): void {
-    for (const row of rows) {
-      this.db.drizzleDb.insert(symbolChangelog).values({
-        project: row.project,
-        changeType: row.changeType,
-        symbolName: row.symbolName,
-        symbolKind: row.symbolKind,
-        filePath: row.filePath,
-        oldName: row.oldName,
-        oldFilePath: row.oldFilePath,
-        fingerprint: row.fingerprint,
-        changedAt: row.changedAt,
-        isFullIndex: row.isFullIndex,
-        indexRunId: row.indexRunId,
-      }).run();
+    if (!rows.length) return;
+    const mapped = rows.map((row) => ({
+      project: row.project,
+      changeType: row.changeType,
+      symbolName: row.symbolName,
+      symbolKind: row.symbolKind,
+      filePath: row.filePath,
+      oldName: row.oldName,
+      oldFilePath: row.oldFilePath,
+      fingerprint: row.fingerprint,
+      changedAt: row.changedAt,
+      isFullIndex: row.isFullIndex,
+      indexRunId: row.indexRunId,
+    }));
+    for (let i = 0; i < mapped.length; i += BATCH_CHUNK_SIZE) {
+      this.db.drizzleDb.insert(symbolChangelog).values(mapped.slice(i, i + BATCH_CHUNK_SIZE)).run();
     }
   }
 

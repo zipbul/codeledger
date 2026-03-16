@@ -43,7 +43,10 @@ export async function patternSearch(opts: PatternSearchOptions): Promise<Pattern
       matcher: { rule: { pattern: opts.pattern } },
     },
     (err, nodes) => {
-      if (err) return;
+      if (err) {
+        console.warn('[patternSearch] findInFiles callback error:', err);
+        return;
+      }
       for (const node of nodes) {
         const r = node.range();
         matches.push({

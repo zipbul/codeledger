@@ -279,7 +279,7 @@ describe('Gildash integration', () => {
       expect(inst.getParsedAst('/virtual/cached.ts')).toBeDefined();
 
       await inst.close();
-      expect(inst.getParsedAst('/virtual/cached.ts')).toBeUndefined();
+      expect(() => inst.getParsedAst('/virtual/cached.ts')).toThrow(/instance is closed/);
 
       await rm(dir, { recursive: true, force: true });
     });

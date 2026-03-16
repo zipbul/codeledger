@@ -1415,15 +1415,14 @@ describe('Gildash', () => {
       await ledger.close();
     });
 
-    it('should return undefined and not call parseCache.get when getParsedAst is called after close', async () => {
+    it('should throw GildashError when getParsedAst is called after close', async () => {
       const parseCache = makeParseCacheMock();
       const opts = makeOptions({ parseCache });
 
       const ledger = await openOrThrow(opts);
       await ledger.close();
-      const result = (ledger as any).getParsedAst('/project/src/a.ts');
 
-      expect(result).toBeUndefined();
+      expect(() => (ledger as any).getParsedAst('/project/src/a.ts')).toThrow(/instance is closed/);
       expect(parseCache.get).not.toHaveBeenCalled();
     });
 

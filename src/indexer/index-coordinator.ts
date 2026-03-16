@@ -425,11 +425,13 @@ export class IndexCoordinator {
             return { filePath: file.filePath, text, contentHash, mtimeMs: bunFile.lastModified, size: bunFile.size };
           }),
         );
-        for (const r of chunkResults) {
+        for (let j = 0; j < chunkResults.length; j++) {
+          const r = chunkResults[j]!;
           if (r.status === 'fulfilled') {
             preread.push(r.value);
           } else {
             this.logger.error('[IndexCoordinator] Failed to pre-read file:', r.reason);
+            allFailedFiles.push(chunk[j]!.filePath);
           }
         }
       }

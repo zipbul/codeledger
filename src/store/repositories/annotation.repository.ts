@@ -17,6 +17,8 @@ export interface AnnotationRecord {
   indexedAt: string;
 }
 
+const BATCH_CHUNK_SIZE = 80;
+
 export class AnnotationRepository {
   constructor(private readonly db: DbConnection) {}
 
@@ -25,20 +27,22 @@ export class AnnotationRepository {
     filePath: string,
     rows: ReadonlyArray<Omit<AnnotationRecord, 'id'>>,
   ): void {
-    for (const row of rows) {
-      this.db.drizzleDb.insert(annotations).values({
-        project,
-        filePath,
-        tag: row.tag,
-        value: row.value,
-        source: row.source,
-        symbolName: row.symbolName,
-        startLine: row.startLine,
-        startColumn: row.startColumn,
-        endLine: row.endLine,
-        endColumn: row.endColumn,
-        indexedAt: row.indexedAt,
-      }).run();
+    if (!rows.length) return;
+    const mapped = rows.map((row) => ({
+      project,
+      filePath,
+      tag: row.tag,
+      value: row.value,
+      source: row.source,
+      symbolName: row.symbolName,
+      startLine: row.startLine,
+      startColumn: row.startColumn,
+      endLine: row.endLine,
+      endColumn: row.endColumn,
+      indexedAt: row.indexedAt,
+    }));
+    for (let i = 0; i < mapped.length; i += BATCH_CHUNK_SIZE) {
+      this.db.drizzleDb.insert(annotations).values(mapped.slice(i, i + BATCH_CHUNK_SIZE)).run();
     }
   }
 

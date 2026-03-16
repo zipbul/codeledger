@@ -6,7 +6,7 @@ export function searchAnnotations(
   ctx: GildashContext,
   query: AnnotationSearchQuery,
 ): AnnotationSearchResult[] {
-  if (ctx.closed) throw new GildashError('closed', 'Gildash instance is closed');
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   if (!ctx.annotationRepo || !ctx.annotationSearchFn) return [];
 
   return ctx.annotationSearchFn({

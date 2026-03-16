@@ -256,20 +256,19 @@ describe('getParsedAst', () => {
     expect(result).toBeUndefined();
   });
 
-  it('should return undefined and skip parseCache.get when closed', () => {
+  it('should throw GildashError and skip parseCache.get when closed', () => {
     const cacheGet = mock(() => makeParsed());
     const ctx = makeCtx({
       closed: true,
       parseCache: { set: mock(() => {}), get: cacheGet, invalidate: mock(() => {}) } as any,
     });
 
-    const result = getParsedAst(ctx, '/src/a.ts');
-
-    expect(result).toBeUndefined();
+    expect(() => getParsedAst(ctx, '/src/a.ts')).toThrow(GildashError);
+    expect(() => getParsedAst(ctx, '/src/a.ts')).toThrow(/instance is closed/);
     expect(cacheGet).toHaveBeenCalledTimes(0);
   });
 
-  it('should return undefined after ctx transitions from open to closed', () => {
+  it('should throw GildashError after ctx transitions from open to closed', () => {
     const parsed = makeParsed();
     const cacheGet = mock(() => parsed);
     const ctx = makeCtx({
@@ -281,7 +280,6 @@ describe('getParsedAst', () => {
 
     ctx.closed = true;
 
-    const second = getParsedAst(ctx, '/src/a.ts');
-    expect(second).toBeUndefined();
+    expect(() => getParsedAst(ctx, '/src/a.ts')).toThrow(GildashError);
   });
 });

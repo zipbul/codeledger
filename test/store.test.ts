@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { sql } from 'drizzle-orm';
 import { DbConnection } from '../src/store/connection';
 import { DATA_DIR } from '../src/constants';
 import { FileRepository } from '../src/store/repositories/file.repository';
@@ -101,10 +102,9 @@ describe('DbConnection', () => {
   });
 
   it('should enable WAL journal mode when db is opened', () => {
-    const result = db.transaction(() => {
-      return db.query('PRAGMA journal_mode');
-    });
-    expect(result).toBe('wal');
+    const rows = db.drizzleDb.all(sql`PRAGMA journal_mode`);
+    const mode = (rows[0] as { journal_mode?: string })?.journal_mode;
+    expect(mode).toBe('wal');
   });
 
   it('should create all schema tables when db is opened', () => {
@@ -622,7 +622,7 @@ describe('SymbolRepository — decorator and regex filters', () => {
   });
 
   // [ED] invalid regex → 크래시 없이 빈 배열
-  it('should return an empty array without throwing when regex is an invalid pattern', () => {
+  it('should throw GildashError with validation type when regex is an invalid pattern', () => {
     fileRepo.upsertFile(makeFileRecord({ filePath: 'src/d.ts', contentHash: 'h4' }));
     symbolRepo.replaceFileSymbols('test-project', 'src/d.ts', 'h4', [
       makeSymbolRecord({ name: 'myFn', filePath: 'src/d.ts' }),
@@ -630,6 +630,6 @@ describe('SymbolRepository — decorator and regex filters', () => {
 
     expect(() => {
       symbolRepo.searchByQuery({ regex: '(unclosed', project: 'test-project', limit: 100 });
-    }).not.toThrow();
+    }).toThrow(/Invalid regex pattern/);
   });
 });

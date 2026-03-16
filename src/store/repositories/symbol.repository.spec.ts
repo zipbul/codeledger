@@ -55,7 +55,7 @@ describe('SymbolRepository', () => {
     expect(chain['insert']).toHaveBeenCalledTimes(1);
   });
 
-  it('should call insert N times when replaceFileSymbols receives N symbols', () => {
+  it('should call insert once (batch) when replaceFileSymbols receives N symbols', () => {
     const { db, chain } = makeDbMock();
     const repo = new SymbolRepository(db);
     const syms = [
@@ -66,7 +66,7 @@ describe('SymbolRepository', () => {
 
     repo.replaceFileSymbols('test-project', 'src/index.ts', 'abc123', syms);
 
-    expect(chain['insert']).toHaveBeenCalledTimes(3);
+    expect(chain['insert']).toHaveBeenCalledTimes(1);
   });
 
   it('should return all symbol records when getFileSymbols is called', () => {
@@ -230,7 +230,7 @@ describe('SymbolRepository', () => {
     repo.replaceFileSymbols('test-project', 'src/index.ts', 'xyz789', [sym, sym]);
 
     expect(chain['delete']).toHaveBeenCalledTimes(2);
-    expect(chain['insert']).toHaveBeenCalledTimes(3);
+    expect(chain['insert']).toHaveBeenCalledTimes(2);
   });
 
   it('should call where with exactName condition when searchByQuery receives exactName', () => {
@@ -292,7 +292,7 @@ describe('SymbolRepository', () => {
 
     // Assert
     expect(chain['values']).toHaveBeenCalledWith(
-      expect.objectContaining({ resolvedType: 'string | undefined' }),
+      [expect.objectContaining({ resolvedType: 'string | undefined' })],
     );
   });
 
@@ -307,7 +307,7 @@ describe('SymbolRepository', () => {
 
     // Assert
     expect(chain['values']).toHaveBeenCalledWith(
-      expect.objectContaining({ resolvedType: null }),
+      [expect.objectContaining({ resolvedType: null })],
     );
   });
 
@@ -352,7 +352,7 @@ describe('SymbolRepository', () => {
 
     // Assert
     expect(chain['values']).toHaveBeenCalledWith(
-      expect.objectContaining({ resolvedType: '' }),
+      [expect.objectContaining({ resolvedType: '' })],
     );
   });
 

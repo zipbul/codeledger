@@ -82,6 +82,7 @@ export function buildImportMap(
   ) => string[] = resolveImport,
 ): Map<string, ImportReference> {
   const map = new Map<string, ImportReference>();
+  // oxc-parser's Program type doesn't expose `.body` — cast through unknown as a type bridge
   const body = (ast as unknown as { body?: Array<Record<string, unknown>> }).body ?? [];
 
   for (const node of body) {

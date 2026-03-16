@@ -2,6 +2,9 @@ import { eq, and, sql, count } from 'drizzle-orm';
 import { symbols } from '../schema';
 import type { DbConnection } from '../connection';
 import { toFtsPrefixQuery } from './fts-utils';
+import { GildashError } from '../../errors';
+
+const BATCH_CHUNK_SIZE = 50;
 
 export interface SymbolRecord {
   project: string;
@@ -56,25 +59,26 @@ export class SymbolRepository {
     if (!syms.length) return;
 
     const now = new Date().toISOString();
-    for (const sym of syms) {
-      this.db.drizzleDb.insert(symbols).values({
-        project,
-        filePath,
-        kind: sym.kind ?? 'unknown',
-        name: sym.name ?? '',
-        startLine: sym.startLine ?? 0,
-        startColumn: sym.startColumn ?? 0,
-        endLine: sym.endLine ?? 0,
-        endColumn: sym.endColumn ?? 0,
-        isExported: sym.isExported ?? 0,
-        signature: sym.signature ?? null,
-        fingerprint: sym.fingerprint ?? null,
-        detailJson: sym.detailJson ?? null,
-        contentHash,
-        indexedAt: sym.indexedAt ?? now,
-        resolvedType: sym.resolvedType ?? null,
-        structuralFingerprint: sym.structuralFingerprint ?? null,
-      }).run();
+    const rows = syms.map((sym) => ({
+      project,
+      filePath,
+      kind: sym.kind ?? 'unknown',
+      name: sym.name ?? '',
+      startLine: sym.startLine ?? 0,
+      startColumn: sym.startColumn ?? 0,
+      endLine: sym.endLine ?? 0,
+      endColumn: sym.endColumn ?? 0,
+      isExported: sym.isExported ?? 0,
+      signature: sym.signature ?? null,
+      fingerprint: sym.fingerprint ?? null,
+      detailJson: sym.detailJson ?? null,
+      contentHash,
+      indexedAt: sym.indexedAt ?? now,
+      resolvedType: sym.resolvedType ?? null,
+      structuralFingerprint: sym.structuralFingerprint ?? null,
+    }));
+    for (let i = 0; i < rows.length; i += BATCH_CHUNK_SIZE) {
+      this.db.drizzleDb.insert(symbols).values(rows.slice(i, i + BATCH_CHUNK_SIZE)).run();
     }
   }
 
@@ -159,7 +163,7 @@ export class SymbolRepository {
     regex?: string;
     resolvedType?: string;
   }): (SymbolRecord & { id: number })[] {
-    const results = this.db.drizzleDb
+    const builder = this.db.drizzleDb
       .select()
       .from(symbols)
       .where(
@@ -178,22 +182,32 @@ export class SymbolRepository {
             ? sql`${symbols.id} IN (SELECT s.id FROM symbols s, json_each(s.detail_json, '$.decorators') je WHERE json_extract(je.value, '$.name') = ${opts.decorator})`
             : undefined,
           opts.resolvedType !== undefined ? eq(symbols.resolvedType, opts.resolvedType) : undefined,
-          // NOTE: regex is applied as a JS-layer post-filter below; no SQL condition here.
         ),
       )
-      .orderBy(symbols.name)
-      // Fetch a larger pool when regex filtering is needed, since JS filtering reduces the result set.
-      .limit(opts.regex ? Math.max(opts.limit * 50, 5000) : opts.limit)
-      .all() as (SymbolRecord & { id: number })[];
+      .orderBy(symbols.name);
 
-    if (!opts.regex) return results;
-
-    // JS-layer regex post-filter (SQL REGEXP UDF not available in all Bun versions)
-    try {
-      const pattern = new RegExp(opts.regex);
-      return results.filter(r => pattern.test(r.name)).slice(0, opts.limit) as (SymbolRecord & { id: number })[];
-    } catch {
-      return [];
+    if (!opts.regex) {
+      return builder.limit(opts.limit).all() as (SymbolRecord & { id: number })[];
     }
+
+    // Validate regex upfront before fetching
+    let pattern: RegExp;
+    try {
+      pattern = new RegExp(opts.regex);
+    } catch {
+      throw new GildashError('validation', `Invalid regex pattern: ${opts.regex}`);
+    }
+
+    // Progressive fetch — start small, expand if needed
+    for (const multiplier of [5, 20, 100]) {
+      const fetchLimit = opts.limit * multiplier;
+      const results = builder.limit(fetchLimit).all() as (SymbolRecord & { id: number })[];
+      const filtered = results.filter(r => pattern.test(r.name));
+      if (filtered.length >= opts.limit || results.length < fetchLimit) {
+        return filtered.slice(0, opts.limit);
+      }
+    }
+
+    return [];
   }
 }

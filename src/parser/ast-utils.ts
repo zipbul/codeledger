@@ -133,7 +133,7 @@ export function getQualifiedName(expr: unknown): QualifiedName | null {
     while (current.type === 'MemberExpression') {
       const prop = current.property as Record<string, unknown> | undefined;
       if (!prop || typeof prop.name !== 'string') return null;
-      parts.unshift(prop.name);
+      parts.push(prop.name);
       current = current.object as Record<string, unknown>;
     }
 
@@ -148,6 +148,7 @@ export function getQualifiedName(expr: unknown): QualifiedName | null {
       return null;
     }
 
+    parts.reverse();
     const full = [root, ...parts].join('.');
     return { root, parts, full };
   }
