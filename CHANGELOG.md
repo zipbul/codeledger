@@ -1,5 +1,17 @@
 # @zipbul/gildash
 
+## 0.9.0
+
+### Minor Changes
+
+- [#38](https://github.com/zipbul/gildash/pull/38) [`f6b59cf`](https://github.com/zipbul/gildash/commit/f6b59cf32048df82224780ea3ad4eb8abe47d270) Thanks [@parkrevil](https://github.com/parkrevil)! - Add annotation extraction system and symbol changelog tracking
+
+  - Generic comment annotation extraction (`@tag value`) from JSDoc, line, and block comments with automatic symbol linking
+  - Annotation search via FTS5 (`searchAnnotations`)
+  - Symbol changelog tracking with rename/move detection (`getSymbolChanges`, `pruneChangelog`)
+  - Structural fingerprinting for rename detection across index runs
+  - New migrations: `0006_annotations` and `0007_symbol_changelog`
+
 ## 0.8.2
 
 ### Patch Changes
