@@ -121,7 +121,7 @@ export interface GildashContext {
   readonly ignorePatterns: string[];
   readonly logger: Logger;
   readonly defaultProject: string;
-  readonly role: 'owner' | 'reader';
+  role: 'owner' | 'reader';
 
   // ─── Stores ───────────────────────────────────────────────────────
   readonly db: DbStore;

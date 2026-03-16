@@ -387,6 +387,7 @@ export async function initializeContext(
         );
         retryCount = 0;
         if (newRole === 'owner') {
+          ctx.role = 'owner';
           // Fire onRoleChanged callbacks
           for (const cb of ctx.onRoleChangedCallbacks) {
             try { cb('owner'); } catch (e) {
@@ -399,6 +400,12 @@ export async function initializeContext(
             await setupOwnerInfrastructure(ctx, { isWatchMode: true });
           } catch (setupErr) {
             ctx.logger.error('[Gildash] owner promotion failed, reverting to reader', setupErr);
+            ctx.role = 'reader';
+            // Clear any timer set by setupOwnerInfrastructure (e.g. heartbeat)
+            if (ctx.timer !== null) {
+              clearInterval(ctx.timer);
+              ctx.timer = null;
+            }
             if (ctx.watcher) {
               const closeResult = await ctx.watcher.close();
               if (isErr(closeResult)) ctx.logger.error('[Gildash] watcher close error during promotion rollback', closeResult.data);
@@ -410,9 +417,10 @@ export async function initializeContext(
               );
               ctx.coordinator = null;
             }
-            if (ctx.timer === null) {
-              ctx.timer = setInterval(healthcheck, HEALTHCHECK_INTERVAL_MS);
+            try { ctx.releaseWatcherRoleFn(ctx.db, process.pid); } catch (e) {
+              ctx.logger.error('[Gildash] failed to release watcher role during promotion rollback', e);
             }
+            ctx.timer = setInterval(healthcheck, HEALTHCHECK_INTERVAL_MS);
           }
         }
       } catch (healthErr) {

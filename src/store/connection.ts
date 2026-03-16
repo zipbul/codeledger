@@ -54,20 +54,7 @@ export class DbConnection {
 
       // bun:sqlite Database.function() is not available in all Bun versions.
       // Regex filtering falls back to JS-layer post-processing when this is absent.
-      const clientAny = this.client as unknown as Record<string, unknown>;
-      if (typeof clientAny['function'] === 'function') {
-        (clientAny['function'] as Function).call(
-          this.client,
-          'regexp',
-          (pattern: string, value: string): number => {
-            try {
-              return new RegExp(pattern).test(value) ? 1 : 0;
-            } catch {
-              return 0;
-            }
-          },
-        );
-      }
+      this.registerRegexpUdf(this.client);
     } catch (e) {
       if (this.isCorruptionError(e) && existsSync(this.dbPath)) {
         this.closeClient();
@@ -134,12 +121,6 @@ export class DbConnection {
     }
   }
 
-  query(sql: string): unknown {
-    const row = this.requireClient().prepare(sql).get() as Record<string, unknown> | null;
-    if (!row) return null;
-    return Object.values(row)[0];
-  }
-
   getTableNames(): string[] {
     const rows = this.requireClient()
       .query("SELECT name FROM sqlite_master WHERE type = 'table'")
@@ -179,6 +160,22 @@ export class DbConnection {
     this.requireClient()
       .prepare('DELETE FROM watcher_owner WHERE id = 1 AND pid = ?')
       .run(pid);
+  }
+
+  private registerRegexpUdf(client: Database): void {
+    const c = client as unknown as Record<string, unknown>;
+    if (typeof c['function'] !== 'function') return;
+    (c['function'] as Function).call(
+      client,
+      'regexp',
+      (pattern: string, value: string): number => {
+        try {
+          return new RegExp(pattern).test(value) ? 1 : 0;
+        } catch {
+          return 0;
+        }
+      },
+    );
   }
 
   private requireClient(): Database {

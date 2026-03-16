@@ -418,6 +418,32 @@ Gildash (파사드)
 
 ## ⬆️ 업그레이드
 
+### 0.9.0 → 0.9.1
+
+**버그 수정 및 성능 개선.** API 호환성 변경 없음.
+
+- **수정:** `getParsedAst()`가 인스턴스 닫힌 상태에서 `GildashError('closed')` throw (기존: `undefined` 반환)
+- **수정:** `searchSymbols({ regex })`에 잘못된 regex 전달 시 `GildashError('validation')` throw (기존: `[]` 반환)
+- **수정:** reader→owner 승격 시 `ctx.role`이 `'owner'`로 정상 갱신
+- **수정:** Full-index 경로에서 파일 읽기 실패 시 `IndexResult.failedFiles`에 정상 추적
+- **수정:** reader→owner 승격 실패 rollback에서 heartbeat 타이머 정리 및 watcher role 해제
+- **성능:** 심볼/어노테이션/체인지로그 repository 배치 INSERT (N+1 개별 insert 제거)
+- **성능:** JSDoc 코멘트 탐색에 binary search 도입 (대형 파일에서 ~40x 개선)
+- **성능:** regex 검색 시 progressive fetch 전략 (고정 5000행 over-fetch 제거)
+- **성능:** `getQualifiedName()` O(n²) unshift → push+reverse O(n)
+
+### 0.8.x → 0.9.0
+
+**신규:** 어노테이션 추출 및 심볼 체인지로그 추적.
+
+- `searchAnnotations(query)` — JSDoc, 라인, 블록 코멘트에서 `@tag value` 검색
+- `getSymbolChanges(since, opts?)` — 심볼 레벨 변경 이력 (rename/move 감지 포함)
+- `pruneChangelog(before)` — 오래된 체인지로그 항목 정리
+- `IndexResult`에 `totalAnnotations` 필드 추가
+- 마이그레이션 `0006_annotations`, `0007_symbol_changelog` 자동 적용
+
+**호환성 변경 없음.** 기존 데이터베이스는 자동 마이그레이션됩니다.
+
 ### 0.7.x → 0.8.0
 
 **Breaking:** `batchParse()`가 `Map<string, ParsedFile>` 대신 `BatchParseResult` (`parsed` + `failures` 필드)를 반환합니다.

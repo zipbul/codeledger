@@ -214,7 +214,7 @@ export class TscProgram {
 // ── LanguageServiceHost ─────────────────────────────────────────────────────
 
 class TscLanguageServiceHost implements ts.LanguageServiceHost {
-  #rootFileNames: string[];
+  #rootFileNames: Set<string>;
   #compilerOptions: ts.CompilerOptions;
   #projectDir: string;
   #resolveNonTracked: ResolveNonTrackedFileFn;
@@ -228,7 +228,7 @@ class TscLanguageServiceHost implements ts.LanguageServiceHost {
     projectDir: string,
     resolveNonTracked: ResolveNonTrackedFileFn,
   ) {
-    this.#rootFileNames = [...rootFileNames];
+    this.#rootFileNames = new Set(rootFileNames);
     this.#compilerOptions = compilerOptions;
     this.#projectDir = projectDir;
     this.#resolveNonTracked = resolveNonTracked;
@@ -248,14 +248,14 @@ class TscLanguageServiceHost implements ts.LanguageServiceHost {
 
   removeFile(filePath: string): void {
     this.#files.delete(filePath);
-    this.#rootFileNames = this.#rootFileNames.filter((f) => f !== filePath);
+    this.#rootFileNames.delete(filePath);
   }
 
   // ── ts.LanguageServiceHost implementation ───────────────────────────────
 
   getScriptFileNames(): string[] {
     const tracked = [...this.#files.keys()];
-    const rootsNotTracked = this.#rootFileNames.filter((f) => !this.#files.has(f));
+    const rootsNotTracked = [...this.#rootFileNames].filter((f) => !this.#files.has(f));
     return [...rootsNotTracked, ...tracked];
   }
 

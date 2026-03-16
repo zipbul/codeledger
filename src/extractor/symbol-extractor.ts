@@ -88,6 +88,16 @@ export function extractSymbols(parsed: ParsedFile): ExtractedSymbol[] {
   const { program, sourceText, comments } = parsed;
   const lineOffsets = buildLineOffsets(sourceText);
 
+  // Pre-sort JSDoc block comments by `end` for binary search
+  const jsDocComments = comments
+    .filter((c) => c.type === 'Block' && c.value.startsWith('*'))
+    .sort((a, b) => a.end - b.end);
+
+  // Pre-sort statement starts for intervenor check
+  const stmtStarts = program.body
+    .map((s) => (s as { start?: number }).start ?? 0)
+    .sort((a, b) => a - b);
+
   function span(start: number, end: number): SourceSpan {
     return {
       start: getLineColumn(lineOffsets, start),
@@ -96,26 +106,39 @@ export function extractSymbols(parsed: ParsedFile): ExtractedSymbol[] {
   }
 
   function findJsDocComment(nodeStart: number): string | undefined {
-    let best: { value: string; end: number } | null = null;
-    for (const c of comments) {
-      if (c.type !== 'Block') continue;
-      if (c.end > nodeStart) continue;
-      if (!c.value.startsWith('*')) continue;
-      if (!best || c.end > best.end) {
-        best = { value: `/*${c.value}*/`, end: c.end };
+    // Binary search: find the latest JSDoc comment whose end <= nodeStart
+    let lo = 0;
+    let hi = jsDocComments.length - 1;
+    let bestIdx = -1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      if (jsDocComments[mid]!.end <= nodeStart) {
+        bestIdx = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
       }
     }
-    if (!best) return undefined;
+    if (bestIdx < 0) return undefined;
+    const best = jsDocComments[bestIdx]!;
 
-    for (const stmt of program.body) {
-      const stmtStart = (stmt as { start?: number }).start ?? 0;
-      if (stmtStart === nodeStart) continue;
-      if (stmtStart > best.end && stmtStart < nodeStart) {
+    // Binary search: check if any statement starts between best.end and nodeStart
+    lo = 0;
+    hi = stmtStarts.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >>> 1;
+      const s = stmtStarts[mid]!;
+      if (s <= best.end) {
+        lo = mid + 1;
+      } else if (s >= nodeStart) {
+        hi = mid - 1;
+      } else {
+        // best.end < s < nodeStart — intervenor found
         return undefined;
       }
     }
 
-    return best.value;
+    return `/*${best.value}*/`;
   }
 
   function typeText(typeAnnotation: OxcTypeAnn | null | undefined): string | undefined {
@@ -307,7 +330,7 @@ export function extractSymbols(parsed: ParsedFile): ExtractedSymbol[] {
       const mods = extractModifiers(node, node);
       const decos = extractDecorators(node.decorators ?? []);
       const typeParameters: string[] | undefined =
-        node.typeParameters?.params?.map((p: { name?: { name?: string } }) => p.name?.name as string).filter(Boolean) || undefined;
+        node.typeParameters?.params?.flatMap((p: { name?: { name?: string } }) => { const n = p.name?.name; return n ? [n] : []; }) || undefined;
       const sym: ExtractedSymbol = {
         kind: 'function',
         name,
@@ -329,7 +352,7 @@ export function extractSymbols(parsed: ParsedFile): ExtractedSymbol[] {
       const decos = extractDecorators(node.decorators ?? []);
       const mods = extractModifiers(node, node);
       const typeParameters: string[] | undefined =
-        node.typeParameters?.params?.map((p: { name?: { name?: string } }) => p.name?.name as string).filter(Boolean) || undefined;
+        node.typeParameters?.params?.flatMap((p: { name?: { name?: string } }) => { const n = p.name?.name; return n ? [n] : []; }) || undefined;
       const sym: ExtractedSymbol = {
         kind: 'class',
         name,
@@ -425,7 +448,7 @@ export function extractSymbols(parsed: ParsedFile): ExtractedSymbol[] {
       const heritage = interfaceHeritage(node);
       const members = extractInterfaceMembers(node.body?.body ?? []);
       const typeParameters: string[] | undefined =
-        node.typeParameters?.params?.map((p: { name?: { name?: string } }) => p.name?.name as string).filter(Boolean) || undefined;
+        node.typeParameters?.params?.flatMap((p: { name?: { name?: string } }) => { const n = p.name?.name; return n ? [n] : []; }) || undefined;
       const sym: ExtractedSymbol = {
         kind: 'interface',
         name,

@@ -28,30 +28,30 @@ beforeEach(() => {
 
 describe('DependencyGraph', () => {
 
-  it('should populate adjacencyList when build() loads imports relations', async () => {
+  it('should populate adjacencyList when build() loads imports relations', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     expect(graph.getDependencies('src/a.ts')).toContain('src/b.ts');
   });
 
-  it('should populate reverseAdjacencyList when build() completes', async () => {
+  it('should populate reverseAdjacencyList when build() completes', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     expect(graph.getDependents('src/b.ts')).toContain('src/a.ts');
   });
 
-  it('should result in empty graph after build() when DB has no imports relations', async () => {
-    await graph.build();
+  it('should result in empty graph after build() when DB has no imports relations', () => {
+    graph.build();
     expect(graph.getDependencies('src/a.ts')).toEqual([]);
     expect(graph.getDependents('src/a.ts')).toEqual([]);
   });
 
-  it('should call getByType for imports, type-references and re-exports when build() is called', async () => {
-    await graph.build();
+  it('should call getByType for imports, type-references and re-exports when build() is called', () => {
+    graph.build();
     expect(mockGetByType).toHaveBeenCalledTimes(3);
     const calledTypes = mockGetByType.mock.calls.map(([, t]) => t);
     expect(calledTypes).toContain('imports');
@@ -60,7 +60,7 @@ describe('DependencyGraph', () => {
   });
 
   // [HP] re-exports type included in graph
-  it('should include re-exports relation in getDependencies when build() loads re-exports type', async () => {
+  it('should include re-exports relation in getDependencies when build() loads re-exports type', () => {
     mockGetByType = mock((project: string, type: string) => {
       if (type === 're-exports') {
         return [{ project: 'test-project', type: 're-exports', srcFilePath: 'src/barrel.ts', dstFilePath: 'src/impl.ts', srcSymbolName: null, dstSymbolName: null, metaJson: null }];
@@ -69,11 +69,11 @@ describe('DependencyGraph', () => {
     });
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     expect(graph.getDependencies('src/barrel.ts')).toContain('src/impl.ts');
   });
 
-  it('should include type-references relation in getDependencies when build() loads it', async () => {
+  it('should include type-references relation in getDependencies when build() loads it', () => {
     mockGetByType = mock((project: string, type: string) => {
       if (type === 'type-references') {
         return [{ project: 'test-project', type: 'type-references', srcFilePath: 'src/a.ts', dstFilePath: 'src/types.ts', srcSymbolName: null, dstSymbolName: null, metaJson: null }];
@@ -82,11 +82,11 @@ describe('DependencyGraph', () => {
     });
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     expect(graph.getDependencies('src/a.ts')).toContain('src/types.ts');
   });
 
-  it('should include imports relation in getDependencies when build() loads type-references as well', async () => {
+  it('should include imports relation in getDependencies when build() loads type-references as well', () => {
     mockGetByType = mock((project: string, type: string) => {
       if (type === 'imports') {
         return [makeImport('src/a.ts', 'src/b.ts')];
@@ -95,31 +95,31 @@ describe('DependencyGraph', () => {
     });
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     expect(graph.getDependencies('src/a.ts')).toContain('src/b.ts');
   });
 
-  it('should replace old graph data when build() is called a second time', async () => {
+  it('should replace old graph data when build() is called a second time', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     mockGetByType = mock(() => [makeImport('src/c.ts', 'src/d.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     expect(graph.getDependencies('src/a.ts')).toEqual([]);
     expect(graph.getDependencies('src/c.ts')).toContain('src/d.ts');
   });
 
-  it('should return direct dependencies when graph was built', async () => {
+  it('should return direct dependencies when graph was built', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/a.ts', 'src/c.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const deps = graph.getDependencies('src/a.ts');
     expect(deps).toContain('src/b.ts');
     expect(deps).toContain('src/c.ts');
@@ -131,23 +131,23 @@ describe('DependencyGraph', () => {
     expect(deps).toEqual([]);
   });
 
-  it('should return [] from getDependencies when file has no outgoing imports', async () => {
+  it('should return [] from getDependencies when file has no outgoing imports', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const deps = graph.getDependencies('src/b.ts');
     expect(deps).toEqual([]);
   });
 
-  it('should return direct importers when graph was built', async () => {
+  it('should return direct importers when graph was built', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/x.ts'),
       makeImport('src/b.ts', 'src/x.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const deps = graph.getDependents('src/x.ts');
     expect(deps).toContain('src/a.ts');
     expect(deps).toContain('src/b.ts');
@@ -159,45 +159,45 @@ describe('DependencyGraph', () => {
     expect(deps).toEqual([]);
   });
 
-  it('should return [] from getDependents when file has no incoming imports', async () => {
+  it('should return [] from getDependents when file has no incoming imports', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const deps = graph.getDependents('src/a.ts');
     expect(deps).toEqual([]);
   });
 
-  it('should return all transitively dependent files when BFS traverses built graph', async () => {
+  it('should return all transitively dependent files when BFS traverses built graph', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/c.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const deps = graph.getTransitiveDependents('src/c.ts');
     expect(deps).toContain('src/b.ts');
     expect(deps).toContain('src/a.ts');
     expect(deps).toHaveLength(2);
   });
 
-  it('should not include the input filePath itself when getTransitiveDependents returns result', async () => {
+  it('should not include the input filePath itself when getTransitiveDependents returns result', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const deps = graph.getTransitiveDependents('src/b.ts');
     expect(deps).not.toContain('src/b.ts');
     expect(deps).toContain('src/a.ts');
   });
 
-  it('should return [] from getTransitiveDependents when filePath has no dependents', async () => {
+  it('should return [] from getTransitiveDependents when filePath has no dependents', () => {
     const deps = graph.getTransitiveDependents('src/unknown.ts');
     expect(deps).toEqual([]);
   });
 
-  it('should deduplicate results when getTransitiveDependents handles diamond dependency', async () => {
+  it('should deduplicate results when getTransitiveDependents handles diamond dependency', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/a.ts', 'src/d.ts'),
@@ -206,7 +206,7 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const deps = graph.getTransitiveDependents('src/c.ts');
     const count = deps.filter(f => f === 'src/a.ts').length;
     expect(count).toBe(1);
@@ -215,19 +215,19 @@ describe('DependencyGraph', () => {
     expect(deps).toContain('src/a.ts');
   });
 
-  it('should not loop infinitely when cycle exists during getTransitiveDependents', async () => {
+  it('should not loop infinitely when cycle exists during getTransitiveDependents', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/a.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const deps = graph.getTransitiveDependents('src/b.ts');
     expect(Array.isArray(deps)).toBe(true);
   });
 
-  it('should traverse long chain correctly when getTransitiveDependents is called', async () => {
+  it('should traverse long chain correctly when getTransitiveDependents is called', () => {
     mockGetByType = mock(() => [
       makeImport('src/b.ts', 'src/c.ts'),
       makeImport('src/c.ts', 'src/d.ts'),
@@ -235,7 +235,7 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const deps = graph.getTransitiveDependents('src/e.ts');
     expect(deps).toContain('src/d.ts');
     expect(deps).toContain('src/c.ts');
@@ -243,51 +243,51 @@ describe('DependencyGraph', () => {
     expect(deps).toHaveLength(3);
   });
 
-  it('should return an Array (not Set) when getTransitiveDependents is called', async () => {
+  it('should return an Array (not Set) when getTransitiveDependents is called', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const deps = graph.getTransitiveDependents('src/b.ts');
     expect(Array.isArray(deps)).toBe(true);
   });
 
-  it('should return false from hasCycle() when there are no cycles', async () => {
+  it('should return false from hasCycle() when there are no cycles', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/c.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     expect(graph.hasCycle()).toBe(false);
   });
 
-  it('should return true from hasCycle() when a simple cycle exists', async () => {
+  it('should return true from hasCycle() when a simple cycle exists', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/a.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     expect(graph.hasCycle()).toBe(true);
   });
 
-  it('should return true from hasCycle() when a self-loop exists', async () => {
+  it('should return true from hasCycle() when a self-loop exists', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/a.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     expect(graph.hasCycle()).toBe(true);
   });
 
-  it('should return false from hasCycle() when graph is empty', async () => {
-    await graph.build();
+  it('should return false from hasCycle() when graph is empty', () => {
+    graph.build();
     expect(graph.hasCycle()).toBe(false);
   });
 
-  it('should return true from hasCycle() when cycle exists in a subgraph (other part acyclic)', async () => {
+  it('should return true from hasCycle() when cycle exists in a subgraph (other part acyclic)', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/c.ts', 'src/d.ts'),
@@ -295,11 +295,11 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     expect(graph.hasCycle()).toBe(true);
   });
 
-  it('should return true from hasCycle() when long cycle exists', async () => {
+  it('should return true from hasCycle() when long cycle exists', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/c.ts'),
@@ -307,24 +307,24 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     expect(graph.hasCycle()).toBe(true);
   });
 
-  it('should return transitive dependents when a single file is changed', async () => {
+  it('should return transitive dependents when a single file is changed', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/c.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const affected = graph.getAffectedByChange(['src/c.ts']);
     expect(affected).toContain('src/b.ts');
     expect(affected).toContain('src/a.ts');
   });
 
-  it('should return deduplicated union when multiple files are changed', async () => {
+  it('should return deduplicated union when multiple files are changed', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/x.ts'),
       makeImport('src/b.ts', 'src/x.ts'),
@@ -332,42 +332,42 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const affected = graph.getAffectedByChange(['src/x.ts', 'src/y.ts']);
     expect(affected).toContain('src/a.ts');
     expect(affected).toContain('src/b.ts');
     expect(affected).toContain('src/c.ts');
   });
 
-  it('should return [] from getAffectedByChange when changed files have no dependents', async () => {
+  it('should return [] from getAffectedByChange when changed files have no dependents', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const affected = graph.getAffectedByChange(['src/a.ts']);
     expect(affected).toEqual([]);
   });
 
-  it('should return [] from getAffectedByChange when changedFiles is empty array', async () => {
-    await graph.build();
+  it('should return [] from getAffectedByChange when changedFiles is empty array', () => {
+    graph.build();
     const affected = graph.getAffectedByChange([]);
     expect(affected).toEqual([]);
   });
 
-  it('should return [] from getAffectedByChange when changed file is unknown', async () => {
-    await graph.build();
+  it('should return [] from getAffectedByChange when changed file is unknown', () => {
+    graph.build();
     const affected = graph.getAffectedByChange(['src/unknown.ts']);
     expect(affected).toEqual([]);
   });
 
-  it('should deduplicate overlapping dependents when multiple changed files share importers', async () => {
+  it('should deduplicate overlapping dependents when multiple changed files share importers', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/x.ts'),
       makeImport('src/a.ts', 'src/y.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const affected = graph.getAffectedByChange(['src/x.ts', 'src/y.ts']);
     const countA = affected.filter(f => f === 'src/a.ts').length;
     expect(countA).toBe(1);
@@ -378,32 +378,32 @@ describe('DependencyGraph', () => {
     expect(deps).toEqual([]);
   });
 
-  it('should reflect loaded data when getDependencies is called after build()', async () => {
+  it('should reflect loaded data when getDependencies is called after build()', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     expect(graph.getDependencies('src/a.ts')).toEqual(['src/b.ts']);
   });
 
-  it('should reflect new data when rebuild runs with different relations', async () => {
+  it('should reflect new data when rebuild runs with different relations', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     mockGetByType = mock(() => [makeImport('src/c.ts', 'src/d.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     expect(graph.getDependencies('src/a.ts')).toEqual([]);
     expect(graph.getDependencies('src/c.ts')).toEqual(['src/d.ts']);
   });
 
-  it('should build a single-edge graph correctly when one relation exists', async () => {
+  it('should build a single-edge graph correctly when one relation exists', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const deps = graph.getDependencies('src/a.ts');
     const revDeps = graph.getDependents('src/b.ts');
     expect(deps).toEqual(['src/b.ts']);
@@ -412,11 +412,11 @@ describe('DependencyGraph', () => {
 
   // ─── FR-03: getAdjacencyList ───
 
-  it('should return a Map with edge entries when getAdjacencyList is called after build', async () => {
+  it('should return a Map with edge entries when getAdjacencyList is called after build', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const map = graph.getAdjacencyList();
 
@@ -424,11 +424,11 @@ describe('DependencyGraph', () => {
     expect(map.get('src/a.ts')).toContain('src/b.ts');
   });
 
-  it('should include destination-only node as key with empty array when getAdjacencyList is called', async () => {
+  it('should include destination-only node as key with empty array when getAdjacencyList is called', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const map = graph.getAdjacencyList();
 
@@ -436,22 +436,22 @@ describe('DependencyGraph', () => {
     expect(map.get('src/b.ts')).toEqual([]);
   });
 
-  it('should return empty Map when getAdjacencyList is called on empty graph', async () => {
-    await graph.build();
+  it('should return empty Map when getAdjacencyList is called on empty graph', () => {
+    graph.build();
 
     const map = graph.getAdjacencyList();
 
     expect(map.size).toBe(0);
   });
 
-  it('should return all edges from node when node has multiple outgoing edges', async () => {
+  it('should return all edges from node when node has multiple outgoing edges', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/a.ts', 'src/c.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const map = graph.getAdjacencyList();
 
@@ -462,14 +462,14 @@ describe('DependencyGraph', () => {
 
   // ─── FR-13: getTransitiveDependencies ───
 
-  it('should return all transitive dependencies when chain A→B→C exists', async () => {
+  it('should return all transitive dependencies when chain A→B→C exists', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/c.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const deps = graph.getTransitiveDependencies('src/a.ts');
 
@@ -478,33 +478,33 @@ describe('DependencyGraph', () => {
     expect(deps).toHaveLength(2);
   });
 
-  it('should return empty array when file has no dependencies in getTransitiveDependencies', async () => {
+  it('should return empty array when file has no dependencies in getTransitiveDependencies', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/b.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const deps = graph.getTransitiveDependencies('src/b.ts');
 
     expect(deps).toEqual([]);
   });
 
-  it('should not loop infinitely when cycle exists in getTransitiveDependencies', async () => {
+  it('should not loop infinitely when cycle exists in getTransitiveDependencies', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/a.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const deps = graph.getTransitiveDependencies('src/a.ts');
 
     expect(Array.isArray(deps)).toBe(true);
   });
 
-  it('should return empty array when unknown file is passed to getTransitiveDependencies', async () => {
-    await graph.build();
+  it('should return empty array when unknown file is passed to getTransitiveDependencies', () => {
+    graph.build();
 
     const deps = graph.getTransitiveDependencies('src/unknown.ts');
 
@@ -513,28 +513,28 @@ describe('DependencyGraph', () => {
 
   // ─── FR-04: getCyclePaths ───
 
-  it('should return empty array when there are no cycles in getCyclePaths', async () => {
+  it('should return empty array when there are no cycles in getCyclePaths', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/c.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths();
 
     expect(paths).toEqual([]);
   });
 
-  it('should return the 2-node cycle when A→B→A exists', async () => {
+  it('should return the 2-node cycle when A→B→A exists', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/a.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths();
 
@@ -544,7 +544,7 @@ describe('DependencyGraph', () => {
     expect(paths[0]).toHaveLength(2);
   });
 
-  it('should return the 3-node cycle when A→B→C→A exists', async () => {
+  it('should return the 3-node cycle when A→B→C→A exists', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/c.ts'),
@@ -552,7 +552,7 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths();
 
@@ -563,7 +563,7 @@ describe('DependencyGraph', () => {
     expect(paths[0]).toContain('src/c.ts');
   });
 
-  it('should return two cycles when two independent cycles exist', async () => {
+  it('should return two cycles when two independent cycles exist', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/a.ts'),
@@ -572,18 +572,18 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths();
 
     expect(paths).toHaveLength(2);
   });
 
-  it('should return a single-node cycle when a self-loop exists', async () => {
+  it('should return a single-node cycle when a self-loop exists', () => {
     mockGetByType = mock(() => [makeImport('src/a.ts', 'src/a.ts')]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths();
 
@@ -591,8 +591,8 @@ describe('DependencyGraph', () => {
     expect(paths[0]).toEqual(['src/a.ts']);
   });
 
-  it('should return empty array from getCyclePaths when graph is empty', async () => {
-    await graph.build();
+  it('should return empty array from getCyclePaths when graph is empty', () => {
+    graph.build();
 
     const paths = graph.getCyclePaths();
 
@@ -601,7 +601,7 @@ describe('DependencyGraph', () => {
 
   // ─── F-3: Tarjan SCC + Johnson's circuits ───
 
-  it('should find both elementary circuits when two cycles share a common node', async () => {
+  it('should find both elementary circuits when two cycles share a common node', () => {
     // A→B→A and B→C→B share node B → single SCC {A,B,C} → 2 circuits
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
@@ -611,7 +611,7 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths();
 
@@ -621,7 +621,7 @@ describe('DependencyGraph', () => {
     expect(flat.some(s => s.includes('src/b.ts') && s.includes('src/c.ts'))).toBe(true);
   });
 
-  it('should return canonical form with lexicographically smallest node first when cycle nodes are unordered', async () => {
+  it('should return canonical form with lexicographically smallest node first when cycle nodes are unordered', () => {
     // Z→A→M→Z cycle → canonical rotation starts with A
     mockGetByType = mock(() => [
       makeImport('src/z.ts', 'src/a.ts'),
@@ -630,7 +630,7 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths();
 
@@ -638,7 +638,7 @@ describe('DependencyGraph', () => {
     expect(paths[0]![0]).toBe('src/a.ts');
   });
 
-  it('should find all elementary circuits in overlapping cycles within single SCC', async () => {
+  it('should find all elementary circuits in overlapping cycles within single SCC', () => {
     // A→B→C→A and A→B→A (shortcut) → same SCC, 2 distinct elementary circuits
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
@@ -648,7 +648,7 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths();
 
@@ -659,7 +659,7 @@ describe('DependencyGraph', () => {
     expect(lengths).toContain(3);
   });
 
-  it('should limit result count when maxCycles option is provided', async () => {
+  it('should limit result count when maxCycles option is provided', () => {
     // 3 independent cycles, maxCycles=1 → only 1 returned
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
@@ -671,14 +671,14 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths({ maxCycles: 1 });
 
     expect(paths).toHaveLength(1);
   });
 
-  it('should return all cycles when maxCycles is not specified', async () => {
+  it('should return all cycles when maxCycles is not specified', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/a.ts'),
@@ -687,35 +687,35 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths();
 
     expect(paths).toHaveLength(2);
   });
 
-  it('should return empty array when maxCycles is 0', async () => {
+  it('should return empty array when maxCycles is 0', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
       makeImport('src/b.ts', 'src/a.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths({ maxCycles: 0 });
 
     expect(paths).toEqual([]);
   });
 
-  it('should return each self-loop as separate cycle when multiple nodes have self-loops', async () => {
+  it('should return each self-loop as separate cycle when multiple nodes have self-loops', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/a.ts'),
       makeImport('src/b.ts', 'src/b.ts'),
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths();
 
@@ -725,7 +725,7 @@ describe('DependencyGraph', () => {
     expect(flat).toContain('src/b.ts');
   });
 
-  it('should count self-loops toward maxCycles limit when both self-loops and multi-node cycles exist', async () => {
+  it('should count self-loops toward maxCycles limit when both self-loops and multi-node cycles exist', () => {
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/a.ts'),
       makeImport('src/b.ts', 'src/c.ts'),
@@ -733,14 +733,14 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths({ maxCycles: 1 });
 
     expect(paths).toHaveLength(1);
   });
 
-  it('should return same cycles regardless of relation insertion order', async () => {
+  it('should return same cycles regardless of relation insertion order', () => {
     // Order 1: A→B first, then B→A
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
@@ -748,7 +748,7 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const paths1 = graph.getCyclePaths();
 
     // Order 2: B→A first, then A→B
@@ -758,13 +758,13 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
     const paths2 = graph.getCyclePaths();
 
     expect(paths1).toEqual(paths2);
   });
 
-  it('should find all elementary circuits in complete K3 graph', async () => {
+  it('should find all elementary circuits in complete K3 graph', () => {
     // A↔B, B↔C, A↔C — complete graph of 3 nodes
     mockGetByType = mock(() => [
       makeImport('src/a.ts', 'src/b.ts'),
@@ -776,7 +776,7 @@ describe('DependencyGraph', () => {
     ]);
     mockRepo = { getByType: mockGetByType } as IDependencyGraphRepo;
     graph = new DependencyGraph({ relationRepo: mockRepo, project: 'test-project' });
-    await graph.build();
+    graph.build();
 
     const paths = graph.getCyclePaths();
 

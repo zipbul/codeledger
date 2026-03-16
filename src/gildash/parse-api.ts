@@ -54,6 +54,6 @@ export function getParsedAst(
   ctx: GildashContext,
   filePath: string,
 ): ParsedFile | undefined {
-  if (ctx.closed) return undefined;
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   return ctx.parseCache.get(filePath);
 }

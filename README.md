@@ -631,6 +631,20 @@ When multiple processes share the same SQLite database, gildash enforces a singl
 
 ## ⬆️ Upgrading
 
+### From 0.9.0 to 0.9.1
+
+**Bug fixes and performance improvements.** No breaking API changes.
+
+- **Fix:** `getParsedAst()` now throws `GildashError('closed')` when the instance is closed, consistent with all other public APIs (previously returned `undefined`)
+- **Fix:** `searchSymbols({ regex })` with an invalid regex now throws `GildashError('validation')` instead of silently returning `[]`
+- **Fix:** `ctx.role` is now correctly updated to `'owner'` when a reader is promoted
+- **Fix:** Full-index path now properly tracks failed file reads in `IndexResult.failedFiles`
+- **Fix:** Reader→Owner promotion rollback now cleans up heartbeat timer and releases watcher role
+- **Perf:** Batch INSERT for symbol, annotation, and changelog repositories (replaces N+1 individual inserts)
+- **Perf:** Binary search for JSDoc comment association (~40x faster on large files)
+- **Perf:** Progressive regex fetch strategy (replaces fixed 5000-row over-fetch)
+- **Perf:** `getQualifiedName()` uses push+reverse instead of O(n²) unshift
+
 ### From 0.8.x to 0.9.0
 
 **New:** Annotation extraction and symbol changelog tracking.

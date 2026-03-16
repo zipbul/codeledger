@@ -71,7 +71,7 @@ export function extractAnnotations(parsed: ParsedFile): ExtractedAnnotation[] {
       prevLineAnnotation = null;
       const fullText = `/*${comment.value}*/`;
       const jsDocResult = parseJsDoc(fullText);
-      if (isErr(jsDocResult)) continue;
+      if (isErr(jsDocResult)) continue; // malformed JSDoc — skip (non-standard comment syntax)
       const jsDoc = jsDocResult as JsDocBlock;
       if (!jsDoc.tags?.length) continue;
 
