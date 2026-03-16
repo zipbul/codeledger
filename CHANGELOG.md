@@ -1,5 +1,11 @@
 # @zipbul/gildash
 
+## 0.9.3
+
+### Patch Changes
+
+- [#44](https://github.com/zipbul/gildash/pull/44) [`a61adc7`](https://github.com/zipbul/gildash/commit/a61adc7ea4219799ecdc6f708f7a17100d6e848d) Thanks [@parkrevil](https://github.com/parkrevil)! - Remove upgrading section from READMEs — migration history is in CHANGELOG.md
+
 ## 0.9.2
 
 ### Patch Changes
