@@ -57,11 +57,13 @@ describe('stress: large-scale indexing', () => {
         content = [
           `import { value_${depIndex} } from './module_${depIndex}';`,
           '',
+          `/** @deprecated Use value_${i}_v2 instead */`,
           `export const value_${i} = value_${depIndex} + ${i};`,
         ].join('\n');
       } else {
-        // Standalone files (no imports)
-        content = `export const value_${i} = ${i};\n`;
+        // Standalone files (no imports) — every 100th file gets a @todo annotation
+        const annotation = i % 100 === 0 ? `// @todo refactor module_${i}\n` : '';
+        content = `${annotation}export const value_${i} = ${i};\n`;
       }
 
       writePromises.push(writeFile(join(srcDir, fileName), content));
@@ -203,6 +205,74 @@ describe('stress: large-scale indexing', () => {
     const dependents = gildash.getDependents(module0.filePath);
     // module_0 is imported by module_1
     expect(dependents.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('should index annotations across all files', () => {
+    const start = performance.now();
+
+    const deprecated = gildash.searchAnnotations({ tag: 'deprecated', limit: FILES_WITH_IMPORTS });
+    const todos = gildash.searchAnnotations({ tag: 'todo', limit: FILE_COUNT });
+
+    const elapsed = performance.now() - start;
+    console.log(`[stress] searchAnnotations completed in ${formatMs(elapsed)}`);
+    console.log(`[stress]   @deprecated: ${deprecated.length}, @todo: ${todos.length}`);
+
+    // Files 1..FILES_WITH_IMPORTS-1 each have one @deprecated annotation
+    expect(deprecated.length).toBe(FILES_WITH_IMPORTS - 1);
+    // Every 100th standalone file (0, 2000, 2100, ...) has a @todo — count: floor((FILE_COUNT - FILES_WITH_IMPORTS) / 100) + 1 for index 0
+    const standaloneWithTodo = Math.floor((FILE_COUNT - FILES_WITH_IMPORTS) / 100) + 1; // +1 for module_0
+    expect(todos.length).toBe(standaloneWithTodo);
+
+    // Verify symbol linking
+    for (const d of deprecated.slice(0, 10)) {
+      expect(d.symbolName).not.toBeNull();
+      expect(d.source).toBe('jsdoc');
+    }
+  });
+
+  it('should support FTS search across annotations', () => {
+    const start = performance.now();
+    const results = gildash.searchAnnotations({ text: 'refactor', limit: FILE_COUNT });
+    const elapsed = performance.now() - start;
+    console.log(`[stress] FTS "refactor" found ${results.length} annotations in ${formatMs(elapsed)}`);
+
+    // @todo annotations contain "refactor module_N"
+    expect(results.length).toBeGreaterThan(0);
+    for (const r of results) {
+      expect(r.tag).toBe('todo');
+      expect(r.value).toContain('refactor');
+    }
+  });
+
+  it('should record changelog entries for all symbols after fullIndex', () => {
+    const start = performance.now();
+    const changes = gildash.getSymbolChanges(new Date(0), { includeFullIndex: true, limit: FILE_COUNT + 100 });
+    const elapsed = performance.now() - start;
+    console.log(`[stress] getSymbolChanges returned ${changes.length} entries in ${formatMs(elapsed)}`);
+
+    // Every file has at least one symbol (value_N), all should be 'added' on first index
+    expect(changes.length).toBe(FILE_COUNT);
+    const addedCount = changes.filter(c => c.changeType === 'added').length;
+    expect(addedCount).toBe(FILE_COUNT);
+
+    // All should be marked as fullIndex
+    for (const c of changes) {
+      expect(c.isFullIndex).toBe(true);
+    }
+  });
+
+  it('should prune changelog entries efficiently', () => {
+    const start = performance.now();
+    // Prune with future date to remove everything
+    const pruned = gildash.pruneChangelog(new Date('2099-01-01'));
+    const elapsed = performance.now() - start;
+    console.log(`[stress] pruneChangelog removed ${pruned} entries in ${formatMs(elapsed)}`);
+
+    expect(pruned).toBe(FILE_COUNT);
+
+    // Verify empty
+    const remaining = gildash.getSymbolChanges(new Date(0), { includeFullIndex: true });
+    expect(remaining.length).toBe(0);
   });
 
   it('should stay within memory budget', () => {

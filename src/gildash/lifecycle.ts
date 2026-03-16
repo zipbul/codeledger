@@ -23,6 +23,9 @@ import { relationSearch as defaultRelationSearch } from '../search/relation-sear
 import { patternSearch as defaultPatternSearch } from '../search/pattern-search';
 import type { PatternMatch } from '../search/pattern-search';
 import { SemanticLayer } from '../semantic/index';
+import { AnnotationRepository } from '../store/repositories/annotation.repository';
+import { ChangelogRepository } from '../store/repositories/changelog.repository';
+import { annotationSearch as defaultAnnotationSearch } from '../search/annotation-search';
 import { GildashError, gildashError } from '../errors';
 import { DATA_DIR, DB_FILE } from '../constants';
 import { invalidateGraphCache } from './graph-api';
@@ -144,6 +147,8 @@ export async function setupOwnerInfrastructure(
         fileRepo: ctx.fileRepo,
         symbolRepo: ctx.symbolRepo,
         relationRepo: ctx.relationRepo,
+        annotationRepo: (ctx.annotationRepo as AnnotationRepository | null) ?? undefined,
+        changelogRepo: ctx.changelogRepo ?? undefined,
         logger: ctx.logger,
       });
 
@@ -282,6 +287,10 @@ export async function initializeContext(
         };
       })();
 
+  const connection = repositoryFactory ? null : (db as DbConnection);
+  const annotationRepo = connection ? new AnnotationRepository(connection) : null;
+  const changelogRepo = connection ? new ChangelogRepository(connection) : null;
+
   const isWatchMode = watchMode ?? true;
   const instanceId = crypto.randomUUID();
   let role: 'owner' | 'reader';
@@ -306,6 +315,10 @@ export async function initializeContext(
     relationRepo: repos.relationRepo,
     fileRepo: repos.fileRepo,
     parseCache: repos.parseCache,
+
+    annotationRepo,
+    changelogRepo,
+    annotationSearchFn: defaultAnnotationSearch,
 
     releaseWatcherRoleFn: releaseWatcherRoleFnOpt,
     parseSourceFn,

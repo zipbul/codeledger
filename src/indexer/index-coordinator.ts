@@ -11,10 +11,15 @@ import type { ParsedFile } from '../parser/types';
 import { detectChanges } from './file-indexer';
 import { indexFileSymbols } from './symbol-indexer';
 import { indexFileRelations } from './relation-indexer';
+import { indexFileAnnotations } from './annotation-indexer';
+import { detectRenames } from './rename-detector';
+import type { SymbolSnap } from './rename-detector';
 import type { DbConnection } from '../store/connection';
 import type { FileRecord } from '../store/repositories/file.repository';
 import type { SymbolRecord } from '../store/repositories/symbol.repository';
 import type { RelationRecord } from '../store/repositories/relation.repository';
+import type { ChangelogRepository } from '../store/repositories/changelog.repository';
+import type { AnnotationRepository } from '../store/repositories/annotation.repository';
 import type { Logger } from '../gildash';
 
 export const WATCHER_DEBOUNCE_MS = 100;
@@ -34,6 +39,8 @@ export interface IndexResult {
   totalSymbols: number;
   /** Total relation count after indexing. */
   totalRelations: number;
+  /** Total annotation count after indexing. */
+  totalAnnotations: number;
   /** Wall-clock duration of the indexing run in milliseconds. */
   durationMs: number;
   /** Absolute paths of files that changed and were re-indexed. */
@@ -81,6 +88,22 @@ export interface IndexCoordinatorOptions {
     retargetRelations(opts: { dstProject: string; oldFile: string; oldSymbol: string | null; newFile: string; newSymbol: string | null; newDstProject?: string }): void;
     deleteFileRelations(project: string, filePath: string): void;
   };
+  annotationRepo?: {
+    deleteFileAnnotations(project: string, filePath: string): void;
+    insertBatch(project: string, filePath: string, rows: ReadonlyArray<{
+      project: string; filePath: string; tag: string; value: string; source: string;
+      symbolName: string | null; startLine: number; startColumn: number;
+      endLine: number; endColumn: number; indexedAt: string;
+    }>): void;
+  };
+  changelogRepo?: {
+    insertBatch(rows: ReadonlyArray<{
+      project: string; changeType: string; symbolName: string; symbolKind: string;
+      filePath: string; oldName: string | null; oldFilePath: string | null;
+      fingerprint: string | null; changedAt: string; isFullIndex: number; indexRunId: string;
+    }>): void;
+    pruneOlderThan(project: string, before: string): number;
+  };
   parseSourceFn?: typeof parseSource;
   discoverProjectsFn?: typeof discoverProjects;
   logger?: Logger;
@@ -107,6 +130,8 @@ export class IndexCoordinator {
   private tsconfigPathsRaw: Promise<TsconfigPaths | null>;
 
   private boundariesRefresh: Promise<void> | null = null;
+
+  private lastPruneAt = 0;
 
   constructor(opts: IndexCoordinatorOptions) {
     this.opts = opts;
@@ -258,56 +283,59 @@ export class IndexCoordinator {
       deletedSymbols.set(filePath, syms);
     }
 
+    const indexRunId = crypto.randomUUID();
+
     // FR-08: collect before-indexing symbol snapshot for changedSymbols diff
-    type SymbolSnap = { name: string; filePath: string; kind: string; fingerprint: string | null };
     const beforeSnapshot = new Map<string, SymbolSnap>();
     const afterSnapshot = new Map<string, SymbolSnap>();
 
+    const snapFromRecord = (sym: SymbolRecord): SymbolSnap => ({
+      name: sym.name, filePath: sym.filePath, kind: sym.kind, fingerprint: sym.fingerprint,
+      structuralFingerprint: sym.structuralFingerprint ?? null, startLine: sym.startLine,
+    });
+
     if (useTransaction) {
-      // fullIndex: snapshot all currently-stored symbols before the transaction wipes them
       for (const boundary of this.opts.boundaries) {
         for (const f of fileRepo.getAllFiles(boundary.project)) {
           for (const sym of symbolRepo.getFileSymbols(boundary.project, f.filePath)) {
-            beforeSnapshot.set(`${sym.filePath}::${sym.name}`, {
-              name: sym.name, filePath: sym.filePath, kind: sym.kind, fingerprint: sym.fingerprint,
-            });
+            beforeSnapshot.set(`${sym.filePath}::${sym.name}`, snapFromRecord(sym));
           }
         }
       }
     } else {
-      // incremental: snapshot symbols in files that are about to change
       for (const file of changed) {
         const project = resolveFileProject(file.filePath, this.opts.boundaries);
         for (const sym of symbolRepo.getFileSymbols(project, file.filePath)) {
-          beforeSnapshot.set(`${sym.filePath}::${sym.name}`, {
-            name: sym.name, filePath: sym.filePath, kind: sym.kind, fingerprint: sym.fingerprint,
-          });
+          beforeSnapshot.set(`${sym.filePath}::${sym.name}`, snapFromRecord(sym));
         }
       }
-      // also include symbols from files being deleted
       for (const [, syms] of deletedSymbols) {
         for (const sym of syms) {
-          beforeSnapshot.set(`${sym.filePath}::${sym.name}`, {
-            name: sym.name, filePath: sym.filePath, kind: sym.kind, fingerprint: sym.fingerprint,
-          });
+          beforeSnapshot.set(`${sym.filePath}::${sym.name}`, snapFromRecord(sym));
         }
       }
     }
+
+    const { annotationRepo, changelogRepo } = this.opts;
 
     const processDeleted = () => {
       for (const filePath of deleted) {
         const project = resolveFileProject(filePath, this.opts.boundaries);
         symbolRepo.deleteFileSymbols(project, filePath);
         relationRepo.deleteFileRelations(project, filePath);
+        if (annotationRepo) annotationRepo.deleteFileAnnotations(project, filePath);
         fileRepo.deleteFile(project, filePath);
       }
     };
 
-    const processChanged = async (): Promise<{ symbols: number; relations: number; failedFiles: string[] }> => {
+    let totalAnnotations = 0;
+
+    const processChanged = async (): Promise<{ symbols: number; relations: number; annotations: number; failedFiles: string[] }> => {
       const { projectRoot, boundaries } = this.opts;
       const { parseCache } = this.opts;
       let symbols = 0;
       let relations = 0;
+      let annotations = 0;
       const failedFiles: string[] = [];
 
       // ── Pass 1: 모든 변경 파일 read + parse + upsertFile ──
@@ -354,7 +382,7 @@ export class IndexCoordinator {
         }
       }
 
-      // ── Pass 2: index symbols + relations (동기 DB → 트랜잭션으로 보호) ──
+      // ── Pass 2: index symbols + relations + annotations (동기 DB → 트랜잭션으로 보호) ──
       dbConnection.transaction(() => {
         for (const fd of prepared) {
           indexFileSymbols({
@@ -366,12 +394,15 @@ export class IndexCoordinator {
             relationRepo, projectRoot, tsconfigPaths,
             knownFiles, boundaries,
           });
+          if (annotationRepo) {
+            annotations += indexFileAnnotations({ parsed: fd.parsed, project: fd.project, filePath: fd.filePath, annotationRepo });
+          }
           parseCache.set(fd.filePath, fd.parsed);
           symbols += symbolRepo.getFileSymbols(fd.project, fd.filePath).length;
         }
       });
 
-      return { symbols, relations, failedFiles };
+      return { symbols, relations, annotations, failedFiles };
     };
 
     let totalSymbols = 0;
@@ -417,6 +448,7 @@ export class IndexCoordinator {
           const project = resolveFileProject(filePath, boundaries);
           symbolRepo.deleteFileSymbols(project, filePath);
           relationRepo.deleteFileRelations(project, filePath);
+          if (annotationRepo) annotationRepo.deleteFileAnnotations(project, filePath);
           fileRepo.deleteFile(project, filePath);
         }
 
@@ -452,6 +484,9 @@ export class IndexCoordinator {
           const parsed = parseResult;
           parsedCacheEntries.push({ filePath: fd.filePath, parsed });
           indexFileSymbols({ parsed, project, filePath: fd.filePath, contentHash: fd.contentHash, symbolRepo });
+          if (annotationRepo) {
+            totalAnnotations += indexFileAnnotations({ parsed, project, filePath: fd.filePath, annotationRepo });
+          }
           totalRelations += indexFileRelations({
             ast: parsed.program,
             project,
@@ -474,6 +509,7 @@ export class IndexCoordinator {
       const counts = await processChanged();
       totalSymbols = counts.symbols;
       totalRelations = counts.relations;
+      totalAnnotations = counts.annotations;
       allFailedFiles = counts.failedFiles;
     }
 
@@ -481,9 +517,7 @@ export class IndexCoordinator {
     for (const file of changed) {
       const project = resolveFileProject(file.filePath, this.opts.boundaries);
       for (const sym of symbolRepo.getFileSymbols(project, file.filePath)) {
-        afterSnapshot.set(`${sym.filePath}::${sym.name}`, {
-          name: sym.name, filePath: sym.filePath, kind: sym.kind, fingerprint: sym.fingerprint,
-        });
+        afterSnapshot.set(`${sym.filePath}::${sym.name}`, snapFromRecord(sym));
       }
     }
 
@@ -503,7 +537,19 @@ export class IndexCoordinator {
       }
     }
 
+    // Rename detection
+    const renameResult = detectRenames(beforeSnapshot, afterSnapshot);
+
+    // Remove renamed items from changedSymbols (they'll be tracked separately)
+    const renamedOldKeys = new Set(renameResult.renamed.map(r => `${r.filePath}::${r.oldName}`));
+    const renamedNewKeys = new Set(renameResult.renamed.map(r => `${r.filePath}::${r.newName}`));
+    changedSymbols.added = changedSymbols.added.filter(a => !renamedNewKeys.has(`${a.filePath}::${a.name}`));
+    changedSymbols.removed = changedSymbols.removed.filter(r => !renamedOldKeys.has(`${r.filePath}::${r.name}`));
+
+    // Move detection (incremental only)
+    const movedEntries: Array<{ name: string; filePath: string; kind: string; oldFilePath: string }> = [];
     if (!useTransaction) {
+      // 1. Existing deletedSymbols fingerprint matching (cross-file move from deleted files)
       for (const [oldFile, syms] of deletedSymbols) {
         for (const sym of syms) {
           if (!sym.fingerprint) continue;
@@ -518,7 +564,126 @@ export class IndexCoordinator {
               newFile: newSym.filePath,
               newSymbol: newSym.name,
             });
+            movedEntries.push({ name: newSym.name, filePath: newSym.filePath, kind: newSym.kind, oldFilePath: oldFile });
           }
+        }
+      }
+
+      // 2. Additional move detection from rename-detector's removed (intra/cross-file move)
+      for (const rem of renameResult.removed) {
+        const snap = beforeSnapshot.get(`${rem.filePath}::${rem.name}`);
+        const fp = snap?.fingerprint;
+        if (!fp) continue;
+        const project = resolveFileProject(rem.filePath, this.opts.boundaries);
+        const matches = symbolRepo.getByFingerprint(project, fp);
+        if (matches.length === 1) {
+          const newSym = matches[0]!;
+          if (newSym.filePath !== rem.filePath || newSym.name !== rem.name) {
+            relationRepo.retargetRelations({
+              dstProject: project,
+              oldFile: rem.filePath,
+              oldSymbol: rem.name,
+              newFile: newSym.filePath,
+              newSymbol: newSym.name,
+            });
+            movedEntries.push({ name: newSym.name, filePath: newSym.filePath, kind: newSym.kind, oldFilePath: rem.filePath });
+          }
+        }
+      }
+    }
+
+    // Remove moved items from changedSymbols
+    if (movedEntries.length) {
+      const movedKeys = new Set(movedEntries.map(m => `${m.filePath}::${m.name}`));
+      const movedOldKeys = new Set(movedEntries.map(m => `${m.oldFilePath}::${m.name}`));
+      changedSymbols.added = changedSymbols.added.filter(a => !movedKeys.has(`${a.filePath}::${a.name}`));
+      changedSymbols.removed = changedSymbols.removed.filter(r => !movedOldKeys.has(`${r.filePath}::${r.name}`));
+    }
+
+    // Changelog INSERT
+    if (changelogRepo) {
+      const changedAt = new Date().toISOString();
+      const isFullIndex = useTransaction ? 1 : 0;
+      type ChangelogRow = {
+        project: string; changeType: string; symbolName: string; symbolKind: string;
+        filePath: string; oldName: string | null; oldFilePath: string | null;
+        fingerprint: string | null; changedAt: string; isFullIndex: number; indexRunId: string;
+      };
+      const rows: ChangelogRow[] = [];
+
+      // changedSymbols.added/removed are already filtered (renamed/moved removed at lines above)
+      for (const a of changedSymbols.added) {
+        const key = `${a.filePath}::${a.name}`;
+        const snap = afterSnapshot.get(key);
+        const project = resolveFileProject(a.filePath, this.opts.boundaries);
+        rows.push({
+          project, changeType: 'added', symbolName: a.name, symbolKind: a.kind,
+          filePath: a.filePath, oldName: null, oldFilePath: null,
+          fingerprint: snap?.fingerprint ?? null, changedAt, isFullIndex, indexRunId,
+        });
+      }
+
+      for (const m of changedSymbols.modified) {
+        const snap = afterSnapshot.get(`${m.filePath}::${m.name}`);
+        const project = resolveFileProject(m.filePath, this.opts.boundaries);
+        rows.push({
+          project, changeType: 'modified', symbolName: m.name, symbolKind: m.kind,
+          filePath: m.filePath, oldName: null, oldFilePath: null,
+          fingerprint: snap?.fingerprint ?? null, changedAt, isFullIndex, indexRunId,
+        });
+      }
+
+      for (const r of changedSymbols.removed) {
+        const key = `${r.filePath}::${r.name}`;
+        const snap = beforeSnapshot.get(key);
+        const project = resolveFileProject(r.filePath, this.opts.boundaries);
+        rows.push({
+          project, changeType: 'removed', symbolName: r.name, symbolKind: r.kind,
+          filePath: r.filePath, oldName: null, oldFilePath: null,
+          fingerprint: snap?.fingerprint ?? null, changedAt, isFullIndex, indexRunId,
+        });
+      }
+
+      for (const rn of renameResult.renamed) {
+        const snap = afterSnapshot.get(`${rn.filePath}::${rn.newName}`);
+        const project = resolveFileProject(rn.filePath, this.opts.boundaries);
+        rows.push({
+          project, changeType: 'renamed', symbolName: rn.newName, symbolKind: rn.kind,
+          filePath: rn.filePath, oldName: rn.oldName, oldFilePath: null,
+          fingerprint: snap?.fingerprint ?? null, changedAt, isFullIndex, indexRunId,
+        });
+      }
+
+      for (const mv of movedEntries) {
+        const snap = afterSnapshot.get(`${mv.filePath}::${mv.name}`);
+        const project = resolveFileProject(mv.filePath, this.opts.boundaries);
+        rows.push({
+          project, changeType: 'moved', symbolName: mv.name, symbolKind: mv.kind,
+          filePath: mv.filePath, oldName: null, oldFilePath: mv.oldFilePath,
+          fingerprint: snap?.fingerprint ?? null, changedAt, isFullIndex, indexRunId,
+        });
+      }
+
+      if (rows.length) {
+        try {
+          dbConnection.transaction(() => {
+            changelogRepo.insertBatch(rows);
+          });
+        } catch (e) {
+          this.logger.error('[IndexCoordinator] changelog insert failed:', e);
+        }
+      }
+
+      // Pruning (at most once per hour)
+      if (Date.now() - this.lastPruneAt > 3600_000) {
+        this.lastPruneAt = Date.now();
+        const retentionDate = new Date(Date.now() - 30 * 24 * 3600_000).toISOString();
+        try {
+          for (const boundary of this.opts.boundaries) {
+            changelogRepo.pruneOlderThan(boundary.project, retentionDate);
+          }
+        } catch (e) {
+          this.logger.error('[IndexCoordinator] changelog pruning failed:', e);
         }
       }
     }
@@ -528,6 +693,7 @@ export class IndexCoordinator {
       removedFiles: deleted.length,
       totalSymbols,
       totalRelations,
+      totalAnnotations,
       durationMs: Date.now() - start,
       changedFiles: changed.map((f) => f.filePath),
       deletedFiles: [...deleted],

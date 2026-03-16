@@ -18,6 +18,7 @@ export interface SymbolDbRow {
   detailJson: string | null;
   contentHash: string;
   indexedAt: string;
+  structuralFingerprint: string | null;
 }
 
 interface SymbolRepoPart {
@@ -79,6 +80,34 @@ function buildDetailJson(sym: ExtractedSymbol): string | null {
   return Object.keys(detail).length > 0 ? JSON.stringify(detail) : null;
 }
 
+export function buildStructuralFingerprint(sym: ExtractedSymbol): string {
+  const parts: string[] = [sym.kind];
+
+  if (sym.modifiers.length) parts.push(`mod:${[...sym.modifiers].sort().join(',')}`);
+  if (sym.typeParameters?.length) parts.push(`tp:${sym.typeParameters.length}`);
+  if (sym.heritage?.length) {
+    const sorted = [...sym.heritage]
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map(h => `${h.kind}:${h.name}`).join(',');
+    parts.push(`her:${sorted}`);
+  }
+  if (sym.decorators?.length) parts.push(`dec:${[...sym.decorators].map(d => d.name).sort().join(',')}`);
+
+  if (sym.methodKind) parts.push(`mk:${sym.methodKind}`);
+  if (sym.parameters) parts.push(`p:${sym.parameters.length}`);
+  if (sym.returnType) parts.push(`rt:${sym.returnType}`);
+
+  if (sym.members?.length) {
+    const memberSig = sym.members
+      .map(m => `${m.kind}:${m.modifiers.join(',')}:${m.parameters?.length ?? ''}:${m.returnType ?? ''}`)
+      .sort()
+      .join(';');
+    parts.push(`mem:${sym.members.length}:${hashString(memberSig)}`);
+  }
+
+  return hashString(parts.join('|'));
+}
+
 function buildRow(
   sym: ExtractedSymbol,
   name: string,
@@ -88,6 +117,7 @@ function buildRow(
 ): SymbolDbRow {
   const signature = buildSignature(sym);
   const fingerprint = hashString(`${name}|${sym.kind}|${signature ?? ''}`);
+  const structuralFingerprint = buildStructuralFingerprint(sym);
 
   return {
     project,
@@ -104,6 +134,7 @@ function buildRow(
     detailJson: buildDetailJson(sym),
     contentHash,
     indexedAt: new Date().toISOString(),
+    structuralFingerprint,
   };
 }
 

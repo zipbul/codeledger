@@ -21,3 +21,7 @@ export type { ParsedFile } from "./parser/types";
 export type { FileRecord } from "./store/repositories/file.repository";
 
 export type { ResolvedType, SemanticReference, Implementation, SemanticModuleInterface } from "./semantic/types";
+
+export type { AnnotationSource, ExtractedAnnotation } from "./extractor/types";
+export type { AnnotationSearchQuery, AnnotationSearchResult } from "./search/annotation-search";
+export type { SymbolChange, SymbolChangeType, SymbolChangeQueryOptions } from "./gildash/types";

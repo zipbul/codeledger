@@ -16,7 +16,9 @@ import type { TsconfigPaths } from '../common/tsconfig-resolver';
 import type { SymbolSearchQuery, SymbolSearchResult, ISymbolRepo } from '../search/symbol-search';
 import type { RelationSearchQuery, IRelationRepo } from '../search/relation-search';
 import type { PatternMatch } from '../search/pattern-search';
+import type { AnnotationSearchQuery, AnnotationSearchResult, IAnnotationRepo } from '../search/annotation-search';
 import type { DependencyGraph } from '../search/dependency-graph';
+import type { ChangelogRepository } from '../store/repositories/changelog.repository';
 import type { SemanticLayer } from '../semantic/index';
 import type { ParseCache } from '../parser/parse-cache';
 import type { GildashError } from '../errors';
@@ -55,6 +57,12 @@ export type RelationSearchFn = (options: {
 export type PatternSearchFn = (
   opts: { pattern: string; filePaths: string[] },
 ) => Promise<PatternMatch[]>;
+
+export type AnnotationSearchFn = (options: {
+  annotationRepo: IAnnotationRepo;
+  project?: string;
+  query: AnnotationSearchQuery;
+}) => AnnotationSearchResult[];
 
 export type AcquireWatcherRoleFn = (
   db: WatcherOwnerStore,
@@ -121,6 +129,11 @@ export interface GildashContext {
   readonly relationRepo: RelationRepository;
   readonly fileRepo: FileRepoLike;
   readonly parseCache: ParseCacheLike;
+
+  // ─── Annotation & Changelog ─────────────────────────────────────
+  readonly annotationRepo: IAnnotationRepo | null;
+  readonly changelogRepo: ChangelogRepository | null;
+  readonly annotationSearchFn: AnnotationSearchFn | null;
 
   // ─── DI functions (used at runtime by API methods) ────────────────
   readonly releaseWatcherRoleFn: ReleaseWatcherRoleFn;

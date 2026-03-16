@@ -43,6 +43,20 @@
       "when": 1772150400000,
       "tag": "0005_instance_id_covering_index",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1773878400000,
+      "tag": "0006_annotations",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1773878400001,
+      "tag": "0007_symbol_changelog",
+      "breakpoints": true
     }
   ]
 }

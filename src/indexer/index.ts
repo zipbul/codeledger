@@ -4,5 +4,7 @@ export { indexFileSymbols } from './symbol-indexer';
 export type { IndexFileSymbolsOptions, SymbolDbRow } from './symbol-indexer';
 export { indexFileRelations } from './relation-indexer';
 export type { IndexFileRelationsOptions, RelationDbRow } from './relation-indexer';
+export { indexFileAnnotations } from './annotation-indexer';
+export type { IndexFileAnnotationsOptions } from './annotation-indexer';
 export { IndexCoordinator, WATCHER_DEBOUNCE_MS } from './index-coordinator';
 export type { IndexCoordinatorOptions, IndexResult } from './index-coordinator';

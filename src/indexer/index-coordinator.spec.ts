@@ -215,8 +215,8 @@ describe('IndexCoordinator', () => {
   it('should call retargetRelations when deleted and new symbol share the same fingerprint', async () => {
     const relationRepo = makeRelationRepo();
     const symbolRepo = makeSymbolRepo();
-    symbolRepo.getByFingerprint.mockReturnValue([{ filePath: 'src/new.ts', name: 'movedFn', kind: 'function' }]);
-    symbolRepo.getFileSymbols.mockReturnValue([{ filePath: 'src/old.ts', name: 'movedFn', fingerprint: 'fp-move', kind: 'function' }]);
+    symbolRepo.getByFingerprint.mockReturnValue([{ filePath: 'src/new.ts', name: 'movedFn', kind: 'function', structuralFingerprint: null, startLine: 1 }]);
+    symbolRepo.getFileSymbols.mockReturnValue([{ filePath: 'src/old.ts', name: 'movedFn', fingerprint: 'fp-move', kind: 'function', structuralFingerprint: null, startLine: 1 }]);
 
     const coordinator = makeCoordinator({ symbolRepo, relationRepo });
     mockDetectChanges.mockResolvedValue({
@@ -235,11 +235,11 @@ describe('IndexCoordinator', () => {
     const relationRepo = makeRelationRepo();
     const symbolRepo = makeSymbolRepo();
     symbolRepo.getByFingerprint.mockReturnValue([
-      { filePath: 'src/new1.ts', name: 'fn', kind: 'function' },
-      { filePath: 'src/new2.ts', name: 'fn', kind: 'function' },
+      { filePath: 'src/new1.ts', name: 'fn', kind: 'function', structuralFingerprint: null, startLine: 1 },
+      { filePath: 'src/new2.ts', name: 'fn', kind: 'function', structuralFingerprint: null, startLine: 1 },
     ]);
     symbolRepo.getFileSymbols.mockReturnValue([
-      { filePath: 'src/old.ts', name: 'fn', fingerprint: 'fp-dup', kind: 'function' },
+      { filePath: 'src/old.ts', name: 'fn', fingerprint: 'fp-dup', kind: 'function', structuralFingerprint: null, startLine: 1 },
     ]);
 
     const coordinator = makeCoordinator({ symbolRepo, relationRepo });

@@ -141,6 +141,32 @@ export interface BatchParseResult {
 /**
  * Options for creating a {@link Gildash} instance via {@link Gildash.open}.
  */
+export type SymbolChangeType = 'added' | 'modified' | 'removed' | 'renamed' | 'moved';
+
+export interface SymbolChange {
+  changeType: SymbolChangeType;
+  symbolName: string;
+  symbolKind: string;
+  filePath: string;
+  oldName: string | null;
+  oldFilePath: string | null;
+  fingerprint: string | null;
+  changedAt: string;
+  isFullIndex: boolean;
+  indexRunId: string;
+}
+
+export interface SymbolChangeQueryOptions {
+  symbolName?: string;
+  changeTypes?: SymbolChangeType[];
+  filePath?: string;
+  includeFullIndex?: boolean;
+  indexRunId?: string;
+  afterId?: number;
+  limit?: number;
+  project?: string;
+}
+
 export interface GildashOptions {
   /** Absolute path to the project root directory. */
   projectRoot: string;

@@ -683,4 +683,91 @@ describe('Gildash integration', () => {
       await g.close();
     });
   });
+
+  // ── Group: Annotation & Changelog ───────────────────────────────────
+
+  describe('Annotation & Changelog', () => {
+    let tmpDir: string;
+
+    afterEach(async () => {
+      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    });
+
+    it('should index and search annotations via searchAnnotations', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-annotation-'));
+      await mkdir(join(tmpDir, 'src'), { recursive: true });
+      await writeFile(join(tmpDir, 'package.json'), JSON.stringify({ name: 'test-ann' }));
+      await writeFile(
+        join(tmpDir, 'src', 'annotated.ts'),
+        [
+          '/** @deprecated Use newFn instead */',
+          'export function oldFn() {}',
+          '',
+          '// @todo implement caching',
+          'export function process() {}',
+        ].join('\n'),
+      );
+
+      const g = await openGildash(tmpDir);
+
+      const results = g.searchAnnotations({ tag: 'deprecated' });
+      expect(results.length).toBeGreaterThanOrEqual(1);
+      expect(results[0]!.tag).toBe('deprecated');
+      expect(results[0]!.source).toBe('jsdoc');
+      expect(results[0]!.symbolName).toBe('oldFn');
+
+      const todos = g.searchAnnotations({ tag: 'todo' });
+      expect(todos.length).toBeGreaterThanOrEqual(1);
+      expect(todos[0]!.source).toBe('line');
+
+      await g.close();
+    });
+
+    it('should return empty when searching annotations with no matches', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-annotation-'));
+      await mkdir(join(tmpDir, 'src'), { recursive: true });
+      await writeFile(join(tmpDir, 'package.json'), JSON.stringify({ name: 'test-empty' }));
+      await writeFile(join(tmpDir, 'src', 'clean.ts'), 'export function fn() {}');
+
+      const g = await openGildash(tmpDir);
+      const results = g.searchAnnotations({ tag: 'nonexistent' });
+      expect(results).toEqual([]);
+
+      await g.close();
+    });
+
+    it('should record symbol changes via getSymbolChanges after fullIndex', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-changelog-'));
+      await mkdir(join(tmpDir, 'src'), { recursive: true });
+      await writeFile(join(tmpDir, 'package.json'), JSON.stringify({ name: 'test-chg' }));
+      await writeFile(join(tmpDir, 'src', 'a.ts'), 'export function myFn() {}');
+
+      const g = await openGildash(tmpDir);
+
+      // After first fullIndex, all symbols should be 'added' (isFullIndex=true)
+      const changes = g.getSymbolChanges(new Date(0), { includeFullIndex: true });
+      expect(changes.length).toBeGreaterThanOrEqual(1);
+      const myFnChange = changes.find(c => c.symbolName === 'myFn');
+      expect(myFnChange).toBeDefined();
+      expect(myFnChange!.changeType).toBe('added');
+      expect(myFnChange!.isFullIndex).toBe(true);
+
+      await g.close();
+    });
+
+    it('should return 0 from pruneChangelog when there is nothing to prune', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-prune-'));
+      await mkdir(join(tmpDir, 'src'), { recursive: true });
+      await writeFile(join(tmpDir, 'package.json'), JSON.stringify({ name: 'test-prune' }));
+      await writeFile(join(tmpDir, 'src', 'a.ts'), 'export const x = 1;');
+
+      const g = await openGildash(tmpDir);
+
+      // Prune with a date far in the past — nothing to prune
+      const count = g.pruneChangelog(new Date(0));
+      expect(count).toBe(0);
+
+      await g.close();
+    });
+  });
 });

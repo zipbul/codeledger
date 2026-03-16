@@ -1,4 +1,5 @@
 export { extractSymbols } from './symbol-extractor';
+export { extractAnnotations } from './annotation-extractor';
 export { extractRelations } from './relation-extractor';
 export { extractImports } from './imports-extractor';
 export { extractCalls } from './calls-extractor';
@@ -16,4 +17,6 @@ export type {
   JsDocTag,
   ImportReference,
   QualifiedName,
+  AnnotationSource,
+  ExtractedAnnotation,
 } from './types';

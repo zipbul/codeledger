@@ -30,6 +30,8 @@ gildash는 TypeScript 코드베이스를 로컬 SQLite 데이터베이스에 인
 - **구조적 패턴 매칭** — [@ast-grep/napi](https://ast-grep.github.io/) 기반 AST 레벨 코드 검색
 - **증분 인덱싱** — `@parcel/watcher` 기반 파일 변경 감지, 변경된 파일만 재인덱싱
 - **심볼 레벨 diff** — `IndexResult`의 `changedSymbols`로 인덱싱 사이클 당 추가/수정/삭제된 심볼 추적
+- **어노테이션 추출** — JSDoc, 라인(`//`), 블록(`/* */`) 주석에서 `@tag value` 패턴을 추출하고 심볼에 자동 연결, FTS5 검색 지원
+- **심볼 변경 이력** — 인덱싱 사이클 간 심볼의 추가/수정/삭제/이름변경/이동을 추적, 구조적 지문 기반 rename 감지
 - **멀티 프로세스 안전** — owner/reader 역할 분리로 단일 writer 보장
 - **스캔 전용 모드** — `watchMode: false`로 파일 워처 없이 1회성 인덱싱
 - **tsconfig.json JSONC** — `tsconfig.json`의 주석(`//`, `/* */`)과 트레일링 콤마를 지원하는 경로 별칭 파싱

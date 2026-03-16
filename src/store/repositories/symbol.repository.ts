@@ -19,6 +19,7 @@ export interface SymbolRecord {
   contentHash: string;
   indexedAt: string;
   resolvedType?: string | null;
+  structuralFingerprint?: string | null;
 }
 
 export interface SearchOptions {
@@ -72,6 +73,7 @@ export class SymbolRepository {
         contentHash,
         indexedAt: sym.indexedAt ?? now,
         resolvedType: sym.resolvedType ?? null,
+        structuralFingerprint: sym.structuralFingerprint ?? null,
       }).run();
     }
   }

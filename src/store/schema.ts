@@ -43,6 +43,7 @@ export const symbols = sqliteTable(
     contentHash: text('content_hash').notNull(),
     indexedAt: text('indexed_at').notNull(),
     resolvedType: text('resolved_type'),
+    structuralFingerprint: text('structural_fingerprint'),
   },
   (table) => [
     index('idx_symbols_project_file').on(table.project, table.filePath),
@@ -82,6 +83,56 @@ export const relations = sqliteTable(
       columns: [table.dstProject, table.dstFilePath],
       foreignColumns: [files.project, files.filePath],
     }).onDelete('cascade'),
+  ],
+);
+
+export const annotations = sqliteTable(
+  'annotations',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    project: text('project').notNull(),
+    filePath: text('file_path').notNull(),
+    tag: text('tag').notNull(),
+    value: text('value').notNull().default(''),
+    source: text('source').notNull(),
+    symbolName: text('symbol_name'),
+    startLine: integer('start_line').notNull(),
+    startColumn: integer('start_column').notNull(),
+    endLine: integer('end_line').notNull(),
+    endColumn: integer('end_column').notNull(),
+    indexedAt: text('indexed_at').notNull(),
+  },
+  (table) => [
+    index('idx_annotations_project_file').on(table.project, table.filePath),
+    index('idx_annotations_project_tag').on(table.project, table.tag),
+    index('idx_annotations_project_symbol').on(table.project, table.symbolName),
+    foreignKey({
+      columns: [table.project, table.filePath],
+      foreignColumns: [files.project, files.filePath],
+    }).onDelete('cascade'),
+  ],
+);
+
+export const symbolChangelog = sqliteTable(
+  'symbol_changelog',
+  {
+    id: integer('id').primaryKey({ autoIncrement: true }),
+    project: text('project').notNull(),
+    changeType: text('change_type').notNull(),
+    symbolName: text('symbol_name').notNull(),
+    symbolKind: text('symbol_kind').notNull(),
+    filePath: text('file_path').notNull(),
+    oldName: text('old_name'),
+    oldFilePath: text('old_file_path'),
+    fingerprint: text('fingerprint'),
+    changedAt: text('changed_at').notNull(),
+    isFullIndex: integer('is_full_index').notNull().default(0),
+    indexRunId: text('index_run_id').notNull(),
+  },
+  (table) => [
+    index('idx_changelog_project_changed_at').on(table.project, table.changedAt),
+    index('idx_changelog_project_name').on(table.project, table.symbolName),
+    index('idx_changelog_project_run').on(table.project, table.indexRunId),
   ],
 );
 

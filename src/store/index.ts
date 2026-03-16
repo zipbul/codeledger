@@ -6,4 +6,8 @@ export { SymbolRepository } from './repositories/symbol.repository';
 export type { SymbolRecord, SearchOptions, SymbolStats } from './repositories/symbol.repository';
 export { RelationRepository } from './repositories/relation.repository';
 export type { RelationRecord } from './repositories/relation.repository';
+export { AnnotationRepository } from './repositories/annotation.repository';
+export type { AnnotationRecord } from './repositories/annotation.repository';
+export { ChangelogRepository } from './repositories/changelog.repository';
+export type { ChangelogRecord } from './repositories/changelog.repository';
 export * as schema from './schema';

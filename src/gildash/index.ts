@@ -32,6 +32,10 @@ import * as queryApi from './query-api';
 import * as graphApi from './graph-api';
 import * as semanticApi from './semantic-api';
 import * as miscApi from './misc-api';
+import * as annotationApi from './annotation-api';
+import * as changelogApi from './changelog-api';
+import type { AnnotationSearchQuery, AnnotationSearchResult } from '../search/annotation-search';
+import type { SymbolChange, SymbolChangeQueryOptions } from './types';
 
 // ─── Re-exports (public API) ───────────────────────────────────────
 
@@ -257,5 +261,21 @@ export class Gildash {
 
   onRoleChanged(callback: (newRole: 'owner' | 'reader') => void): () => void {
     return miscApi.onRoleChanged(this._ctx, callback);
+  }
+
+  // ─── Annotation ──────────────────────────────────────────────
+
+  searchAnnotations(query: AnnotationSearchQuery): AnnotationSearchResult[] {
+    return annotationApi.searchAnnotations(this._ctx, query);
+  }
+
+  // ─── Changelog ───────────────────────────────────────────────
+
+  getSymbolChanges(since: Date | string, options?: SymbolChangeQueryOptions): SymbolChange[] {
+    return changelogApi.getSymbolChanges(this._ctx, since, options);
+  }
+
+  pruneChangelog(before: Date | string): number {
+    return changelogApi.pruneChangelog(this._ctx, before);
   }
 }

@@ -30,6 +30,8 @@ gildash indexes your TypeScript codebase into a local SQLite database, then lets
 - **Structural pattern matching** — AST-level code search via [@ast-grep/napi](https://ast-grep.github.io/)
 - **Incremental indexing** — `@parcel/watcher`-based file change detection; only re-indexes modified files
 - **Symbol-level diff** — `changedSymbols` in `IndexResult` tracks added/modified/removed symbols per index cycle
+- **Annotation extraction** — Generic `@tag value` extraction from JSDoc, line, and block comments with automatic symbol linking and FTS5 search
+- **Symbol changelog** — Tracks added/modified/removed/renamed/moved symbols across index runs, with structural fingerprint-based rename detection
 - **Multi-process safe** — Owner/reader role separation guarantees a single writer per database
 - **Scan-only mode** — `watchMode: false` for one-shot indexing without file watcher overhead
 - **tsconfig.json JSONC** — Path alias resolution parses comments and trailing commas in `tsconfig.json`
@@ -136,6 +138,45 @@ const transitive = await ledger.getTransitiveDependencies('src/app.ts');
 const hasCycles = await ledger.hasCycle();
 const cyclePaths = await ledger.getCyclePaths();          // all elementary circuits
 const limited   = await ledger.getCyclePaths(undefined, { maxCycles: 100 }); // undefined = use default project
+```
+
+---
+
+### Annotations
+
+Search `@tag value` patterns extracted from JSDoc, line (`//`), and block (`/* */`) comments.
+
+```ts
+// Find all @deprecated annotations
+const deprecated = ledger.searchAnnotations({ tag: 'deprecated' });
+deprecated.forEach(a => console.log(`${a.symbolName}: ${a.value}`));
+
+// Full-text search across annotation values
+const caching = ledger.searchAnnotations({ text: 'caching' });
+
+// Filter by source type and file
+const todos = ledger.searchAnnotations({ tag: 'todo', source: 'line', filePath: 'src/app.ts' });
+```
+
+---
+
+### Symbol Changelog
+
+Track symbol-level changes across index runs. Rename and move detection uses structural fingerprinting.
+
+```ts
+// Get all incremental changes since a given date
+const changes = ledger.getSymbolChanges(new Date('2024-01-01'));
+
+// Include full-index entries and filter by change type
+const renames = ledger.getSymbolChanges(new Date(0), {
+  includeFullIndex: true,
+  changeTypes: ['renamed', 'moved'],
+});
+renames.forEach(c => console.log(`${c.oldName} → ${c.symbolName} (${c.changeType})`));
+
+// Prune old entries (returns deleted count)
+const pruned = ledger.pruneChangelog(new Date('2024-01-01'));
 ```
 
 ---
@@ -271,6 +312,19 @@ Returns `Promise<Gildash>`. Throws `GildashError` on failure.
 | `getModuleInterface(filePath)` | `ModuleInterface` | Public exports with metadata |
 | `getInternalRelations(filePath)` | `StoredCodeRelation[]` | Intra-file relations |
 | `diffSymbols(before, after)` | `SymbolDiff` | Snapshot diff (added / removed / modified) |
+
+### Annotations
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `searchAnnotations(query)` | `AnnotationSearchResult[]` | Search `@tag value` annotations in JSDoc, line, and block comments |
+
+### Symbol Changelog
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `getSymbolChanges(since, opts?)` | `SymbolChange[]` | Symbol-level change history (added/modified/removed/renamed/moved) |
+| `pruneChangelog(before)` | `number` | Delete changelog entries older than the given date |
 
 ### Semantic (opt-in)
 
@@ -452,6 +506,7 @@ interface IndexResult {
   removedFiles: number;
   totalSymbols: number;
   totalRelations: number;
+  totalAnnotations: number;
   durationMs: number;
   changedFiles: string[];
   deletedFiles: string[];
@@ -471,6 +526,55 @@ interface FileRecord {
   contentHash: string;
   updatedAt: string;
   lineCount?: number | null;
+}
+
+// ── Annotations ─────────────────────────────────────────────────────────
+
+interface AnnotationSearchQuery {
+  text?: string;       // FTS5 full-text query
+  tag?: string;        // exact tag name (e.g. 'deprecated', 'todo')
+  filePath?: string;
+  symbolName?: string;
+  source?: 'jsdoc' | 'line' | 'block';
+  project?: string;
+  limit?: number;      // default: 100
+}
+
+interface AnnotationSearchResult {
+  tag: string;
+  value: string;
+  source: 'jsdoc' | 'line' | 'block';
+  filePath: string;
+  symbolName: string | null;
+  span: { start: { line: number; column: number }; end: { line: number; column: number } };
+}
+
+// ── Symbol Changelog ────────────────────────────────────────────────────
+
+type SymbolChangeType = 'added' | 'modified' | 'removed' | 'renamed' | 'moved';
+
+interface SymbolChange {
+  changeType: SymbolChangeType;
+  symbolName: string;
+  symbolKind: string;
+  filePath: string;
+  oldName: string | null;       // set for 'renamed'
+  oldFilePath: string | null;   // set for 'moved'
+  fingerprint: string | null;
+  changedAt: string;
+  isFullIndex: boolean;
+  indexRunId: string;
+}
+
+interface SymbolChangeQueryOptions {
+  symbolName?: string;
+  changeTypes?: SymbolChangeType[];
+  filePath?: string;
+  includeFullIndex?: boolean;   // default: false
+  indexRunId?: string;
+  afterId?: number;             // pagination cursor
+  limit?: number;               // default: 1000
+  project?: string;
 }
 
 // ── Errors ──────────────────────────────────────────────────────────────
@@ -526,6 +630,18 @@ When multiple processes share the same SQLite database, gildash enforces a singl
 <br>
 
 ## ⬆️ Upgrading
+
+### From 0.8.x to 0.9.0
+
+**New:** Annotation extraction and symbol changelog tracking.
+
+- `searchAnnotations(query)` — Search `@tag value` from JSDoc, line, and block comments
+- `getSymbolChanges(since, opts?)` — Symbol-level change history with rename/move detection
+- `pruneChangelog(before)` — Prune old changelog entries
+- `IndexResult` now includes `totalAnnotations`
+- New migrations `0006_annotations` and `0007_symbol_changelog` are applied automatically on open
+
+**No breaking changes.** Existing databases are migrated automatically.
 
 ### From 0.7.x to 0.8.0
 

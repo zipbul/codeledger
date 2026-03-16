@@ -194,4 +194,14 @@ export interface CodeRelation {
   meta?: Record<string, unknown>;
 }
 
+export type AnnotationSource = 'jsdoc' | 'line' | 'block';
+
+export interface ExtractedAnnotation {
+  tag: string;
+  value: string;
+  source: AnnotationSource;
+  span: SourceSpan;
+  symbolName: string | null;
+}
+
 export type { SourcePosition, SourceSpan };

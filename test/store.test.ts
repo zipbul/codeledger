@@ -30,6 +30,7 @@ function makeSymbolRecord(overrides: Partial<{
   startLine: number; startColumn: number; endLine: number; endColumn: number;
   isExported: number; signature: string | null; fingerprint: string | null;
   detailJson: string | null; contentHash: string; indexedAt: string;
+  structuralFingerprint: string | null;
 }> = {}) {
   return {
     project: 'test-project',
@@ -46,6 +47,7 @@ function makeSymbolRecord(overrides: Partial<{
     detailJson: null,
     contentHash: 'abc123',
     indexedAt: new Date().toISOString(),
+    structuralFingerprint: null,
     ...overrides,
   };
 }

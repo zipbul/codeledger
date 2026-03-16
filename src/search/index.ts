@@ -9,3 +9,6 @@ export type { IDependencyGraphRepo } from './dependency-graph';
 
 export { patternSearch } from './pattern-search';
 export type { PatternMatch, PatternSearchOptions } from './pattern-search';
+
+export { annotationSearch } from './annotation-search';
+export type { AnnotationSearchQuery, AnnotationSearchResult, IAnnotationRepo } from './annotation-search';
