@@ -12,6 +12,14 @@ import { findNodeAtPosition } from "./ast-node-utils";
 
 // ── ResolvedType 빌더 ────────────────────────────────────────────────────────
 
+/**
+ * ResolvedType 트리의 최대 재귀 깊이.
+ *
+ * 이 값을 초과하면 `members`와 `typeArguments`를 전개하지 않고
+ * leaf 노드로 처리한다. `text` 필드는 depth와 무관하게 항상 채워진다.
+ */
+const MAX_TYPE_DEPTH = 8;
+
 /** TypeReference 여부 판별 (generic instantiation). */
 function isTypeReference(type: ts.Type): type is ts.TypeReference {
   return (
@@ -39,7 +47,7 @@ function buildResolvedType(
   // TypeReference의 구체화된 타입 인자를 public API로 가져온다.
   // (type as ts.TypeReference).typeArguments 대신 checker.getTypeArguments() 사용.
   let typeArgs: readonly ts.Type[] | undefined;
-  if (depth < 8 && isTypeReference(type)) {
+  if (depth < MAX_TYPE_DEPTH && isTypeReference(type)) {
     const args = checker.getTypeArguments(type);
     if (args.length > 0) typeArgs = args;
   }
@@ -51,11 +59,11 @@ function buildResolvedType(
 
   // union / intersection 구성원 재귀 빌드
   let members: ResolvedType[] | undefined;
-  if (isUnion && depth < 8) {
+  if (isUnion && depth < MAX_TYPE_DEPTH) {
     members = (type as ts.UnionType).types.map((t) =>
       buildResolvedType(checker, t, depth + 1),
     );
-  } else if (isIntersection && depth < 8) {
+  } else if (isIntersection && depth < MAX_TYPE_DEPTH) {
     members = (type as ts.IntersectionType).types.map((t) =>
       buildResolvedType(checker, t, depth + 1),
     );

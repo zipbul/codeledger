@@ -209,6 +209,13 @@ export class Gildash {
 
   // ─── Semantic ───────────────────────────────────────────────────
 
+  /**
+   * Returns the resolved type tree for the given symbol.
+   *
+   * The returned tree is always a bounded, finite, acyclic structure.
+   * At the truncation boundary `members` and `typeArguments` will be
+   * `undefined`, but `text` always contains the full type string.
+   */
   getResolvedType(symbolName: string, filePath: string, project?: string): ResolvedType | null {
     return semanticApi.getResolvedType(this._ctx, symbolName, filePath, project);
   }

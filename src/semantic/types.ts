@@ -10,6 +10,11 @@
  *
  * Captures the full structural description of a type including union/intersection
  * decomposition and generic argument resolution.
+ *
+ * **Tree structure guarantee**: The returned value is always a bounded, finite,
+ * acyclic tree. Beyond the internal depth limit, `members` and `typeArguments`
+ * are `undefined` (leaf node), but `text` is always populated with the full
+ * type string at every level.
  */
 export interface ResolvedType {
   /** Human-readable type string, e.g. `"string | undefined"`, `"Promise<number>"`. */
