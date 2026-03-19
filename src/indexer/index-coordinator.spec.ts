@@ -46,6 +46,7 @@ function makeRelationRepo() {
     replaceFileRelations: mock((p: any, f: any, r: any) => {}),
     retargetRelations: mock((opts: any) => {}),
     deleteFileRelations: mock((p: any, f: any) => {}),
+    getOutgoing: mock((p: any, f: any): any[] => []),
   };
 }
 
@@ -1781,6 +1782,176 @@ describe('IndexCoordinator', () => {
 
       expect(result.renamedSymbols).toEqual([]);
       expect(result.movedSymbols).toEqual([]);
+    });
+  });
+
+  describe('changedRelations', () => {
+    it('should report added relation when new import is indexed', async () => {
+      const relationRepo = makeRelationRepo();
+      const symbolRepo = makeSymbolRepo();
+      let getOutgoingCallCount = 0;
+      const newRelation = {
+        project: 'test-project', type: 'imports', srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts',
+        srcSymbolName: null, dstSymbolName: null, dstProject: 'test-project', metaJson: null,
+      };
+      relationRepo.getOutgoing.mockImplementation((p: any, f: any) => {
+        getOutgoingCallCount++;
+        // First call = before snapshot (empty), second call = after snapshot (has relation)
+        if (getOutgoingCallCount <= 1) return [];
+        if (f === 'src/a.ts') return [newRelation];
+        return [];
+      });
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'import "./b"', lastModified: 1, size: 12 } as any);
+      const coordinator = makeCoordinator({ symbolRepo, relationRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/a.ts' }]);
+
+      expect(result.changedRelations.added).toEqual([{
+        type: 'imports', srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts',
+        srcSymbolName: null, dstSymbolName: null, dstProject: 'test-project', metaJson: null,
+      }]);
+      expect(result.changedRelations.removed).toHaveLength(0);
+    });
+
+    it('should report removed relation when import is deleted from file', async () => {
+      const relationRepo = makeRelationRepo();
+      const symbolRepo = makeSymbolRepo();
+      const oldRelation = {
+        project: 'test-project', type: 'imports', srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts',
+        srcSymbolName: null, dstSymbolName: null, dstProject: 'test-project', metaJson: null,
+      };
+      let getOutgoingCallCount = 0;
+      relationRepo.getOutgoing.mockImplementation((p: any, f: any) => {
+        getOutgoingCallCount++;
+        // First call = before snapshot (has relation), second call = after snapshot (empty)
+        if (getOutgoingCallCount <= 1) return [oldRelation];
+        return [];
+      });
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'no imports', lastModified: 2, size: 10 } as any);
+      const coordinator = makeCoordinator({ symbolRepo, relationRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/a.ts' }]);
+
+      expect(result.changedRelations.removed).toEqual([{
+        type: 'imports', srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts',
+        srcSymbolName: null, dstSymbolName: null, dstProject: 'test-project', metaJson: null,
+      }]);
+      expect(result.changedRelations.added).toHaveLength(0);
+    });
+
+    it('should report deleted file relations as removed', async () => {
+      const relationRepo = makeRelationRepo();
+      const symbolRepo = makeSymbolRepo();
+      const deletedRelation = {
+        project: 'test-project', type: 'imports', srcFilePath: 'src/gone.ts', dstFilePath: 'src/b.ts',
+        srcSymbolName: null, dstSymbolName: null, dstProject: 'test-project', metaJson: null,
+      };
+      relationRepo.getOutgoing.mockImplementation((p: any, f: any) => {
+        if (f === 'src/gone.ts') return [deletedRelation];
+        return [];
+      });
+      symbolRepo.getFileSymbols.mockReturnValue([]);
+      const coordinator = makeCoordinator({ symbolRepo, relationRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'delete', filePath: 'src/gone.ts' }]);
+
+      expect(result.changedRelations.removed).toEqual([{
+        type: 'imports', srcFilePath: 'src/gone.ts', dstFilePath: 'src/b.ts',
+        srcSymbolName: null, dstSymbolName: null, dstProject: 'test-project', metaJson: null,
+      }]);
+      expect(result.changedRelations.added).toHaveLength(0);
+    });
+
+    it('should return empty changedRelations when no relation changes', async () => {
+      const relationRepo = makeRelationRepo();
+      const symbolRepo = makeSymbolRepo();
+      const stableRelation = {
+        project: 'test-project', type: 'imports', srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts',
+        srcSymbolName: null, dstSymbolName: null, dstProject: 'test-project', metaJson: null,
+      };
+      relationRepo.getOutgoing.mockImplementation((p: any, f: any) => {
+        if (f === 'src/a.ts') return [stableRelation];
+        return [];
+      });
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'import "./b"', lastModified: 1, size: 12 } as any);
+      const coordinator = makeCoordinator({ symbolRepo, relationRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/a.ts' }]);
+
+      expect(result.changedRelations.added).toHaveLength(0);
+      expect(result.changedRelations.removed).toHaveLength(0);
+    });
+
+    it('should detect re-export specifier change via metaJson hash', async () => {
+      const relationRepo = makeRelationRepo();
+      const symbolRepo = makeSymbolRepo();
+      const beforeRel = {
+        project: 'test-project', type: 're-exports', srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts',
+        srcSymbolName: null, dstSymbolName: null, dstProject: 'test-project', metaJson: '{"specifiers":["A"]}',
+      };
+      const afterRel = {
+        project: 'test-project', type: 're-exports', srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts',
+        srcSymbolName: null, dstSymbolName: null, dstProject: 'test-project', metaJson: '{"specifiers":["A","B"]}',
+      };
+      let getOutgoingCallCount = 0;
+      relationRepo.getOutgoing.mockImplementation((p: any, f: any) => {
+        getOutgoingCallCount++;
+        if (getOutgoingCallCount <= 1) return [beforeRel];
+        if (f === 'src/a.ts') return [afterRel];
+        return [];
+      });
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'export { A, B } from "./b"', lastModified: 2, size: 25 } as any);
+      const coordinator = makeCoordinator({ symbolRepo, relationRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/a.ts' }]);
+
+      expect(result.changedRelations.removed).toEqual([{
+        type: 're-exports', srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts',
+        srcSymbolName: null, dstSymbolName: null, dstProject: 'test-project', metaJson: '{"specifiers":["A"]}',
+      }]);
+      expect(result.changedRelations.added).toEqual([{
+        type: 're-exports', srcFilePath: 'src/a.ts', dstFilePath: 'src/b.ts',
+        srcSymbolName: null, dstSymbolName: null, dstProject: 'test-project', metaJson: '{"specifiers":["A","B"]}',
+      }]);
+    });
+
+    it('should report all relations as added on first fullIndex', async () => {
+      const fileRepo = makeFileRepo();
+      const symbolRepo = makeSymbolRepo();
+      const relationRepo = makeRelationRepo();
+      fileRepo.getAllFiles.mockReturnValue([]);
+      symbolRepo.getFileSymbols.mockReturnValue([]);
+      const newRelation = {
+        project: 'test-project', type: 'imports', srcFilePath: 'src/main.ts', dstFilePath: 'src/lib.ts',
+        srcSymbolName: null, dstSymbolName: null, dstProject: 'test-project', metaJson: null,
+      };
+      let afterCalled = false;
+      relationRepo.getOutgoing.mockImplementation((p: any, f: any) => {
+        // Before snapshot: getAllFiles returns [] so getOutgoing is never called for before
+        // After snapshot: called for changed files
+        if (afterCalled && f === 'src/main.ts') return [newRelation];
+        return [];
+      });
+      // Hook into indexFileRelations to set the flag so after-snapshot returns the relation
+      mockIndexFileRelations.mockImplementation((opts: any) => {
+        afterCalled = true;
+        return 1;
+      });
+      mockDetectChanges.mockResolvedValue({
+        changed: [{ filePath: 'src/main.ts', contentHash: '', mtimeMs: 0, size: 0 }],
+        unchanged: [],
+        deleted: [],
+      });
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'import "./lib"', lastModified: 1, size: 14 } as any);
+      const coordinator = makeCoordinator({ fileRepo, symbolRepo, relationRepo });
+
+      const result = await coordinator.fullIndex();
+
+      expect(result.changedRelations.added).toEqual([{
+        type: 'imports', srcFilePath: 'src/main.ts', dstFilePath: 'src/lib.ts',
+        srcSymbolName: null, dstSymbolName: null, dstProject: 'test-project', metaJson: null,
+      }]);
+      expect(result.changedRelations.removed).toHaveLength(0);
     });
   });
 

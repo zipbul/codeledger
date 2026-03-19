@@ -74,6 +74,27 @@ export interface IndexResult {
     kind: string;
     isExported: boolean;
   }>;
+  /** Relation-level diff compared to the previous index state. */
+  changedRelations: {
+    added: Array<{
+      type: string;
+      srcFilePath: string;
+      dstFilePath: string;
+      srcSymbolName: string | null;
+      dstSymbolName: string | null;
+      dstProject: string;
+      metaJson: string | null;
+    }>;
+    removed: Array<{
+      type: string;
+      srcFilePath: string;
+      dstFilePath: string;
+      srcSymbolName: string | null;
+      dstSymbolName: string | null;
+      dstProject: string;
+      metaJson: string | null;
+    }>;
+  };
 }
 
 export interface IndexCoordinatorOptions {
@@ -103,6 +124,7 @@ export interface IndexCoordinatorOptions {
     replaceFileRelations(project: string, filePath: string, relations: ReadonlyArray<Partial<RelationRecord>>): void;
     retargetRelations(opts: { dstProject: string; oldFile: string; oldSymbol: string | null; newFile: string; newSymbol: string | null; newDstProject?: string }): void;
     deleteFileRelations(project: string, filePath: string): void;
+    getOutgoing(project: string, srcFilePath: string): RelationRecord[];
   };
   annotationRepo?: {
     deleteFileAnnotations(project: string, filePath: string): void;
@@ -333,6 +355,34 @@ export class IndexCoordinator {
       }
     }
 
+    // Relation before-snapshot: collect outgoing relations for affected files
+    const relationKey = (r: RelationRecord) =>
+      `${r.type}|${r.srcFilePath}|${r.dstFilePath}|${r.srcSymbolName ?? ''}|${r.dstSymbolName ?? ''}|${hashString(r.metaJson ?? '')}`;
+    const beforeRelations = new Map<string, RelationRecord>();
+
+    if (useTransaction) {
+      for (const boundary of this.opts.boundaries) {
+        for (const f of fileRepo.getAllFiles(boundary.project)) {
+          for (const rel of relationRepo.getOutgoing(boundary.project, f.filePath)) {
+            beforeRelations.set(relationKey(rel), rel);
+          }
+        }
+      }
+    } else {
+      for (const file of changed) {
+        const project = resolveFileProject(file.filePath, this.opts.boundaries);
+        for (const rel of relationRepo.getOutgoing(project, file.filePath)) {
+          beforeRelations.set(relationKey(rel), rel);
+        }
+      }
+      for (const filePath of deleted) {
+        const project = resolveFileProject(filePath, this.opts.boundaries);
+        for (const rel of relationRepo.getOutgoing(project, filePath)) {
+          beforeRelations.set(relationKey(rel), rel);
+        }
+      }
+    }
+
     const { annotationRepo, changelogRepo } = this.opts;
 
     const processDeleted = () => {
@@ -540,6 +590,30 @@ export class IndexCoordinator {
       }
     }
 
+    // Relation after-snapshot: collect outgoing relations for changed files (deleted files have none after)
+    const afterRelations = new Map<string, RelationRecord>();
+    for (const file of changed) {
+      const project = resolveFileProject(file.filePath, this.opts.boundaries);
+      for (const rel of relationRepo.getOutgoing(project, file.filePath)) {
+        afterRelations.set(relationKey(rel), rel);
+      }
+    }
+
+    // Compute relation-level diff
+    const mapRelation = (r: RelationRecord) => ({
+      type: r.type,
+      srcFilePath: r.srcFilePath,
+      dstFilePath: r.dstFilePath,
+      srcSymbolName: r.srcSymbolName,
+      dstSymbolName: r.dstSymbolName,
+      dstProject: r.dstProject,
+      metaJson: r.metaJson,
+    });
+    const changedRelations: IndexResult['changedRelations'] = {
+      added: [...afterRelations.entries()].filter(([k]) => !beforeRelations.has(k)).map(([, r]) => mapRelation(r)),
+      removed: [...beforeRelations.entries()].filter(([k]) => !afterRelations.has(k)).map(([, r]) => mapRelation(r)),
+    };
+
     // FR-08: compute symbol-level diff (added / modified / removed)
     const changedSymbols: IndexResult['changedSymbols'] = { added: [], modified: [], removed: [] };
     for (const [key, after] of afterSnapshot) {
@@ -738,6 +812,7 @@ export class IndexCoordinator {
         kind: mv.kind,
         isExported: Boolean(mv.isExported),
       })),
+      changedRelations,
     };
   }
 
