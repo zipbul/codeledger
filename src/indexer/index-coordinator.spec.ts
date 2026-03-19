@@ -1051,8 +1051,8 @@ describe('IndexCoordinator', () => {
 
       expect(result.changedSymbols.added).toEqual(
         expect.arrayContaining([
-          { name: 'Foo', filePath: 'src/new.ts', kind: 'class' },
-          { name: 'bar', filePath: 'src/new.ts', kind: 'function' },
+          { name: 'Foo', filePath: 'src/new.ts', kind: 'class', isExported: false },
+          { name: 'bar', filePath: 'src/new.ts', kind: 'function', isExported: false },
         ]),
       );
       expect(result.changedSymbols.modified).toHaveLength(0);
@@ -1074,7 +1074,7 @@ describe('IndexCoordinator', () => {
       const result = await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/a.ts' }]);
 
       expect(result.changedSymbols.modified).toEqual([
-        { name: 'doWork', filePath: 'src/a.ts', kind: 'function' },
+        { name: 'doWork', filePath: 'src/a.ts', kind: 'function', isExported: false },
       ]);
       expect(result.changedSymbols.added).toHaveLength(0);
       expect(result.changedSymbols.removed).toHaveLength(0);
@@ -1090,7 +1090,7 @@ describe('IndexCoordinator', () => {
       const result = await coordinator.incrementalIndex([{ eventType: 'delete', filePath: 'src/old.ts' }]);
 
       expect(result.changedSymbols.removed).toEqual([
-        { name: 'OldClass', filePath: 'src/old.ts', kind: 'class' },
+        { name: 'OldClass', filePath: 'src/old.ts', kind: 'class', isExported: false },
       ]);
       expect(result.changedSymbols.added).toHaveLength(0);
       expect(result.changedSymbols.modified).toHaveLength(0);
@@ -1126,8 +1126,8 @@ describe('IndexCoordinator', () => {
 
       const result = await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/swap.ts' }]);
 
-      expect(result.changedSymbols.removed).toEqual([{ name: 'Alpha', filePath: 'src/swap.ts', kind: 'class' }]);
-      expect(result.changedSymbols.added).toEqual([{ name: 'Beta', filePath: 'src/swap.ts', kind: 'function' }]);
+      expect(result.changedSymbols.removed).toEqual([{ name: 'Alpha', filePath: 'src/swap.ts', kind: 'class', isExported: false }]);
+      expect(result.changedSymbols.added).toEqual([{ name: 'Beta', filePath: 'src/swap.ts', kind: 'function', isExported: false }]);
       expect(result.changedSymbols.modified).toHaveLength(0);
     });
 
@@ -1162,7 +1162,7 @@ describe('IndexCoordinator', () => {
 
       const result = await coordinator.fullIndex();
 
-      expect(result.changedSymbols.added).toEqual([{ name: 'NewSym', filePath: 'src/main.ts', kind: 'function' }]);
+      expect(result.changedSymbols.added).toEqual([{ name: 'NewSym', filePath: 'src/main.ts', kind: 'function', isExported: false }]);
       expect(result.changedSymbols.removed).toHaveLength(0);
     });
 
@@ -1241,6 +1241,117 @@ describe('IndexCoordinator', () => {
       // getAllFiles(before snapshot)는 transaction 이전에 호출되어야 한다
       expect(getAllFilesIdx).toBeGreaterThanOrEqual(0);
       expect(transactionIdx).toBeGreaterThan(getAllFilesIdx);
+    });
+
+    // 11. [HP] incremental: exported 심볼 추가 → changedSymbols.added에 isExported: true
+    it('should include isExported: true in changedSymbols.added when exported symbol is added', async () => {
+      const symbolRepo = makeSymbolRepo();
+      const sym = { name: 'Exported', filePath: 'src/exp.ts', kind: 'function', fingerprint: 'fp-exp', isExported: 1 } as any;
+      symbolRepo.getFileSymbols
+        .mockReturnValueOnce([])      // before snapshot
+        .mockReturnValueOnce([sym])   // after snapshot (processFile count)
+        .mockReturnValue([sym]);
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'export function Exported() {}', lastModified: 1, size: 30 } as any);
+      const coordinator = makeCoordinator({ symbolRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'create', filePath: 'src/exp.ts' }]);
+
+      expect(result.changedSymbols.added).toEqual([
+        { name: 'Exported', filePath: 'src/exp.ts', kind: 'function', isExported: true },
+      ]);
+    });
+
+    // 12. [HP] incremental: non-exported 심볼 추가 → changedSymbols.added에 isExported: false
+    it('should include isExported: false in changedSymbols.added when non-exported symbol is added', async () => {
+      const symbolRepo = makeSymbolRepo();
+      const sym = { name: 'Internal', filePath: 'src/int.ts', kind: 'function', fingerprint: 'fp-int', isExported: 0 } as any;
+      symbolRepo.getFileSymbols
+        .mockReturnValueOnce([])      // before snapshot
+        .mockReturnValueOnce([sym])   // after snapshot (processFile count)
+        .mockReturnValue([sym]);
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'function Internal() {}', lastModified: 1, size: 22 } as any);
+      const coordinator = makeCoordinator({ symbolRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'create', filePath: 'src/int.ts' }]);
+
+      expect(result.changedSymbols.added).toEqual([
+        { name: 'Internal', filePath: 'src/int.ts', kind: 'function', isExported: false },
+      ]);
+    });
+
+    // 13. [HP] incremental: 파일 삭제 → changedSymbols.removed에 isExported 반영
+    it('should include isExported in changedSymbols.removed reflecting deleted symbol export state', async () => {
+      const symbolRepo = makeSymbolRepo();
+      const sym = { name: 'ExpClass', filePath: 'src/del.ts', kind: 'class', fingerprint: 'fp-del', isExported: 1 } as any;
+      symbolRepo.getFileSymbols.mockReturnValue([sym]);
+      const coordinator = makeCoordinator({ symbolRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'delete', filePath: 'src/del.ts' }]);
+
+      expect(result.changedSymbols.removed).toEqual([
+        { name: 'ExpClass', filePath: 'src/del.ts', kind: 'class', isExported: true },
+      ]);
+    });
+
+    // 14. [HP] incremental: isExported만 변경 (fingerprint 동일) → modified 감지
+    it('should detect modified when only isExported changes (fingerprint unchanged)', async () => {
+      const symbolRepo = makeSymbolRepo();
+      const beforeSym = { name: 'Toggle', filePath: 'src/tog.ts', kind: 'function', fingerprint: 'fp-same', isExported: 0 } as any;
+      const afterSym  = { name: 'Toggle', filePath: 'src/tog.ts', kind: 'function', fingerprint: 'fp-same', isExported: 1 } as any;
+      symbolRepo.getFileSymbols
+        .mockReturnValueOnce([beforeSym])  // before snapshot
+        .mockReturnValueOnce([afterSym])   // after snapshot (processFile count)
+        .mockReturnValue([afterSym]);
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'export function Toggle() {}', lastModified: 2, size: 28 } as any);
+      const coordinator = makeCoordinator({ symbolRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/tog.ts' }]);
+
+      expect(result.changedSymbols.modified).toEqual([
+        { name: 'Toggle', filePath: 'src/tog.ts', kind: 'function', isExported: true },
+      ]);
+      expect(result.changedSymbols.added).toHaveLength(0);
+      expect(result.changedSymbols.removed).toHaveLength(0);
+    });
+
+    // 15. [HP] incremental: structuralFingerprint만 변경 → modified 감지
+    it('should detect modified when only structuralFingerprint changes', async () => {
+      const symbolRepo = makeSymbolRepo();
+      const beforeSym = { name: 'Struct', filePath: 'src/sfp.ts', kind: 'class', fingerprint: 'fp-same', structuralFingerprint: 'sfp-old', isExported: 0 } as any;
+      const afterSym  = { name: 'Struct', filePath: 'src/sfp.ts', kind: 'class', fingerprint: 'fp-same', structuralFingerprint: 'sfp-new', isExported: 0 } as any;
+      symbolRepo.getFileSymbols
+        .mockReturnValueOnce([beforeSym])  // before snapshot
+        .mockReturnValueOnce([afterSym])   // after snapshot (processFile count)
+        .mockReturnValue([afterSym]);
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'class Struct { x = 1; }', lastModified: 2, size: 23 } as any);
+      const coordinator = makeCoordinator({ symbolRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/sfp.ts' }]);
+
+      expect(result.changedSymbols.modified).toEqual([
+        { name: 'Struct', filePath: 'src/sfp.ts', kind: 'class', isExported: false },
+      ]);
+      expect(result.changedSymbols.added).toHaveLength(0);
+      expect(result.changedSymbols.removed).toHaveLength(0);
+    });
+
+    // 16. [NE] incremental: structuralFingerprint가 null에서 변경 (legacy DB) → modified 미감지
+    it('should not detect modified when structuralFingerprint changes from null (legacy DB)', async () => {
+      const symbolRepo = makeSymbolRepo();
+      const beforeSym = { name: 'Legacy', filePath: 'src/leg.ts', kind: 'function', fingerprint: 'fp-same', structuralFingerprint: null, isExported: 0 } as any;
+      const afterSym  = { name: 'Legacy', filePath: 'src/leg.ts', kind: 'function', fingerprint: 'fp-same', structuralFingerprint: 'sfp-new', isExported: 0 } as any;
+      symbolRepo.getFileSymbols
+        .mockReturnValueOnce([beforeSym])  // before snapshot
+        .mockReturnValueOnce([afterSym])   // after snapshot (processFile count)
+        .mockReturnValue([afterSym]);
+      spyOn(Bun, 'file').mockReturnValue({ text: async () => 'function Legacy() {}', lastModified: 2, size: 20 } as any);
+      const coordinator = makeCoordinator({ symbolRepo });
+
+      const result = await coordinator.incrementalIndex([{ eventType: 'change', filePath: 'src/leg.ts' }]);
+
+      expect(result.changedSymbols.modified).toHaveLength(0);
+      expect(result.changedSymbols.added).toHaveLength(0);
+      expect(result.changedSymbols.removed).toHaveLength(0);
     });
   });
 

@@ -54,9 +54,9 @@ export interface IndexResult {
    * On the very first full index (empty DB), all symbols appear in `added`.
    */
   changedSymbols: {
-    added: Array<{ name: string; filePath: string; kind: string }>;
-    modified: Array<{ name: string; filePath: string; kind: string }>;
-    removed: Array<{ name: string; filePath: string; kind: string }>;
+    added: Array<{ name: string; filePath: string; kind: string; isExported: boolean }>;
+    modified: Array<{ name: string; filePath: string; kind: string; isExported: boolean }>;
+    removed: Array<{ name: string; filePath: string; kind: string; isExported: boolean }>;
   };
 }
 
@@ -292,6 +292,7 @@ export class IndexCoordinator {
     const snapFromRecord = (sym: SymbolRecord): SymbolSnap => ({
       name: sym.name, filePath: sym.filePath, kind: sym.kind, fingerprint: sym.fingerprint,
       structuralFingerprint: sym.structuralFingerprint ?? null, startLine: sym.startLine,
+      isExported: sym.isExported ?? 0,
     });
 
     if (useTransaction) {
@@ -528,14 +529,20 @@ export class IndexCoordinator {
     for (const [key, after] of afterSnapshot) {
       const before = beforeSnapshot.get(key);
       if (!before) {
-        changedSymbols.added.push({ name: after.name, filePath: after.filePath, kind: after.kind });
-      } else if (before.fingerprint !== after.fingerprint) {
-        changedSymbols.modified.push({ name: after.name, filePath: after.filePath, kind: after.kind });
+        changedSymbols.added.push({ name: after.name, filePath: after.filePath, kind: after.kind, isExported: Boolean(after.isExported) });
+      } else {
+        const fpChanged = before.fingerprint !== after.fingerprint;
+        const exportChanged = before.isExported !== after.isExported;
+        const sfpChanged = before.structuralFingerprint !== null && after.structuralFingerprint !== null
+          && before.structuralFingerprint !== after.structuralFingerprint;
+        if (fpChanged || exportChanged || sfpChanged) {
+          changedSymbols.modified.push({ name: after.name, filePath: after.filePath, kind: after.kind, isExported: Boolean(after.isExported) });
+        }
       }
     }
     for (const [key, before] of beforeSnapshot) {
       if (!afterSnapshot.has(key)) {
-        changedSymbols.removed.push({ name: before.name, filePath: before.filePath, kind: before.kind });
+        changedSymbols.removed.push({ name: before.name, filePath: before.filePath, kind: before.kind, isExported: Boolean(before.isExported) });
       }
     }
 

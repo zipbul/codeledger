@@ -8,6 +8,7 @@ function snap(overrides: Partial<SymbolSnap> & { name: string; filePath: string 
     fingerprint: null,
     structuralFingerprint: 'fp1',
     startLine: 1,
+    isExported: 0,
     ...overrides,
   };
 }

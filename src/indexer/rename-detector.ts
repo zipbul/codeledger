@@ -5,6 +5,7 @@ export interface SymbolSnap {
   fingerprint: string | null;
   structuralFingerprint: string | null;
   startLine: number;
+  isExported: number;
 }
 
 export interface RenamedEntry {
