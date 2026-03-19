@@ -119,6 +119,66 @@ export function isTypeAssignableTo(
   }
 }
 
+/** Retrieve resolved types for all declarations in a file. */
+export function getFileTypes(
+  ctx: GildashContext,
+  filePath: string,
+): Map<number, ResolvedType> {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
+  try {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.projectRoot, filePath);
+    return ctx.semanticLayer.collectFileTypes(absPath);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('semantic', 'Gildash: getFileTypes failed', { cause: e });
+  }
+}
+
+/** Retrieve the resolved type at a specific position (line:column) without DB lookup. */
+export function getResolvedTypeAt(
+  ctx: GildashContext,
+  filePath: string,
+  line: number,
+  column: number,
+): ResolvedType | null {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
+  try {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.projectRoot, filePath);
+    const position = ctx.semanticLayer.lineColumnToPosition(absPath, line, column);
+    if (position === null) return null;
+    return ctx.semanticLayer.collectTypeAt(absPath, position);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('semantic', 'Gildash: getResolvedTypeAt failed', { cause: e });
+  }
+}
+
+/** Check type assignability at specific positions without DB lookup. */
+export function isTypeAssignableToAt(
+  ctx: GildashContext,
+  opts: {
+    source: { filePath: string; line: number; column: number };
+    target: { filePath: string; line: number; column: number };
+  },
+): boolean | null {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
+  try {
+    const srcAbs = path.isAbsolute(opts.source.filePath) ? opts.source.filePath : path.resolve(ctx.projectRoot, opts.source.filePath);
+    const tgtAbs = path.isAbsolute(opts.target.filePath) ? opts.target.filePath : path.resolve(ctx.projectRoot, opts.target.filePath);
+    const srcPos = ctx.semanticLayer.lineColumnToPosition(srcAbs, opts.source.line, opts.source.column);
+    if (srcPos === null) return null;
+    const tgtPos = ctx.semanticLayer.lineColumnToPosition(tgtAbs, opts.target.line, opts.target.column);
+    if (tgtPos === null) return null;
+    return ctx.semanticLayer.isTypeAssignableTo(srcAbs, srcPos, tgtAbs, tgtPos);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('semantic', 'Gildash: isTypeAssignableToAt failed', { cause: e });
+  }
+}
+
 /** Retrieve the semantic module interface — exported symbols with resolved types. */
 export function getSemanticModuleInterface(
   ctx: GildashContext,

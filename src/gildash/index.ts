@@ -249,6 +249,21 @@ export class Gildash {
     return semanticApi.getSemanticModuleInterface(this._ctx, filePath);
   }
 
+  getFileTypes(filePath: string): Map<number, ResolvedType> {
+    return semanticApi.getFileTypes(this._ctx, filePath);
+  }
+
+  getResolvedTypeAt(filePath: string, line: number, column: number): ResolvedType | null {
+    return semanticApi.getResolvedTypeAt(this._ctx, filePath, line, column);
+  }
+
+  isTypeAssignableToAt(opts: {
+    source: { filePath: string; line: number; column: number };
+    target: { filePath: string; line: number; column: number };
+  }): boolean | null {
+    return semanticApi.isTypeAssignableToAt(this._ctx, opts);
+  }
+
   // ─── Misc ───────────────────────────────────────────────────────
 
   diffSymbols(before: SymbolSearchResult[], after: SymbolSearchResult[]): SymbolDiff {
