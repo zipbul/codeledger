@@ -7,6 +7,7 @@ import { Gildash } from '../src/gildash';
 import type { FullSymbol } from '../src/gildash';
 import { GildashError } from '../src/errors';
 import { DATA_DIR, DB_FILE } from '../src/constants';
+import type { IndexResult } from '../src/indexer/index-coordinator';
 
 // ── Fixture Helpers ────────────────────────────────────────────────────────
 
@@ -766,6 +767,323 @@ describe('Gildash integration', () => {
       // Prune with a date far in the past — nothing to prune
       const count = g.pruneChangelog(new Date(0));
       expect(count).toBe(0);
+
+      await g.close();
+    });
+  });
+
+  // ── Group: changedSymbols.isExported ──────────────────────────────
+
+  describe('changedSymbols.isExported', () => {
+    let tmpDir: string;
+
+    afterEach(async () => {
+      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    });
+
+    it('should return changedSymbols.added with correct isExported values after reindex', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-exported-'));
+      await mkdir(join(tmpDir, 'src'), { recursive: true });
+      await writeFile(join(tmpDir, 'package.json'), JSON.stringify({ name: 'test-exported' }));
+      await writeFile(
+        join(tmpDir, 'src', 'mixed.ts'),
+        [
+          'export function publicFn() {}',
+          'function privateFn() {}',
+          'export const PUBLIC_CONST = 1;',
+          'const PRIVATE_CONST = 2;',
+        ].join('\n'),
+      );
+
+      const g = await openGildash(tmpDir);
+
+      // Add a new file and reindex to get changedSymbols
+      await writeFile(
+        join(tmpDir, 'src', 'new-mod.ts'),
+        [
+          'export class ExportedClass {}',
+          'class InternalClass {}',
+        ].join('\n'),
+      );
+
+      const result = await g.reindex();
+
+      const addedNames = result.changedSymbols.added.map(s => s.name);
+      expect(addedNames).toContain('ExportedClass');
+      expect(addedNames).toContain('InternalClass');
+
+      const exportedClass = result.changedSymbols.added.find(s => s.name === 'ExportedClass');
+      const internalClass = result.changedSymbols.added.find(s => s.name === 'InternalClass');
+      expect(exportedClass!.isExported).toBe(true);
+      expect(internalClass!.isExported).toBe(false);
+
+      await g.close();
+    });
+  });
+
+  // ── Group: changedRelations ───────────────────────────────────────
+
+  describe('changedRelations', () => {
+    let tmpDir: string;
+
+    afterEach(async () => {
+      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    });
+
+    it('should return all relations in changedRelations.added on first reindex', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-chrel-'));
+      await mkdir(join(tmpDir, 'src'), { recursive: true });
+      await writeFile(join(tmpDir, 'package.json'), JSON.stringify({ name: 'test-chrel' }));
+      await writeFile(join(tmpDir, 'src', 'utils.ts'), 'export function helper() {}');
+      await writeFile(
+        join(tmpDir, 'src', 'app.ts'),
+        "import { helper } from './utils';\nexport function run() { helper(); }",
+      );
+
+      const g = await openGildash(tmpDir);
+
+      // Add a new file to trigger reindex changes
+      await writeFile(
+        join(tmpDir, 'src', 'consumer.ts'),
+        "import { helper } from './utils';\nexport function consume() { helper(); }",
+      );
+
+      const result = await g.reindex();
+
+      // The newly added file's relations should appear in changedRelations.added
+      const addedImports = result.changedRelations.added.filter(r => r.type === 'imports');
+      expect(addedImports.length).toBeGreaterThanOrEqual(1);
+      expect(addedImports.some(r => r.srcFilePath.includes('consumer'))).toBe(true);
+
+      await g.close();
+    });
+
+    it('should return new import in changedRelations.added when a file gains an import', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-chrel-add-'));
+      await mkdir(join(tmpDir, 'src'), { recursive: true });
+      await writeFile(join(tmpDir, 'package.json'), JSON.stringify({ name: 'test-chrel-add' }));
+      await writeFile(join(tmpDir, 'src', 'utils.ts'), 'export function helper() {}');
+      await writeFile(join(tmpDir, 'src', 'extra.ts'), 'export function extra() {}');
+      await writeFile(
+        join(tmpDir, 'src', 'app.ts'),
+        "import { helper } from './utils';\nexport function run() { helper(); }",
+      );
+
+      const g = await openGildash(tmpDir);
+
+      // Modify app.ts to add a new import
+      await writeFile(
+        join(tmpDir, 'src', 'app.ts'),
+        [
+          "import { helper } from './utils';",
+          "import { extra } from './extra';",
+          'export function run() { helper(); extra(); }',
+        ].join('\n'),
+      );
+
+      const result = await g.reindex();
+
+      const addedRelations = result.changedRelations.added;
+      expect(addedRelations.some(
+        r => r.type === 'imports' && r.srcFilePath.includes('app') && r.dstFilePath.includes('extra'),
+      )).toBe(true);
+
+      await g.close();
+    });
+
+    it('should return old import in changedRelations.removed when a file loses an import', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-chrel-rm-'));
+      await mkdir(join(tmpDir, 'src'), { recursive: true });
+      await writeFile(join(tmpDir, 'package.json'), JSON.stringify({ name: 'test-chrel-rm' }));
+      await writeFile(join(tmpDir, 'src', 'utils.ts'), 'export function helper() {}');
+      await writeFile(join(tmpDir, 'src', 'extra.ts'), 'export function extra() {}');
+      await writeFile(
+        join(tmpDir, 'src', 'app.ts'),
+        [
+          "import { helper } from './utils';",
+          "import { extra } from './extra';",
+          'export function run() { helper(); extra(); }',
+        ].join('\n'),
+      );
+
+      const g = await openGildash(tmpDir);
+
+      // Remove the extra import from app.ts
+      await writeFile(
+        join(tmpDir, 'src', 'app.ts'),
+        "import { helper } from './utils';\nexport function run() { helper(); }",
+      );
+
+      const result = await g.reindex();
+
+      const removedRelations = result.changedRelations.removed;
+      expect(removedRelations.some(
+        r => r.type === 'imports' && r.srcFilePath.includes('app') && r.dstFilePath.includes('extra'),
+      )).toBe(true);
+
+      await g.close();
+    });
+  });
+
+  // ── Group: renamedSymbols / movedSymbols ──────────────────────────
+
+  describe('renamedSymbols / movedSymbols', () => {
+    let tmpDir: string;
+
+    afterEach(async () => {
+      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    });
+
+    it('should return renamedSymbols and movedSymbols as arrays in IndexResult', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-rename-'));
+      await mkdir(join(tmpDir, 'src'), { recursive: true });
+      await writeFile(join(tmpDir, 'package.json'), JSON.stringify({ name: 'test-rename' }));
+      await writeFile(join(tmpDir, 'src', 'a.ts'), 'export function myFn() {}');
+
+      const g = await openGildash(tmpDir);
+
+      const result = await g.reindex();
+
+      expect(Array.isArray(result.renamedSymbols)).toBe(true);
+      expect(Array.isArray(result.movedSymbols)).toBe(true);
+
+      await g.close();
+    });
+  });
+
+  // ── Group: searchRelations with pattern matching ──────────────────
+
+  describe('searchRelations with pattern matching', () => {
+    let g: Gildash;
+    let tmpDir: string;
+
+    beforeAll(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-it-'));
+      await createRichProject(tmpDir);
+      g = await openGildash(tmpDir);
+    });
+
+    afterAll(async () => {
+      await g.close();
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return matching relations when using dstFilePathPattern', () => {
+      const result = g.searchRelations({ type: 'imports', dstFilePathPattern: 'src/**' });
+      expect(result.length).toBeGreaterThan(0);
+      expect(result.every((r: any) => r.type === 'imports')).toBe(true);
+      // All matched dst paths should be under src/
+      expect(result.every((r: any) => r.dstFilePath.startsWith('src/'))).toBe(true);
+    });
+
+    it('should throw validation error when both srcFilePath and srcFilePathPattern are specified', () => {
+      expect(() => g.searchRelations({
+        srcFilePath: 'src/app.ts',
+        srcFilePathPattern: 'src/**',
+      })).toThrow(GildashError);
+    });
+
+    it('should throw validation error when both dstFilePath and dstFilePathPattern are specified', () => {
+      expect(() => g.searchRelations({
+        dstFilePath: 'src/utils.ts',
+        dstFilePathPattern: 'src/**',
+      })).toThrow(GildashError);
+    });
+  });
+
+  // ── Group: Semantic APIs ──────────────────────────────────────────
+  // The default openGildash does not enable semantic (semantic: false by default).
+  // These tests verify that semantic methods throw the expected error when not enabled.
+
+  describe('Semantic APIs (not enabled)', () => {
+    let g: Gildash;
+    let tmpDir: string;
+
+    beforeAll(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-it-'));
+      await createRichProject(tmpDir);
+      g = await openGildash(tmpDir);
+    });
+
+    afterAll(async () => {
+      await g.close();
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should throw semantic error from isTypeAssignableTo when semantic layer is not enabled', () => {
+      expect(() => g.isTypeAssignableTo('Base', 'src/models.ts', 'IService', 'src/models.ts'))
+        .toThrow(GildashError);
+    });
+
+    it('should throw semantic error from getFileTypes when semantic layer is not enabled', () => {
+      expect(() => g.getFileTypes('src/utils.ts')).toThrow(GildashError);
+    });
+
+    it('should throw semantic error from getResolvedTypeAt when semantic layer is not enabled', () => {
+      expect(() => g.getResolvedTypeAt('src/utils.ts', 1, 0)).toThrow(GildashError);
+    });
+
+    it('should throw semantic error from isTypeAssignableToAt when semantic layer is not enabled', () => {
+      expect(() => g.isTypeAssignableToAt({
+        source: { filePath: 'src/models.ts', line: 5, column: 0 },
+        target: { filePath: 'src/models.ts', line: 1, column: 0 },
+      })).toThrow(GildashError);
+    });
+  });
+
+  // ── Group: onIndexed callback with full IndexResult ───────────────
+
+  describe('onIndexed callback with IndexResult fields', () => {
+    let tmpDir: string;
+
+    afterEach(async () => {
+      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    });
+
+    it('should receive IndexResult with changedSymbols, changedRelations, renamedSymbols, movedSymbols via onIndexed', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-cb-'));
+      await mkdir(join(tmpDir, 'src'), { recursive: true });
+      await writeFile(join(tmpDir, 'package.json'), JSON.stringify({ name: 'test-cb' }));
+      await writeFile(
+        join(tmpDir, 'src', 'utils.ts'),
+        'export function helper() {}',
+      );
+      await writeFile(
+        join(tmpDir, 'src', 'app.ts'),
+        "import { helper } from './utils';\nexport function run() { helper(); }",
+      );
+
+      const g = await openGildash(tmpDir);
+
+      let capturedResult: IndexResult | null = null;
+      g.onIndexed((result) => { capturedResult = result; });
+
+      // Add a new file to trigger real changes on reindex
+      await writeFile(
+        join(tmpDir, 'src', 'new-mod.ts'),
+        'export function brandNew() {}',
+      );
+
+      await g.reindex();
+
+      expect(capturedResult).not.toBeNull();
+      const r = capturedResult!;
+
+      // Verify all new fields exist with correct shapes
+      expect(r.changedSymbols).toBeDefined();
+      expect(Array.isArray(r.changedSymbols.added)).toBe(true);
+      expect(Array.isArray(r.changedSymbols.modified)).toBe(true);
+      expect(Array.isArray(r.changedSymbols.removed)).toBe(true);
+
+      expect(r.changedRelations).toBeDefined();
+      expect(Array.isArray(r.changedRelations.added)).toBe(true);
+      expect(Array.isArray(r.changedRelations.removed)).toBe(true);
+
+      expect(Array.isArray(r.renamedSymbols)).toBe(true);
+      expect(Array.isArray(r.movedSymbols)).toBe(true);
+
+      // The newly added symbol should appear in changedSymbols.added
+      expect(r.changedSymbols.added.some(s => s.name === 'brandNew')).toBe(true);
 
       await g.close();
     });

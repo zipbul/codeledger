@@ -81,6 +81,33 @@ async function createSemanticProject(root: string): Promise<void> {
       'function doNothing(): void {}',
     ].join('\n'),
   );
+
+  // File with incompatible types for assignability tests
+  await writeFile(
+    join(root, 'src', 'animals.ts'),
+    [
+      'export interface Animal {',
+      '  name: string;',
+      '  legs: number;',
+      '}',
+      '',
+      'export class Dog implements Animal {',
+      '  name: string = "Rex";',
+      '  legs: number = 4;',
+      '  bark(): void {}',
+      '}',
+      '',
+      'export class Cat implements Animal {',
+      '  name: string = "Whiskers";',
+      '  legs: number = 4;',
+      '  meow(): void {}',
+      '}',
+      '',
+      'export const myDog: Dog = new Dog();',
+      'export const myAnimal: Animal = new Dog();',
+      'export const count: number = 42;',
+    ].join('\n'),
+  );
 }
 
 async function openGildash(
@@ -246,6 +273,217 @@ describe('Gildash Semantic integration', () => {
       expect(() => g.getSemanticReferences('createService', 'src/service.ts')).toThrow(GildashError);
       expect(() => g.getImplementations('IService', 'src/types.ts')).toThrow(GildashError);
       expect(() => g.getSemanticModuleInterface(join(tmpDir, 'src', 'service.ts'))).toThrow(GildashError);
+    });
+  });
+
+  // ── Group 4: isTypeAssignableTo ──────────────────────────────────────
+
+  describe('isTypeAssignableTo', () => {
+    let g: Gildash;
+    let tmpDir: string;
+
+    beforeAll(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      g = await openGildash(tmpDir, { semantic: true });
+    });
+
+    afterAll(async () => {
+      await g.close();
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return true when class implements interface', () => {
+      const result = g.isTypeAssignableTo('Dog', 'src/animals.ts', 'Animal', 'src/animals.ts');
+      expect(result).toBe(true);
+    });
+
+    it('should return false when types are incompatible', () => {
+      const result = g.isTypeAssignableTo('count', 'src/animals.ts', 'Animal', 'src/animals.ts');
+      expect(result).toBe(false);
+    });
+
+    it('should throw GildashError when source symbol does not exist', () => {
+      expect(() =>
+        g.isTypeAssignableTo('NonExistent', 'src/animals.ts', 'Animal', 'src/animals.ts'),
+      ).toThrow(GildashError);
+    });
+
+    it('should throw GildashError when target symbol does not exist', () => {
+      expect(() =>
+        g.isTypeAssignableTo('Dog', 'src/animals.ts', 'NonExistent', 'src/animals.ts'),
+      ).toThrow(GildashError);
+    });
+
+    it('should respect directionality — Dog assignable to Animal but not necessarily reverse', () => {
+      const dogToAnimal = g.isTypeAssignableTo('Dog', 'src/animals.ts', 'Animal', 'src/animals.ts');
+      const animalToDog = g.isTypeAssignableTo('Animal', 'src/animals.ts', 'Dog', 'src/animals.ts');
+      // Dog has extra method bark(), so Animal is not assignable to Dog
+      expect(dogToAnimal).toBe(true);
+      expect(animalToDog).toBe(false);
+    });
+  });
+
+  // ── Group 5: getFileTypes ────────────────────────────────────────────
+
+  describe('getFileTypes', () => {
+    let g: Gildash;
+    let tmpDir: string;
+
+    beforeAll(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      g = await openGildash(tmpDir, { semantic: true });
+    });
+
+    afterAll(async () => {
+      await g.close();
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return a non-empty Map for a file with declarations', () => {
+      const types = g.getFileTypes('src/service.ts');
+      expect(types).toBeInstanceOf(Map);
+      expect(types.size).toBeGreaterThan(0);
+    });
+
+    it('should return empty Map for a file not in program', () => {
+      const types = g.getFileTypes('src/nonexistent-file.ts');
+      expect(types).toBeInstanceOf(Map);
+      expect(types.size).toBe(0);
+    });
+  });
+
+  // ── Group 6: getResolvedTypeAt ───────────────────────────────────────
+
+  describe('getResolvedTypeAt', () => {
+    let g: Gildash;
+    let tmpDir: string;
+
+    beforeAll(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      g = await openGildash(tmpDir, { semantic: true });
+    });
+
+    afterAll(async () => {
+      await g.close();
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return ResolvedType for a known declaration position', () => {
+      // SERVICE_NAME is on line 11, column 13 of src/service.ts
+      // "export const SERVICE_NAME: string = "default";"
+      // Line 11 (1-based), column 13 (0-based) points to SERVICE_NAME
+      const result = g.getResolvedTypeAt('src/service.ts', 11, 13);
+      expect(result).not.toBeNull();
+      expect(result!.text).toBe('string');
+    });
+
+    it('should return null for invalid position', () => {
+      const result = g.getResolvedTypeAt('src/service.ts', 9999, 0);
+      expect(result).toBeNull();
+    });
+  });
+
+  // ── Group 7: isTypeAssignableToAt ────────────────────────────────────
+
+  describe('isTypeAssignableToAt', () => {
+    let g: Gildash;
+    let tmpDir: string;
+
+    beforeAll(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      g = await openGildash(tmpDir, { semantic: true });
+    });
+
+    afterAll(async () => {
+      await g.close();
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return boolean for position-based assignability check', () => {
+      // Dog (line 6, col 13) and Animal (line 1, col 17) in src/animals.ts
+      // "export interface Animal {" → Animal at col 17
+      // "export class Dog implements Animal {" → Dog at col 13
+      const result = g.isTypeAssignableToAt({
+        source: { filePath: 'src/animals.ts', line: 6, column: 13 },
+        target: { filePath: 'src/animals.ts', line: 1, column: 17 },
+      });
+      expect(typeof result).toBe('boolean');
+      expect(result).toBe(true);
+    });
+
+    it('should accept object parameter correctly', () => {
+      // count (line 20, col 13) to Animal (line 1, col 17) in src/animals.ts
+      // "export const count: number = 42;"
+      const result = g.isTypeAssignableToAt({
+        source: { filePath: 'src/animals.ts', line: 20, column: 13 },
+        target: { filePath: 'src/animals.ts', line: 1, column: 17 },
+      });
+      expect(result).toBe(false);
+    });
+
+    it('should return null for invalid source position', () => {
+      const result = g.isTypeAssignableToAt({
+        source: { filePath: 'src/animals.ts', line: 9999, column: 0 },
+        target: { filePath: 'src/animals.ts', line: 1, column: 17 },
+      });
+      expect(result).toBeNull();
+    });
+  });
+
+  // ── Group 8: New methods throw when closed ───────────────────────────
+
+  describe('New semantic methods throw when closed', () => {
+    let tmpDir: string;
+
+    afterEach(async () => {
+      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    });
+
+    it('should throw GildashError for isTypeAssignableTo after close', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      const g = await openGildash(tmpDir, { semantic: true });
+      await g.close();
+
+      expect(() =>
+        g.isTypeAssignableTo('Dog', 'src/animals.ts', 'Animal', 'src/animals.ts'),
+      ).toThrow(GildashError);
+    });
+
+    it('should throw GildashError for getFileTypes after close', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      const g = await openGildash(tmpDir, { semantic: true });
+      await g.close();
+
+      expect(() => g.getFileTypes('src/service.ts')).toThrow(GildashError);
+    });
+
+    it('should throw GildashError for getResolvedTypeAt after close', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      const g = await openGildash(tmpDir, { semantic: true });
+      await g.close();
+
+      expect(() => g.getResolvedTypeAt('src/service.ts', 11, 13)).toThrow(GildashError);
+    });
+
+    it('should throw GildashError for isTypeAssignableToAt after close', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      const g = await openGildash(tmpDir, { semantic: true });
+      await g.close();
+
+      expect(() =>
+        g.isTypeAssignableToAt({
+          source: { filePath: 'src/animals.ts', line: 6, column: 13 },
+          target: { filePath: 'src/animals.ts', line: 1, column: 17 },
+        }),
+      ).toThrow(GildashError);
     });
   });
 });

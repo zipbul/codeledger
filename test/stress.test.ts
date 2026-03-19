@@ -2,9 +2,10 @@ import { describe, it, expect, beforeAll, afterAll, setDefaultTimeout } from 'bu
 
 setDefaultTimeout(120_000);
 import { join } from 'node:path';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, mkdir, writeFile, unlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { Gildash } from '../src/gildash';
+import type { IndexResult } from '../src/indexer/index-coordinator';
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -275,6 +276,71 @@ describe('stress: large-scale indexing', () => {
     expect(remaining.length).toBe(0);
   });
 
+  it('should search relations with srcFilePathPattern at scale', () => {
+    const start = performance.now();
+
+    // Pattern-match import relations from generated files
+    const results = gildash.searchRelations({
+      type: 'imports',
+      srcFilePathPattern: '**/module_1*.ts',
+      limit: FILES_WITH_IMPORTS,
+    });
+
+    const elapsed = performance.now() - start;
+    console.log(`[stress] searchRelations(srcFilePathPattern) returned ${results.length} results in ${formatMs(elapsed)}`);
+
+    // module_1, module_10..module_19, module_100..module_199, module_1000..module_1999
+    // all import from the module before them in the chain (if index < FILES_WITH_IMPORTS)
+    expect(results.length).toBeGreaterThan(0);
+
+    // Every returned relation should be an 'imports' type
+    for (const r of results) {
+      expect(r.type).toBe('imports');
+      expect(r.srcFilePath).toContain('module_1');
+    }
+  });
+
+  it('should handle reindex with before/after snapshots at scale', async () => {
+    const heapBefore = process.memoryUsage().heapUsed;
+    const start = performance.now();
+
+    // reindex on unchanged files: before-snapshot covers all files in DB,
+    // after-snapshot covers only changed files (none here)
+    const result = await gildash.reindex();
+
+    const elapsed = performance.now() - start;
+    const heapAfter = process.memoryUsage().heapUsed;
+
+    console.log(`[stress] reindex() completed in ${formatMs(elapsed)}`);
+    console.log(`[stress] reindex() result: ${result.indexedFiles} indexed, ` +
+      `${result.changedFiles.length} changed, ${result.deletedFiles.length} deleted`);
+    console.log(`[stress] Heap during reindex: ${formatBytes(heapAfter)} (delta: ${formatBytes(heapAfter - heapBefore)})`);
+
+    // No files changed on disk → 0 files were re-indexed
+    expect(result.changedFiles).toHaveLength(0);
+    expect(result.deletedFiles).toHaveLength(0);
+    expect(result.failedFiles).toHaveLength(0);
+
+    // renamedSymbols and movedSymbols should always be empty on fullIndex
+    expect(result.renamedSymbols).toHaveLength(0);
+    expect(result.movedSymbols).toHaveLength(0);
+
+    // Verify IndexResult structure is complete (all required fields present)
+    expect(typeof result.indexedFiles).toBe('number');
+    expect(typeof result.removedFiles).toBe('number');
+    expect(typeof result.totalSymbols).toBe('number');
+    expect(typeof result.totalRelations).toBe('number');
+    expect(typeof result.totalAnnotations).toBe('number');
+    expect(typeof result.durationMs).toBe('number');
+    expect(Array.isArray(result.changedSymbols.added)).toBe(true);
+    expect(Array.isArray(result.changedSymbols.modified)).toBe(true);
+    expect(Array.isArray(result.changedSymbols.removed)).toBe(true);
+    expect(Array.isArray(result.changedRelations.added)).toBe(true);
+    expect(Array.isArray(result.changedRelations.removed)).toBe(true);
+    expect(Array.isArray(result.renamedSymbols)).toBe(true);
+    expect(Array.isArray(result.movedSymbols)).toBe(true);
+  });
+
   it('should stay within memory budget', () => {
     const mem = process.memoryUsage();
     console.log('[stress] ── Final Memory Summary ──');
@@ -289,5 +355,161 @@ describe('stress: large-scale indexing', () => {
 
     // Absolute cap: heap should not exceed 1 GB for 10k files
     expect(mem.heapUsed).toBeLessThan(1024 * 1024 * 1024);
+  });
+});
+
+// ── IndexResult from fresh fullIndex ────────────────────────────────────────
+
+describe('stress: IndexResult from fresh fullIndex', () => {
+  const FRESH_FILE_COUNT = 200;
+  const FRESH_FILES_WITH_IMPORTS = 50;
+
+  let freshTmpDir: string;
+  let freshGildash: Gildash;
+  let indexResult: IndexResult;
+
+  beforeAll(async () => {
+    freshTmpDir = await mkdtemp(join(tmpdir(), 'gildash-stress-fresh-'));
+    const srcDir = join(freshTmpDir, 'src');
+    await mkdir(srcDir, { recursive: true });
+
+    await writeFile(
+      join(freshTmpDir, 'package.json'),
+      JSON.stringify({ name: 'stress-fresh-test' }),
+    );
+
+    // Generate files using the same structure as the main stress fixture
+    const writePromises: Promise<void>[] = [];
+    for (let i = 0; i < FRESH_FILE_COUNT; i++) {
+      const fileName = `gen_${i}.ts`;
+      let content: string;
+
+      if (i < FRESH_FILES_WITH_IMPORTS && i > 0) {
+        const depIndex = i - 1;
+        content = [
+          `import { val_${depIndex} } from './gen_${depIndex}';`,
+          '',
+          `/** @deprecated Use val_${i}_v2 instead */`,
+          `export const val_${i} = val_${depIndex} + ${i};`,
+        ].join('\n');
+      } else {
+        content = `export const val_${i} = ${i};\n`;
+      }
+
+      writePromises.push(writeFile(join(srcDir, fileName), content));
+    }
+    await Promise.all(writePromises);
+
+    // First open: indexes everything into the DB
+    freshGildash = await Gildash.open({ projectRoot: freshTmpDir, watchMode: false });
+
+    // Delete all source files so reindex sees them as removed
+    const deletePromises: Promise<void>[] = [];
+    for (let i = 0; i < FRESH_FILE_COUNT; i++) {
+      deletePromises.push(unlink(join(srcDir, `gen_${i}.ts`)));
+    }
+    await Promise.all(deletePromises);
+    await freshGildash.reindex();
+
+    // Recreate all source files (same content as before)
+    const recreatePromises: Promise<void>[] = [];
+    for (let i = 0; i < FRESH_FILE_COUNT; i++) {
+      const fileName = `gen_${i}.ts`;
+      let content: string;
+
+      if (i < FRESH_FILES_WITH_IMPORTS && i > 0) {
+        const depIndex = i - 1;
+        content = [
+          `import { val_${depIndex} } from './gen_${depIndex}';`,
+          '',
+          `/** @deprecated Use val_${i}_v2 instead */`,
+          `export const val_${i} = val_${depIndex} + ${i};`,
+        ].join('\n');
+      } else {
+        content = `export const val_${i} = ${i};\n`;
+      }
+
+      recreatePromises.push(writeFile(join(srcDir, fileName), content));
+    }
+    await Promise.all(recreatePromises);
+
+    // Reindex: DB is empty (all removed), files are back → everything appears as "added"
+    indexResult = await freshGildash.reindex();
+
+    console.log(`[stress-fresh] IndexResult: ${indexResult.indexedFiles} indexed, ` +
+      `${indexResult.changedSymbols.added.length} symbols added, ` +
+      `${indexResult.changedRelations.added.length} relations added`);
+  });
+
+  afterAll(async () => {
+    if (freshGildash) {
+      await freshGildash.close({ cleanup: true });
+    }
+    if (freshTmpDir) {
+      await rm(freshTmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it('should report all relations as added on fresh fullIndex', () => {
+    // Files 1..FRESH_FILES_WITH_IMPORTS-1 each import from the previous file
+    const expectedRelations = FRESH_FILES_WITH_IMPORTS - 1;
+    expect(indexResult.changedRelations.added.length).toBe(expectedRelations);
+    expect(indexResult.changedRelations.removed).toHaveLength(0);
+
+    // Every added relation should be an 'imports' type from the chain
+    for (const rel of indexResult.changedRelations.added) {
+      expect(rel.type).toBe('imports');
+      expect(rel.srcFilePath).toContain('gen_');
+      expect(rel.dstFilePath).toContain('gen_');
+    }
+  });
+
+  it('should report all symbols as added with correct isExported property', () => {
+    // Every file exports exactly one symbol
+    expect(indexResult.changedSymbols.added.length).toBe(FRESH_FILE_COUNT);
+    expect(indexResult.changedSymbols.removed).toHaveLength(0);
+    expect(indexResult.changedSymbols.modified).toHaveLength(0);
+
+    // All added symbols must have isExported as a boolean
+    for (const sym of indexResult.changedSymbols.added) {
+      expect(typeof sym.isExported).toBe('boolean');
+    }
+
+    // All symbols in this fixture are exported
+    const exported = indexResult.changedSymbols.added.filter(s => s.isExported);
+    const notExported = indexResult.changedSymbols.added.filter(s => !s.isExported);
+    expect(exported.length).toBe(FRESH_FILE_COUNT);
+    expect(notExported.length).toBe(0);
+  });
+
+  it('should report empty renamedSymbols and movedSymbols on fullIndex', () => {
+    // Rename and move detection is incremental only; fullIndex should report none
+    expect(indexResult.renamedSymbols).toBeArrayOfSize(0);
+    expect(indexResult.movedSymbols).toBeArrayOfSize(0);
+  });
+
+  it('should search relations with srcFilePathPattern across generated files', () => {
+    const results = freshGildash.searchRelations({
+      type: 'imports',
+      srcFilePathPattern: '**/gen_*',
+      limit: FRESH_FILE_COUNT,
+    });
+
+    // Every file in the import chain (1..FRESH_FILES_WITH_IMPORTS-1) has one import relation
+    expect(results.length).toBe(FRESH_FILES_WITH_IMPORTS - 1);
+    for (const r of results) {
+      expect(r.type).toBe('imports');
+      expect(r.srcFilePath).toContain('gen_');
+    }
+  });
+
+  it('should keep relation snapshots within memory budget', () => {
+    const mem = process.memoryUsage();
+    console.log('[stress-fresh] ── Memory After IndexResult ──');
+    console.log(`[stress-fresh]   heapUsed:  ${formatBytes(mem.heapUsed)}`);
+
+    // Per-file memory budget: < 0.5 MB per indexed file (same as main stress test)
+    const perFileHeapMb = mem.heapUsed / 1024 / 1024 / FRESH_FILE_COUNT;
+    expect(perFileHeapMb).toBeLessThan(0.5);
   });
 });
