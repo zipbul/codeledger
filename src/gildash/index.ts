@@ -228,6 +228,23 @@ export class Gildash {
     return semanticApi.getImplementations(this._ctx, symbolName, filePath, project);
   }
 
+  isTypeAssignableTo(
+    sourceSymbol: string,
+    sourceFilePath: string,
+    targetSymbol: string,
+    targetFilePath: string,
+    project?: string,
+  ): boolean | null {
+    return semanticApi.isTypeAssignableTo(
+      this._ctx,
+      sourceSymbol,
+      sourceFilePath,
+      targetSymbol,
+      targetFilePath,
+      project,
+    );
+  }
+
   getSemanticModuleInterface(filePath: string): SemanticModuleInterface {
     return semanticApi.getSemanticModuleInterface(this._ctx, filePath);
   }

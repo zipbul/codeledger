@@ -568,6 +568,89 @@ describe("TypeCollector", () => {
     expect(() => collector.collectAt(filePath, 6)).toThrow();
   });
 
+  // ── isAssignableTo ──────────────────────────────────────────────────────────
+
+  it("should return true when source type is assignable to target type", () => {
+    // Arrange
+    const prog = makeProg();
+    const srcFile = "/project/src/assign-src.ts";
+    const tgtFile = "/project/src/assign-tgt.ts";
+    const srcContent = "export const src: string = 'hello';";
+    const tgtContent = "export const tgt: string | number = 0;";
+    prog.notifyFileChanged(srcFile, srcContent);
+    prog.notifyFileChanged(tgtFile, tgtContent);
+    const collector = new TypeCollector(prog);
+
+    // Act — string is assignable to string | number
+    const result = collector.isAssignableTo(
+      srcFile, pos(srcContent, "src"),
+      tgtFile, pos(tgtContent, "tgt"),
+    );
+
+    // Assert
+    expect(result).toBe(true);
+  });
+
+  it("should return false when source type is not assignable to target type", () => {
+    // Arrange
+    const prog = makeProg();
+    const srcFile = "/project/src/noassign-src.ts";
+    const tgtFile = "/project/src/noassign-tgt.ts";
+    const srcContent = "export const src: string | number = 0;";
+    const tgtContent = "export const tgt: string = 'x';";
+    prog.notifyFileChanged(srcFile, srcContent);
+    prog.notifyFileChanged(tgtFile, tgtContent);
+    const collector = new TypeCollector(prog);
+
+    // Act — string | number is NOT assignable to string
+    const result = collector.isAssignableTo(
+      srcFile, pos(srcContent, "src"),
+      tgtFile, pos(tgtContent, "tgt"),
+    );
+
+    // Assert
+    expect(result).toBe(false);
+  });
+
+  it("should return null when source file is not in program", () => {
+    // Arrange
+    const prog = makeProg();
+    const tgtFile = "/project/src/tgt-only.ts";
+    const tgtContent = "export const tgt: string = 'x';";
+    prog.notifyFileChanged(tgtFile, tgtContent);
+    const collector = new TypeCollector(prog);
+
+    // Act
+    const result = collector.isAssignableTo(
+      "/project/src/nonexistent.ts", 0,
+      tgtFile, pos(tgtContent, "tgt"),
+    );
+
+    // Assert
+    expect(result).toBeNull();
+  });
+
+  it("should return null when position is not an identifier", () => {
+    // Arrange
+    const prog = makeProg();
+    const srcFile = "/project/src/punct-src.ts";
+    const tgtFile = "/project/src/punct-tgt.ts";
+    const srcContent = "export const src: string = 'hello';";
+    const tgtContent = "export const tgt: number = 0;";
+    prog.notifyFileChanged(srcFile, srcContent);
+    prog.notifyFileChanged(tgtFile, tgtContent);
+    const collector = new TypeCollector(prog);
+
+    // Act — position points to semicolon in source
+    const result = collector.isAssignableTo(
+      srcFile, srcContent.length - 1,
+      tgtFile, pos(tgtContent, "tgt"),
+    );
+
+    // Assert
+    expect(result).toBeNull();
+  });
+
   // 30. [OR] collectAt(A, posA) then collectAt(B, posB) = 역순 → 서로 영향 없음
   it("should return independent results when collecting from two different files in different orders", () => {
     // Arrange

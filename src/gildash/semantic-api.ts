@@ -96,6 +96,29 @@ export function getImplementations(
   }
 }
 
+/** Check whether a source symbol's type is assignable to a target symbol's type. */
+export function isTypeAssignableTo(
+  ctx: GildashContext,
+  sourceSymbol: string,
+  sourceFilePath: string,
+  targetSymbol: string,
+  targetFilePath: string,
+  project?: string,
+): boolean | null {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
+  try {
+    const src = resolveSymbolPosition(ctx, sourceSymbol, sourceFilePath, project);
+    if (!src) throw new GildashError('search', `Gildash: source symbol '${sourceSymbol}' not found in '${sourceFilePath}'`);
+    const tgt = resolveSymbolPosition(ctx, targetSymbol, targetFilePath, project);
+    if (!tgt) throw new GildashError('search', `Gildash: target symbol '${targetSymbol}' not found in '${targetFilePath}'`);
+    return ctx.semanticLayer.isTypeAssignableTo(src.absPath, src.position, tgt.absPath, tgt.position);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('semantic', 'Gildash: isTypeAssignableTo failed', { cause: e });
+  }
+}
+
 /** Retrieve the semantic module interface — exported symbols with resolved types. */
 export function getSemanticModuleInterface(
   ctx: GildashContext,

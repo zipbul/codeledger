@@ -137,6 +137,43 @@ export class TypeCollector {
   }
 
   /**
+   * 두 위치의 타입 호환성을 검사한다.
+   *
+   * `sourceFilePath:sourcePosition`의 타입이 `targetFilePath:targetPosition`의 타입에
+   * 할당 가능한지 여부를 반환한다.
+   *
+   * - 파일이 없거나 위치에 식별자가 없으면 `null` 반환
+   * - `TscProgram`이 disposed 상태이면 throw (getProgram이 throw)
+   */
+  isAssignableTo(
+    sourceFilePath: string,
+    sourcePosition: number,
+    targetFilePath: string,
+    targetPosition: number,
+  ): boolean | null {
+    const checker = this.program.getChecker();
+    const tsProgram = this.program.getProgram();
+
+    const srcFile = tsProgram.getSourceFile(sourceFilePath);
+    if (!srcFile) return null;
+    const srcNode = findNodeAtPosition(srcFile, sourcePosition);
+    if (!srcNode || !ts.isIdentifier(srcNode)) return null;
+
+    const dstFile = tsProgram.getSourceFile(targetFilePath);
+    if (!dstFile) return null;
+    const dstNode = findNodeAtPosition(dstFile, targetPosition);
+    if (!dstNode || !ts.isIdentifier(dstNode)) return null;
+
+    try {
+      const sourceType = checker.getTypeAtLocation(srcNode);
+      const targetType = checker.getTypeAtLocation(dstNode);
+      return checker.isTypeAssignableTo(sourceType, targetType);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * `filePath`에서 모든 선언 이름 심볼의 타입을 수집한다.
    *
    * 반환 Map의 key = 선언 이름 식별자의 시작 위치(0-based).

@@ -157,6 +157,23 @@ export class SemanticLayer {
     return this.#implementationFinder.findAt(filePath, position);
   }
 
+  // ── Type assignability ─────────────────────────────────────────────
+
+  isTypeAssignableTo(
+    sourceFilePath: string,
+    sourcePosition: number,
+    targetFilePath: string,
+    targetPosition: number,
+  ): boolean | null {
+    this.#assertNotDisposed();
+    return this.#typeCollector.isAssignableTo(
+      sourceFilePath,
+      sourcePosition,
+      targetFilePath,
+      targetPosition,
+    );
+  }
+
   // ── Symbol graph ────────────────────────────────────────────────────────
 
   getSymbolNode(filePath: string, position: number): SymbolNode | null {

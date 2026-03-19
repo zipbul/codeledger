@@ -101,6 +101,7 @@ export type SemanticLayerLike = Pick<
   | 'collectFileTypes'
   | 'findReferences'
   | 'findImplementations'
+  | 'isTypeAssignableTo'
   | 'getModuleInterface'
   | 'getSymbolNode'
   | 'notifyFileChanged'

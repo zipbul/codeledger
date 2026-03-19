@@ -8,6 +8,7 @@ import {
   getSemanticReferences,
   getImplementations,
   getSemanticModuleInterface,
+  isTypeAssignableTo,
 } from './semantic-api';
 
 // ─── Fixtures ───────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ function makeSemanticLayer(overrides?: Record<string, unknown>) {
     dispose: mock(() => {}),
     isDisposed: false,
     collectFileTypes: mock(() => []),
+    isTypeAssignableTo: mock(() => null),
     ...overrides,
   };
 }
@@ -312,6 +314,105 @@ describe('getSemanticModuleInterface', () => {
     } catch (e) {
       expect(e).toBeInstanceOf(GildashError);
       expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBe(error);
+    }
+  });
+});
+
+// ─── isTypeAssignableTo ─────────────────────────────────────────────
+
+describe('isTypeAssignableTo', () => {
+  it('should throw GildashError when source symbol not found', () => {
+    const ctx = makeCtx({ symbolSearchFn: mock(() => []) as any });
+
+    expect(() =>
+      isTypeAssignableTo(ctx, 'Missing', '/project/src/a.ts', 'Foo', '/project/src/b.ts'),
+    ).toThrow(GildashError);
+    try {
+      isTypeAssignableTo(ctx, 'Missing', '/project/src/a.ts', 'Foo', '/project/src/b.ts');
+    } catch (e) {
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).message).toContain('source symbol');
+    }
+  });
+
+  it('should throw GildashError when target symbol not found', () => {
+    const searchFn = mock(() => []) as any;
+    // First call returns source, second returns empty for target
+    searchFn.mockImplementationOnce(() => [dummySym]);
+    searchFn.mockImplementationOnce(() => []);
+    const ctx = makeCtx({ symbolSearchFn: searchFn });
+
+    try {
+      isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Missing', '/project/src/b.ts');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).message).toContain('target symbol');
+    }
+  });
+
+  it('should throw GildashError when semantic layer not enabled', () => {
+    const ctx = makeCtx({ semanticLayer: null });
+
+    expect(() =>
+      isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts'),
+    ).toThrow(GildashError);
+    try {
+      isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts');
+    } catch (e) {
+      expect((e as GildashError).type).toBe('semantic');
+      expect((e as GildashError).message).toContain('semantic layer is not enabled');
+    }
+  });
+
+  it('should return null when tsc cannot resolve types', () => {
+    const layer = makeSemanticLayer({ isTypeAssignableTo: mock(() => null) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    const result = isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts');
+
+    expect(result).toBeNull();
+  });
+
+  it('should return true when source type is assignable to target type', () => {
+    const layer = makeSemanticLayer({ isTypeAssignableTo: mock(() => true) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    const result = isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts');
+
+    expect(result).toBe(true);
+  });
+
+  it('should return false when source type is not assignable to target type', () => {
+    const layer = makeSemanticLayer({ isTypeAssignableTo: mock(() => false) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    const result = isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts');
+
+    expect(result).toBe(false);
+  });
+
+  it('should throw with type closed when ctx is closed', () => {
+    const ctx = makeCtx({ closed: true });
+
+    expect(() =>
+      isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts'),
+    ).toThrow(GildashError);
+  });
+
+  it('should catch exception and throw GildashError with cause', () => {
+    const error = new Error('assignable fail');
+    const layer = makeSemanticLayer({ isTypeAssignableTo: mock(() => { throw error; }) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    try {
+      isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('semantic');
       expect((e as GildashError).cause).toBe(error);
     }
   });
