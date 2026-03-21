@@ -19,6 +19,7 @@ import type {
   Implementation,
   SemanticModuleInterface,
   SemanticExport,
+  SemanticDiagnostic,
 } from "./types";
 
 // ── DI options ───────────────────────────────────────────────────────────────
@@ -310,6 +311,46 @@ export class SemanticLayer {
       searchFrom = idx + 1;
     }
     return null;
+  }
+
+  // ── Diagnostics ─────────────────────────────────────────────────────────
+
+  /**
+   * Return tsc semantic diagnostics for an indexed file.
+   *
+   * Only files previously registered via `notifyFileChanged` produce
+   * meaningful results. Non-indexed files return an empty array.
+   */
+  getDiagnostics(filePath: string): SemanticDiagnostic[] {
+    this.#assertNotDisposed();
+    const program = this.#program.getProgram();
+    const sourceFile = program.getSourceFile(filePath);
+    if (!sourceFile) return [];
+
+    const categoryMap: Record<number, SemanticDiagnostic['category']> = {
+      [ts.DiagnosticCategory.Error]: 'error',
+      [ts.DiagnosticCategory.Warning]: 'warning',
+      [ts.DiagnosticCategory.Suggestion]: 'suggestion',
+      [ts.DiagnosticCategory.Message]: 'suggestion',
+    };
+
+    return program.getSemanticDiagnostics(sourceFile).map((d) => {
+      let line = 1;
+      let column = 0;
+      if (d.file && d.start !== undefined) {
+        const pos = ts.getLineAndCharacterOfPosition(d.file, d.start);
+        line = pos.line + 1;
+        column = pos.character;
+      }
+      return {
+        filePath: d.file?.fileName ?? filePath,
+        line,
+        column,
+        message: ts.flattenDiagnosticMessageText(d.messageText, '\n'),
+        code: d.code,
+        category: categoryMap[d.category] ?? 'error',
+      };
+    });
   }
 
   // ── Lifecycle ───────────────────────────────────────────────────────────

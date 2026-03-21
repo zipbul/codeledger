@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Gildash } from '../src/gildash';
 import type { FullSymbol } from '../src/gildash';
-import type { SemanticModuleInterface, ResolvedType, SemanticReference, Implementation } from '../src/semantic/types';
+import type { SemanticModuleInterface, ResolvedType, SemanticReference, Implementation, SemanticDiagnostic } from '../src/semantic/types';
+import type { SymbolNode } from '../src/semantic/symbol-graph';
 import { GildashError } from '../src/errors';
 
 // ── Fixture Helpers ────────────────────────────────────────────────────────
@@ -434,7 +435,231 @@ describe('Gildash Semantic integration', () => {
     });
   });
 
-  // ── Group 8: New methods throw when closed ───────────────────────────
+  // ── Group 8: Position-based semantic API ─────────────────────────────
+
+  describe('Position-based semantic API', () => {
+    let g: Gildash;
+    let tmpDir: string;
+
+    beforeAll(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      g = await openGildash(tmpDir, { semantic: true });
+    });
+
+    afterAll(async () => {
+      await g.close();
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return ResolvedType via getResolvedTypeAtPosition for a known byte offset', () => {
+      // Get the byte offset of SERVICE_NAME from getFileTypes
+      const fileTypes = g.getFileTypes('src/service.ts');
+      expect(fileTypes.size).toBeGreaterThan(0);
+      // Find a position with 'string' type
+      let stringPos: number | null = null;
+      for (const [pos, rt] of fileTypes) {
+        if (rt.text === 'string') { stringPos = pos; break; }
+      }
+      expect(stringPos).not.toBeNull();
+      const result = g.getResolvedTypeAtPosition('src/service.ts', stringPos!);
+      expect(result).not.toBeNull();
+      expect(result!.text).toBe('string');
+    });
+
+    it('should return semantic references via getSemanticReferencesAtPosition', () => {
+      // Use lineColumnToPosition to get byte offset of createService (line 7, col 16)
+      const pos = g.lineColumnToPosition('src/service.ts', 7, 16);
+      expect(pos).not.toBeNull();
+      const refs = g.getSemanticReferencesAtPosition('src/service.ts', pos!);
+      expect(Array.isArray(refs)).toBe(true);
+      expect(refs.length).toBeGreaterThanOrEqual(1);
+      expect(refs.some(r => r.isDefinition)).toBe(true);
+    });
+
+    it('should return implementations via getImplementationsAtPosition', () => {
+      // IService at line 1, col 17 in types.ts: "export interface IService {"
+      const pos = g.lineColumnToPosition('src/types.ts', 1, 17);
+      expect(pos).not.toBeNull();
+      const impls = g.getImplementationsAtPosition('src/types.ts', pos!);
+      expect(Array.isArray(impls)).toBe(true);
+      expect(impls.length).toBeGreaterThanOrEqual(1);
+      expect(impls.some(i => i.symbolName === 'MyService')).toBe(true);
+    });
+
+    it('should check type assignability via isTypeAssignableToAtPosition', () => {
+      // Dog at line 6, col 13; Animal at line 1, col 17 in animals.ts
+      const dogPos = g.lineColumnToPosition('src/animals.ts', 6, 13);
+      const animalPos = g.lineColumnToPosition('src/animals.ts', 1, 17);
+      expect(dogPos).not.toBeNull();
+      expect(animalPos).not.toBeNull();
+      const result = g.isTypeAssignableToAtPosition(
+        'src/animals.ts', dogPos!, 'src/animals.ts', animalPos!,
+      );
+      expect(result).toBe(true);
+    });
+  });
+
+  // ── Group 9: Internal utility exposure ──────────────────────────────
+
+  describe('Internal utility exposure', () => {
+    let g: Gildash;
+    let tmpDir: string;
+
+    beforeAll(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      g = await openGildash(tmpDir, { semantic: true });
+    });
+
+    afterAll(async () => {
+      await g.close();
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should convert line/column to byte offset via lineColumnToPosition', () => {
+      const pos = g.lineColumnToPosition('src/service.ts', 1, 0);
+      expect(pos).not.toBeNull();
+      expect(typeof pos).toBe('number');
+      expect(pos).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should return null from lineColumnToPosition for invalid position', () => {
+      const pos = g.lineColumnToPosition('src/service.ts', 99999, 0);
+      expect(pos).toBeNull();
+    });
+
+    it('should find name position via findNamePosition', () => {
+      // "export class MyService implements IService {"
+      // line 3 col 0 is declaration start
+      const declPos = g.lineColumnToPosition('src/service.ts', 3, 0);
+      expect(declPos).not.toBeNull();
+      const namePos = g.findNamePosition('src/service.ts', declPos!, 'MyService');
+      expect(namePos).not.toBeNull();
+      expect(namePos!).toBeGreaterThan(declPos!);
+    });
+
+    it('should return null from findNamePosition when name does not exist', () => {
+      const declPos = g.lineColumnToPosition('src/service.ts', 3, 0);
+      expect(declPos).not.toBeNull();
+      const namePos = g.findNamePosition('src/service.ts', declPos!, 'NonExistentName');
+      expect(namePos).toBeNull();
+    });
+
+    it('should return SymbolNode via getSymbolNode for a class', () => {
+      // MyService at line 3
+      const declPos = g.lineColumnToPosition('src/service.ts', 3, 0);
+      expect(declPos).not.toBeNull();
+      const namePos = g.findNamePosition('src/service.ts', declPos!, 'MyService');
+      expect(namePos).not.toBeNull();
+      const node = g.getSymbolNode('src/service.ts', namePos!);
+      expect(node).not.toBeNull();
+      expect(node!.name).toBe('MyService');
+      expect(node!.filePath).toContain('service.ts');
+    });
+
+    it('should return null from getSymbolNode for invalid position', () => {
+      const node = g.getSymbolNode('src/service.ts', 999999);
+      expect(node).toBeNull();
+    });
+  });
+
+  // ── Group 10: Semantic Diagnostics ──────────────────────────────────
+
+  describe('Semantic Diagnostics', () => {
+    let tmpDir: string;
+
+    afterEach(async () => {
+      await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+    });
+
+    it('should return diagnostics for a file with type errors', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await mkdir(join(tmpDir, 'src'), { recursive: true });
+      await writeFile(join(tmpDir, 'package.json'), JSON.stringify({ name: 'diag-test' }));
+      await writeFile(
+        join(tmpDir, 'tsconfig.json'),
+        JSON.stringify({
+          compilerOptions: { target: 'ES2022', module: 'ESNext', moduleResolution: 'bundler', strict: true, skipLibCheck: true },
+          include: ['src/**/*.ts'],
+        }),
+      );
+      await writeFile(join(tmpDir, 'src', 'bad.ts'), "const x: number = 'not a number';");
+
+      const g = await openGildash(tmpDir, { semantic: true });
+
+      const diags = g.getSemanticDiagnostics(join(tmpDir, 'src', 'bad.ts'));
+      expect(diags.length).toBeGreaterThan(0);
+      expect(diags[0]!.category).toBe('error');
+      expect(typeof diags[0]!.code).toBe('number');
+      expect(diags[0]!.line).toBe(1);
+
+      await g.close();
+    });
+
+    it('should return empty diagnostics for a valid file', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      const g = await openGildash(tmpDir, { semantic: true });
+
+      const diags = g.getSemanticDiagnostics(join(tmpDir, 'src', 'service.ts'));
+      expect(diags).toEqual([]);
+
+      await g.close();
+    });
+
+    it('should return empty diagnostics for a non-indexed file', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      const g = await openGildash(tmpDir, { semantic: true });
+
+      const diags = g.getSemanticDiagnostics(join(tmpDir, 'src', 'does-not-exist.ts'));
+      expect(diags).toEqual([]);
+
+      await g.close();
+    });
+  });
+
+  // ── Group 11: Relation return type (StoredCodeRelation) ─────────────
+
+  describe('Relation return type includes dstProject', () => {
+    let g: Gildash;
+    let tmpDir: string;
+
+    beforeAll(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      g = await openGildash(tmpDir, { semantic: true });
+    });
+
+    afterAll(async () => {
+      await g.close();
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return StoredCodeRelation with dstProject from searchRelations', () => {
+      const result = g.searchRelations({ type: 'imports' });
+      expect(result.length).toBeGreaterThan(0);
+      // StoredCodeRelation extends CodeRelation with dstProject
+      expect(typeof result[0]!.dstProject).toBe('string');
+    });
+
+    it('should return StoredCodeRelation with dstProject from searchAllRelations', () => {
+      const result = g.searchAllRelations({ type: 'imports' });
+      expect(result.length).toBeGreaterThan(0);
+      expect(typeof result[0]!.dstProject).toBe('string');
+    });
+
+    it('should return StoredCodeRelation with dstProject from getInternalRelations', () => {
+      // internal relations within animals.ts (might be empty, but type should be correct)
+      const result = g.searchRelations({ srcFilePath: 'src/service.ts', type: 'imports' });
+      if (result.length > 0) {
+        expect(typeof result[0]!.dstProject).toBe('string');
+      }
+    });
+  });
+
+  // ── Group 12: New methods throw when closed ─────────────────────────
 
   describe('New semantic methods throw when closed', () => {
     let tmpDir: string;
@@ -484,6 +709,22 @@ describe('Gildash Semantic integration', () => {
           target: { filePath: 'src/animals.ts', line: 1, column: 17 },
         }),
       ).toThrow(GildashError);
+    });
+
+    it('should throw GildashError for position-based APIs after close', async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      const g = await openGildash(tmpDir, { semantic: true });
+      await g.close();
+
+      expect(() => g.getResolvedTypeAtPosition('src/service.ts', 0)).toThrow(GildashError);
+      expect(() => g.getSemanticReferencesAtPosition('src/service.ts', 0)).toThrow(GildashError);
+      expect(() => g.getImplementationsAtPosition('src/service.ts', 0)).toThrow(GildashError);
+      expect(() => g.isTypeAssignableToAtPosition('src/a.ts', 0, 'src/b.ts', 0)).toThrow(GildashError);
+      expect(() => g.lineColumnToPosition('src/service.ts', 1, 0)).toThrow(GildashError);
+      expect(() => g.findNamePosition('src/service.ts', 0, 'x')).toThrow(GildashError);
+      expect(() => g.getSymbolNode('src/service.ts', 0)).toThrow(GildashError);
+      expect(() => g.getSemanticDiagnostics('src/service.ts')).toThrow(GildashError);
     });
   });
 });

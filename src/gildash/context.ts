@@ -2,6 +2,7 @@ import type { Result } from '@zipbul/result';
 import type { ParsedFile } from '../parser/types';
 import type { ParserOptions, Program } from 'oxc-parser';
 import type { ExtractedSymbol, CodeRelation } from '../extractor/types';
+import type { StoredCodeRelation } from '../search/relation-search';
 import type { DbConnection } from '../store/connection';
 import type { FileRepository, FileRecord } from '../store/repositories/file.repository';
 import type { SymbolRepository } from '../store/repositories/symbol.repository';
@@ -52,7 +53,7 @@ export type RelationSearchFn = (options: {
   relationRepo: IRelationRepo;
   project?: string;
   query: RelationSearchQuery;
-}) => CodeRelation[];
+}) => StoredCodeRelation[];
 
 export type PatternSearchFn = (
   opts: { pattern: string; filePaths: string[] },
@@ -104,6 +105,7 @@ export type SemanticLayerLike = Pick<
   | 'isTypeAssignableTo'
   | 'getModuleInterface'
   | 'getSymbolNode'
+  | 'getDiagnostics'
   | 'notifyFileChanged'
   | 'notifyFileDeleted'
   | 'dispose'

@@ -392,6 +392,13 @@ describe('Gildash integration', () => {
       expect(result.some((p: string) => p.includes('utils'))).toBe(true);
     });
 
+    it('should return transitive dependents via getTransitiveDependents', async () => {
+      // utils.ts is imported by app.ts (and possibly others transitively)
+      const result = await g.getTransitiveDependents('src/utils.ts');
+      expect(result.length).toBeGreaterThanOrEqual(1);
+      expect(result.some((p: string) => p.includes('app'))).toBe(true);
+    });
+
     it('should detect cycle and return cycle paths when circular imports exist', async () => {
       const cycleResult = await g.hasCycle();
       expect(cycleResult).toBe(true);

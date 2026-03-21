@@ -1,6 +1,7 @@
 import type { ParsedFile } from '../parser/types';
 import type { ParserOptions } from 'oxc-parser';
 import type { ExtractedSymbol, CodeRelation } from '../extractor/types';
+import type { StoredCodeRelation } from '../search/relation-search';
 import type { IndexResult } from '../indexer/index-coordinator';
 import type { ProjectBoundary } from '../common/project-discovery';
 import type { SymbolSearchQuery, SymbolSearchResult } from '../search/symbol-search';
@@ -8,7 +9,8 @@ import type { RelationSearchQuery } from '../search/relation-search';
 import type { SymbolStats } from '../store/repositories/symbol.repository';
 import type { FileRecord } from '../store/repositories/file.repository';
 import type { PatternMatch } from '../search/pattern-search';
-import type { ResolvedType, SemanticReference, Implementation, SemanticModuleInterface } from '../semantic/types';
+import type { ResolvedType, SemanticReference, Implementation, SemanticModuleInterface, SemanticDiagnostic } from '../semantic/types';
+import type { SymbolNode } from '../semantic/symbol-graph';
 import type { GildashContext } from './context';
 import type { FileChangeEvent } from '../watcher/types';
 import { GildashError } from '../errors';
@@ -133,7 +135,7 @@ export class Gildash {
     return queryApi.searchSymbols(this._ctx, query);
   }
 
-  searchRelations(query: RelationSearchQuery): CodeRelation[] {
+  searchRelations(query: RelationSearchQuery): StoredCodeRelation[] {
     return queryApi.searchRelations(this._ctx, query);
   }
 
@@ -141,7 +143,7 @@ export class Gildash {
     return queryApi.searchAllSymbols(this._ctx, query);
   }
 
-  searchAllRelations(query: RelationSearchQuery): CodeRelation[] {
+  searchAllRelations(query: RelationSearchQuery): StoredCodeRelation[] {
     return queryApi.searchAllRelations(this._ctx, query);
   }
 
@@ -149,7 +151,7 @@ export class Gildash {
     return queryApi.listIndexedFiles(this._ctx, project);
   }
 
-  getInternalRelations(filePath: string, project?: string): CodeRelation[] {
+  getInternalRelations(filePath: string, project?: string): StoredCodeRelation[] {
     return queryApi.getInternalRelations(this._ctx, filePath, project);
   }
 
@@ -197,6 +199,10 @@ export class Gildash {
 
   async getTransitiveDependencies(filePath: string, project?: string): Promise<string[]> {
     return graphApi.getTransitiveDependencies(this._ctx, filePath, project);
+  }
+
+  async getTransitiveDependents(filePath: string, project?: string): Promise<string[]> {
+    return graphApi.getTransitiveDependents(this._ctx, filePath, project);
   }
 
   async getCyclePaths(project?: string, options?: { maxCycles?: number }): Promise<string[][]> {
@@ -262,6 +268,45 @@ export class Gildash {
     target: { filePath: string; line: number; column: number };
   }): boolean | null {
     return semanticApi.isTypeAssignableToAt(this._ctx, opts);
+  }
+
+  getResolvedTypeAtPosition(filePath: string, position: number): ResolvedType | null {
+    return semanticApi.getResolvedTypeAtPosition(this._ctx, filePath, position);
+  }
+
+  getSemanticReferencesAtPosition(filePath: string, position: number): SemanticReference[] {
+    return semanticApi.getSemanticReferencesAtPosition(this._ctx, filePath, position);
+  }
+
+  getImplementationsAtPosition(filePath: string, position: number): Implementation[] {
+    return semanticApi.getImplementationsAtPosition(this._ctx, filePath, position);
+  }
+
+  isTypeAssignableToAtPosition(
+    srcFilePath: string,
+    srcPosition: number,
+    dstFilePath: string,
+    dstPosition: number,
+  ): boolean | null {
+    return semanticApi.isTypeAssignableToAtPosition(
+      this._ctx, srcFilePath, srcPosition, dstFilePath, dstPosition,
+    );
+  }
+
+  lineColumnToPosition(filePath: string, line: number, column: number): number | null {
+    return semanticApi.lineColumnToPosition(this._ctx, filePath, line, column);
+  }
+
+  findNamePosition(filePath: string, declarationPos: number, name: string): number | null {
+    return semanticApi.findNamePosition(this._ctx, filePath, declarationPos, name);
+  }
+
+  getSymbolNode(filePath: string, position: number): SymbolNode | null {
+    return semanticApi.getSymbolNode(this._ctx, filePath, position);
+  }
+
+  getSemanticDiagnostics(filePath: string): SemanticDiagnostic[] {
+    return semanticApi.getSemanticDiagnostics(this._ctx, filePath);
   }
 
   // ─── Misc ───────────────────────────────────────────────────────

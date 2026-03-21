@@ -111,3 +111,24 @@ export interface SemanticExport {
    */
   resolvedType: ResolvedType | null;
 }
+
+/**
+ * A single tsc semantic diagnostic for an indexed file.
+ *
+ * Only covers files known to the Semantic Layer (i.e. files that have been
+ * indexed via `notifyFileChanged`). This is **not** equivalent to `tsc --noEmit`.
+ */
+export interface SemanticDiagnostic {
+  /** Absolute path of the file containing the diagnostic. */
+  filePath: string;
+  /** One-based line number. */
+  line: number;
+  /** Zero-based column offset. */
+  column: number;
+  /** Human-readable diagnostic message. */
+  message: string;
+  /** TypeScript diagnostic code (e.g. `2322` for type mismatch). */
+  code: number;
+  /** Severity category. */
+  category: 'error' | 'warning' | 'suggestion';
+}

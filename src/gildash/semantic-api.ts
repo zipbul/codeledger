@@ -1,7 +1,8 @@
 import path from 'node:path';
 import type { SymbolSearchResult } from '../search/symbol-search';
 import { GildashError } from '../errors';
-import type { ResolvedType, SemanticReference, Implementation, SemanticModuleInterface } from '../semantic/types';
+import type { ResolvedType, SemanticReference, Implementation, SemanticModuleInterface, SemanticDiagnostic } from '../semantic/types';
+import type { SymbolNode } from '../semantic/symbol-graph';
 import type { GildashContext } from './context';
 
 /**
@@ -191,5 +192,151 @@ export function getSemanticModuleInterface(
   } catch (e) {
     if (e instanceof GildashError) throw e;
     throw new GildashError('search', 'Gildash: getSemanticModuleInterface failed', { cause: e });
+  }
+}
+
+// ─── Position-based semantic API ──────────────────────────────────────
+
+/** Retrieve the resolved type at a byte offset without line/column conversion. */
+export function getResolvedTypeAtPosition(
+  ctx: GildashContext,
+  filePath: string,
+  position: number,
+): ResolvedType | null {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
+  try {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.projectRoot, filePath);
+    return ctx.semanticLayer.collectTypeAt(absPath, position);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('semantic', 'Gildash: getResolvedTypeAtPosition failed', { cause: e });
+  }
+}
+
+/** Find all semantic references at a byte offset. */
+export function getSemanticReferencesAtPosition(
+  ctx: GildashContext,
+  filePath: string,
+  position: number,
+): SemanticReference[] {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
+  try {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.projectRoot, filePath);
+    return ctx.semanticLayer.findReferences(absPath, position);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('semantic', 'Gildash: getSemanticReferencesAtPosition failed', { cause: e });
+  }
+}
+
+/** Find implementations at a byte offset. */
+export function getImplementationsAtPosition(
+  ctx: GildashContext,
+  filePath: string,
+  position: number,
+): Implementation[] {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
+  try {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.projectRoot, filePath);
+    return ctx.semanticLayer.findImplementations(absPath, position);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('semantic', 'Gildash: getImplementationsAtPosition failed', { cause: e });
+  }
+}
+
+/** Check type assignability at byte offsets. */
+export function isTypeAssignableToAtPosition(
+  ctx: GildashContext,
+  srcFilePath: string,
+  srcPosition: number,
+  dstFilePath: string,
+  dstPosition: number,
+): boolean | null {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
+  try {
+    const srcAbs = path.isAbsolute(srcFilePath) ? srcFilePath : path.resolve(ctx.projectRoot, srcFilePath);
+    const dstAbs = path.isAbsolute(dstFilePath) ? dstFilePath : path.resolve(ctx.projectRoot, dstFilePath);
+    return ctx.semanticLayer.isTypeAssignableTo(srcAbs, srcPosition, dstAbs, dstPosition);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('semantic', 'Gildash: isTypeAssignableToAtPosition failed', { cause: e });
+  }
+}
+
+// ─── Internal utility exposure ────────────────────────────────────────
+
+/** Convert 1-based line + 0-based column to a byte offset using tsc SourceFile. */
+export function lineColumnToPosition(
+  ctx: GildashContext,
+  filePath: string,
+  line: number,
+  column: number,
+): number | null {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
+  try {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.projectRoot, filePath);
+    return ctx.semanticLayer.lineColumnToPosition(absPath, line, column);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('semantic', 'Gildash: lineColumnToPosition failed', { cause: e });
+  }
+}
+
+/** Find the byte offset of a symbol name starting from its declaration position. */
+export function findNamePosition(
+  ctx: GildashContext,
+  filePath: string,
+  declarationPos: number,
+  name: string,
+): number | null {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
+  try {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.projectRoot, filePath);
+    return ctx.semanticLayer.findNamePosition(absPath, declarationPos, name);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('semantic', 'Gildash: findNamePosition failed', { cause: e });
+  }
+}
+
+/** Retrieve the tsc symbol graph node at a byte offset. */
+export function getSymbolNode(
+  ctx: GildashContext,
+  filePath: string,
+  position: number,
+): SymbolNode | null {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
+  try {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.projectRoot, filePath);
+    return ctx.semanticLayer.getSymbolNode(absPath, position);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('semantic', 'Gildash: getSymbolNode failed', { cause: e });
+  }
+}
+
+// ─── Diagnostics ──────────────────────────────────────────────────────
+
+/** Return tsc semantic diagnostics for an indexed file. */
+export function getSemanticDiagnostics(
+  ctx: GildashContext,
+  filePath: string,
+): SemanticDiagnostic[] {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
+  try {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.projectRoot, filePath);
+    return ctx.semanticLayer.getDiagnostics(absPath);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('semantic', 'Gildash: getSemanticDiagnostics failed', { cause: e });
   }
 }

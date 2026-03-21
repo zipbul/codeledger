@@ -10,6 +10,7 @@ const mockHasCycle = mock(() => false as boolean);
 const mockGetAdjacencyList = mock(() => new Map([['a.ts', ['b.ts']]]));
 const mockGetTransitiveDependencies = mock((_fp: string) => ['b.ts', 'c.ts'] as string[]);
 const mockGetCyclePaths = mock((_opts?: any) => [] as string[][]);
+const mockGetTransitiveDependents = mock((_fp: string) => ['d.ts', 'e.ts'] as string[]);
 const mockGraphGetDependents = mock((_fp: string) => ['x.ts'] as string[]);
 const mockGraphGetDependencies = mock((_fp: string) => ['y.ts', 'z.ts'] as string[]);
 
@@ -19,6 +20,7 @@ class MockDependencyGraph {
   hasCycle = mockHasCycle;
   getAdjacencyList = mockGetAdjacencyList;
   getTransitiveDependencies = mockGetTransitiveDependencies;
+  getTransitiveDependents = mockGetTransitiveDependents;
   getCyclePaths = mockGetCyclePaths;
   getDependents = mockGraphGetDependents;
   getDependencies = mockGraphGetDependencies;
@@ -43,6 +45,7 @@ const {
   hasCycle,
   getImportGraph,
   getTransitiveDependencies,
+  getTransitiveDependents,
   getCyclePaths,
   getFanMetrics,
 } = await import('./graph-api');
@@ -71,6 +74,7 @@ beforeEach(() => {
   mockGetAdjacencyList.mockClear();
   mockGetTransitiveDependencies.mockClear();
   mockGetCyclePaths.mockClear();
+  mockGetTransitiveDependents.mockClear();
   mockGraphGetDependents.mockClear();
   mockGraphGetDependencies.mockClear();
 });
@@ -334,6 +338,41 @@ describe('getTransitiveDependencies', () => {
     const ctx = makeCtx({ closed: true });
 
     await expect(getTransitiveDependencies(ctx, 'a.ts')).rejects.toThrow(GildashError);
+  });
+});
+
+// ─── getTransitiveDependents ─────────────────────────────────────────
+
+describe('getTransitiveDependents', () => {
+  it('should return transitive dependents via getOrBuildGraph', async () => {
+    mockGetTransitiveDependents.mockReturnValue(['d.ts', 'e.ts']);
+    const ctx = makeCtx();
+
+    const result = await getTransitiveDependents(ctx, 'a.ts', 'proj');
+
+    expect(result).toEqual(['d.ts', 'e.ts']);
+    expect(mockGetTransitiveDependents).toHaveBeenCalledWith('a.ts');
+  });
+
+  it('should throw with type closed when ctx is closed', async () => {
+    const ctx = makeCtx({ closed: true });
+
+    await expect(getTransitiveDependents(ctx, 'a.ts')).rejects.toThrow(GildashError);
+  });
+
+  it('should catch exception and throw GildashError with cause', async () => {
+    const error = new Error('transitive fail');
+    mockGetTransitiveDependents.mockImplementation(() => { throw error; });
+    const ctx = makeCtx();
+
+    try {
+      await getTransitiveDependents(ctx, 'a.ts');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('search');
+      expect((e as GildashError).cause).toBe(error);
+    }
   });
 });
 

@@ -1,7 +1,6 @@
 import path from 'node:path';
 import type { SymbolSearchQuery, SymbolSearchResult } from '../search/symbol-search';
-import type { RelationSearchQuery } from '../search/relation-search';
-import type { CodeRelation } from '../extractor/types';
+import type { RelationSearchQuery, StoredCodeRelation } from '../search/relation-search';
 import type { FileRecord } from '../store/repositories/file.repository';
 import type { SymbolStats } from '../store/repositories/symbol.repository';
 import { GildashError } from '../errors';
@@ -40,7 +39,7 @@ export function searchSymbols(
 export function searchRelations(
   ctx: GildashContext,
   query: RelationSearchQuery,
-): CodeRelation[] {
+): StoredCodeRelation[] {
   if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     return ctx.relationSearchFn({ relationRepo: ctx.relationRepo, project: ctx.defaultProject, query });
@@ -68,7 +67,7 @@ export function searchAllSymbols(
 export function searchAllRelations(
   ctx: GildashContext,
   query: RelationSearchQuery,
-): CodeRelation[] {
+): StoredCodeRelation[] {
   if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     return ctx.relationSearchFn({ relationRepo: ctx.relationRepo, project: undefined, query });
@@ -97,7 +96,7 @@ export function getInternalRelations(
   ctx: GildashContext,
   filePath: string,
   project?: string,
-): CodeRelation[] {
+): StoredCodeRelation[] {
   if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
   try {
     return ctx.relationSearchFn({

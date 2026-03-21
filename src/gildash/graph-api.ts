@@ -147,6 +147,22 @@ export async function getTransitiveDependencies(
   }
 }
 
+/** Return all files that transitively depend on `filePath` (reverse BFS). */
+export async function getTransitiveDependents(
+  ctx: GildashContext,
+  filePath: string,
+  project?: string,
+): Promise<string[]> {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  try {
+    const g = getOrBuildGraph(ctx, project);
+    return g.getTransitiveDependents(filePath);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('search', 'Gildash: getTransitiveDependents failed', { cause: e });
+  }
+}
+
 /** Return all cycle paths in the import graph. */
 export async function getCyclePaths(
   ctx: GildashContext,

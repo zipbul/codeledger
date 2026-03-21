@@ -889,4 +889,40 @@ describe('lifecycle state transitions', () => {
 
     expect(ctx.closed).toBe(true);
   });
+
+  it('should reset retry count when acquire succeeds but setup fails, keeping instance alive', async () => {
+    let callCount = 0;
+    const watcher = makeWatcher();
+    watcher.start = mock(async () => { throw new Error('watcher start failed'); });
+    const opts = makeInitOptions({
+      acquireWatcherRoleFn: mock(() => {
+        callCount++;
+        if (callCount === 1) return 'reader';
+        if (callCount <= 6) throw new Error('db unavailable');
+        return 'owner';
+      }),
+      watcherFactory: mock(() => watcher),
+    });
+
+    const ctx = await initializeContext(opts);
+
+    const healthcheck = capturedIntervalCallbacks[capturedIntervalCallbacks.length - 1]!;
+
+    // 5 consecutive failures (should not shut down — below MAX_HEALTHCHECK_RETRIES)
+    for (let i = 0; i < 5; i++) {
+      await healthcheck();
+    }
+
+    // 6th: acquire succeeds → 'owner', but watcher.start throws → rollback to reader, retry count reset
+    await healthcheck();
+
+    expect(ctx.closed).toBe(false);
+    expect(opts._db.close).not.toHaveBeenCalled();
+
+    // 7th: acquire succeeds again → proves retry count was reset (not accumulated to MAX)
+    await healthcheck();
+
+    expect(ctx.closed).toBe(false);
+    await closeContext(ctx);
+  });
 });

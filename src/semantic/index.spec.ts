@@ -697,6 +697,86 @@ describe("SemanticLayer", () => {
     layer.dispose();
   });
 
+  // ── getDiagnostics ─────────────────────────────────────────────────────
+
+  // DIAG-1 [HP] getDiagnostics: returns diagnostics for a file with type errors
+  it("should return diagnostics for a file with type errors", () => {
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+
+    const filePath = "/project/src/err.ts";
+    layer.notifyFileChanged(filePath, "const x: number = 'not a number';");
+
+    const diags = layer.getDiagnostics(filePath);
+
+    expect(Array.isArray(diags)).toBe(true);
+    expect(diags.length).toBeGreaterThan(0);
+    expect(diags[0]!.category).toBe("error");
+    expect(diags[0]!.filePath).toBe(filePath);
+    expect(typeof diags[0]!.code).toBe("number");
+    expect(typeof diags[0]!.message).toBe("string");
+    expect(diags[0]!.line).toBeGreaterThanOrEqual(1);
+    layer.dispose();
+  });
+
+  // DIAG-2 [HP] getDiagnostics: returns empty array for valid file
+  it("should return empty diagnostics for a valid file", () => {
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+
+    const filePath = "/project/src/ok.ts";
+    layer.notifyFileChanged(filePath, "const x: number = 42;");
+
+    const diags = layer.getDiagnostics(filePath);
+
+    expect(diags).toEqual([]);
+    layer.dispose();
+  });
+
+  // DIAG-3 [NE] getDiagnostics: non-indexed file → empty array
+  it("should return empty array for a file not in the program", () => {
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+
+    const diags = layer.getDiagnostics("/project/src/unknown.ts");
+
+    expect(diags).toEqual([]);
+    layer.dispose();
+  });
+
+  // DIAG-4 [NE] getDiagnostics: disposed → throw
+  it("should throw when getDiagnostics is called after dispose", () => {
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+    layer.dispose();
+
+    expect(() => layer.getDiagnostics("/project/src/a.ts")).toThrow();
+  });
+
   // PRUNE-10 [CO] findNamePosition: skip substring match and find standalone identifier
   it("should skip substring match and find standalone identifier in findNamePosition", () => {
     // Arrange

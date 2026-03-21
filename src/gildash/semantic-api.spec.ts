@@ -8,10 +8,14 @@ import {
   getSemanticReferences,
   getImplementations,
   getSemanticModuleInterface,
-  isTypeAssignableTo,
-  getFileTypes,
-  getResolvedTypeAt,
-  isTypeAssignableToAt,
+  getResolvedTypeAtPosition,
+  getSemanticReferencesAtPosition,
+  getImplementationsAtPosition,
+  isTypeAssignableToAtPosition,
+  lineColumnToPosition,
+  findNamePosition,
+  getSymbolNode,
+  getSemanticDiagnostics,
 } from './semantic-api';
 
 // ─── Fixtures ───────────────────────────────────────────────────────
@@ -33,11 +37,12 @@ function makeSemanticLayer(overrides?: Record<string, unknown>) {
     findImplementations: mock(() => []),
     getModuleInterface: mock(() => ({ exports: [] })),
     getSymbolNode: mock(() => null),
+    getDiagnostics: mock(() => []),
+    isTypeAssignableTo: mock(() => true),
     notifyFileChanged: mock(() => {}),
     dispose: mock(() => {}),
     isDisposed: false,
     collectFileTypes: mock(() => []),
-    isTypeAssignableTo: mock(() => null),
     ...overrides,
   };
 }
@@ -322,340 +327,6 @@ describe('getSemanticModuleInterface', () => {
   });
 });
 
-// ─── isTypeAssignableTo ─────────────────────────────────────────────
-
-describe('isTypeAssignableTo', () => {
-  it('should throw GildashError when source symbol not found', () => {
-    const ctx = makeCtx({ symbolSearchFn: mock(() => []) as any });
-
-    expect(() =>
-      isTypeAssignableTo(ctx, 'Missing', '/project/src/a.ts', 'Foo', '/project/src/b.ts'),
-    ).toThrow(GildashError);
-    try {
-      isTypeAssignableTo(ctx, 'Missing', '/project/src/a.ts', 'Foo', '/project/src/b.ts');
-    } catch (e) {
-      expect((e as GildashError).type).toBe('search');
-      expect((e as GildashError).message).toContain('source symbol');
-    }
-  });
-
-  it('should throw GildashError when target symbol not found', () => {
-    const searchFn = mock(() => []) as any;
-    // First call returns source, second returns empty for target
-    searchFn.mockImplementationOnce(() => [dummySym]);
-    searchFn.mockImplementationOnce(() => []);
-    const ctx = makeCtx({ symbolSearchFn: searchFn });
-
-    try {
-      isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Missing', '/project/src/b.ts');
-      expect.unreachable('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(GildashError);
-      expect((e as GildashError).type).toBe('search');
-      expect((e as GildashError).message).toContain('target symbol');
-    }
-  });
-
-  it('should throw GildashError when semantic layer not enabled', () => {
-    const ctx = makeCtx({ semanticLayer: null });
-
-    expect(() =>
-      isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts'),
-    ).toThrow(GildashError);
-    try {
-      isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts');
-    } catch (e) {
-      expect((e as GildashError).type).toBe('semantic');
-      expect((e as GildashError).message).toContain('semantic layer is not enabled');
-    }
-  });
-
-  it('should return null when tsc cannot resolve types', () => {
-    const layer = makeSemanticLayer({ isTypeAssignableTo: mock(() => null) });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    const result = isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts');
-
-    expect(result).toBeNull();
-  });
-
-  it('should return true when source type is assignable to target type', () => {
-    const layer = makeSemanticLayer({ isTypeAssignableTo: mock(() => true) });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    const result = isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts');
-
-    expect(result).toBe(true);
-  });
-
-  it('should return false when source type is not assignable to target type', () => {
-    const layer = makeSemanticLayer({ isTypeAssignableTo: mock(() => false) });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    const result = isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts');
-
-    expect(result).toBe(false);
-  });
-
-  it('should throw with type closed when ctx is closed', () => {
-    const ctx = makeCtx({ closed: true });
-
-    expect(() =>
-      isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts'),
-    ).toThrow(GildashError);
-  });
-
-  it('should catch exception and throw GildashError with cause', () => {
-    const error = new Error('assignable fail');
-    const layer = makeSemanticLayer({ isTypeAssignableTo: mock(() => { throw error; }) });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    try {
-      isTypeAssignableTo(ctx, 'Foo', '/project/src/a.ts', 'Bar', '/project/src/b.ts');
-      expect.unreachable('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(GildashError);
-      expect((e as GildashError).type).toBe('semantic');
-      expect((e as GildashError).cause).toBe(error);
-    }
-  });
-});
-
-// ─── getFileTypes ───────────────────────────────────────────────────
-
-describe('getFileTypes', () => {
-  it('should return type map for the given file', () => {
-    const typeMap = new Map([[10, { type: 'string', text: 'string' }]]);
-    const layer = makeSemanticLayer({ collectFileTypes: mock(() => typeMap) });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    const result = getFileTypes(ctx, '/project/src/a.ts');
-
-    expect(result).toBe(typeMap as any);
-  });
-
-  it('should throw when semantic layer not enabled', () => {
-    const ctx = makeCtx({ semanticLayer: null });
-
-    expect(() => getFileTypes(ctx, '/project/src/a.ts')).toThrow(GildashError);
-    try {
-      getFileTypes(ctx, '/project/src/a.ts');
-    } catch (e) {
-      expect((e as GildashError).type).toBe('semantic');
-      expect((e as GildashError).message).toContain('semantic layer is not enabled');
-    }
-  });
-
-  it('should resolve relative path to absolute', () => {
-    const collectFileTypes = mock(() => new Map());
-    const layer = makeSemanticLayer({ collectFileTypes });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    getFileTypes(ctx, 'src/a.ts');
-
-    expect(collectFileTypes).toHaveBeenCalledWith(path.resolve('/project', 'src/a.ts'));
-  });
-
-  it('should throw with type closed when ctx is closed', () => {
-    const ctx = makeCtx({ closed: true });
-
-    expect(() => getFileTypes(ctx, '/project/src/a.ts')).toThrow(GildashError);
-  });
-
-  it('should catch exception and throw GildashError with cause', () => {
-    const error = new Error('file types fail');
-    const layer = makeSemanticLayer({ collectFileTypes: mock(() => { throw error; }) });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    try {
-      getFileTypes(ctx, '/project/src/a.ts');
-      expect.unreachable('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(GildashError);
-      expect((e as GildashError).type).toBe('semantic');
-      expect((e as GildashError).cause).toBe(error);
-    }
-  });
-});
-
-// ─── getResolvedTypeAt ──────────────────────────────────────────────
-
-describe('getResolvedTypeAt', () => {
-  it('should return type at position', () => {
-    const typeResult = { type: 'number', text: 'number' };
-    const layer = makeSemanticLayer({
-      lineColumnToPosition: mock(() => 100),
-      collectTypeAt: mock(() => typeResult),
-    });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    const result = getResolvedTypeAt(ctx, '/project/src/a.ts', 5, 10);
-
-    expect(result).toBe(typeResult as any);
-    expect(layer.lineColumnToPosition).toHaveBeenCalledWith('/project/src/a.ts', 5, 10);
-    expect(layer.collectTypeAt).toHaveBeenCalledWith('/project/src/a.ts', 100);
-  });
-
-  it('should return null when position cannot be resolved', () => {
-    const layer = makeSemanticLayer({ lineColumnToPosition: mock(() => null) });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    const result = getResolvedTypeAt(ctx, '/project/src/a.ts', 5, 10);
-
-    expect(result).toBeNull();
-  });
-
-  it('should throw when semantic layer not enabled', () => {
-    const ctx = makeCtx({ semanticLayer: null });
-
-    expect(() => getResolvedTypeAt(ctx, '/project/src/a.ts', 5, 10)).toThrow(GildashError);
-  });
-
-  it('should resolve relative path to absolute', () => {
-    const lineColumnToPosition = mock(() => 100);
-    const collectTypeAt = mock(() => ({ type: 'string', text: 'string' }));
-    const layer = makeSemanticLayer({ lineColumnToPosition, collectTypeAt });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    getResolvedTypeAt(ctx, 'src/a.ts', 5, 10);
-
-    expect(lineColumnToPosition).toHaveBeenCalledWith(path.resolve('/project', 'src/a.ts'), 5, 10);
-  });
-
-  it('should throw with type closed when ctx is closed', () => {
-    const ctx = makeCtx({ closed: true });
-
-    expect(() => getResolvedTypeAt(ctx, '/project/src/a.ts', 5, 10)).toThrow(GildashError);
-  });
-
-  it('should catch exception and throw GildashError with cause', () => {
-    const error = new Error('type at fail');
-    const layer = makeSemanticLayer({ collectTypeAt: mock(() => { throw error; }) });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    try {
-      getResolvedTypeAt(ctx, '/project/src/a.ts', 5, 10);
-      expect.unreachable('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(GildashError);
-      expect((e as GildashError).type).toBe('semantic');
-      expect((e as GildashError).cause).toBe(error);
-    }
-  });
-});
-
-// ─── isTypeAssignableToAt ───────────────────────────────────────────
-
-describe('isTypeAssignableToAt', () => {
-  it('should check assignability via positions', () => {
-    const layer = makeSemanticLayer({
-      lineColumnToPosition: mock(((_f: string, line: number) => line === 5 ? 100 : 200) as any),
-      isTypeAssignableTo: mock(() => true),
-    });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    const result = isTypeAssignableToAt(ctx, {
-      source: { filePath: '/project/src/a.ts', line: 5, column: 0 },
-      target: { filePath: '/project/src/b.ts', line: 10, column: 0 },
-    });
-
-    expect(result).toBe(true);
-    expect(layer.isTypeAssignableTo).toHaveBeenCalledWith('/project/src/a.ts', 100, '/project/src/b.ts', 200);
-  });
-
-  it('should return false when types are not assignable', () => {
-    const layer = makeSemanticLayer({
-      isTypeAssignableTo: mock(() => false),
-    });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    const result = isTypeAssignableToAt(ctx, {
-      source: { filePath: '/project/src/a.ts', line: 5, column: 0 },
-      target: { filePath: '/project/src/b.ts', line: 10, column: 0 },
-    });
-
-    expect(result).toBe(false);
-  });
-
-  it('should return null when source position cannot be resolved', () => {
-    const layer = makeSemanticLayer({ lineColumnToPosition: mock(() => null) });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    const result = isTypeAssignableToAt(ctx, {
-      source: { filePath: '/project/src/a.ts', line: 5, column: 0 },
-      target: { filePath: '/project/src/b.ts', line: 10, column: 0 },
-    });
-
-    expect(result).toBeNull();
-  });
-
-  it('should return null when target position cannot be resolved', () => {
-    const lineColumnToPosition = mock(() => null) as any;
-    lineColumnToPosition.mockImplementationOnce(() => 100);
-    lineColumnToPosition.mockImplementationOnce(() => null);
-    const layer = makeSemanticLayer({ lineColumnToPosition });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    const result = isTypeAssignableToAt(ctx, {
-      source: { filePath: '/project/src/a.ts', line: 5, column: 0 },
-      target: { filePath: '/project/src/b.ts', line: 10, column: 0 },
-    });
-
-    expect(result).toBeNull();
-  });
-
-  it('should resolve relative paths', () => {
-    const lineColumnToPosition = mock(() => 42);
-    const isAssignable = mock(() => true);
-    const layer = makeSemanticLayer({ lineColumnToPosition, isTypeAssignableTo: isAssignable });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    isTypeAssignableToAt(ctx, {
-      source: { filePath: 'src/a.ts', line: 5, column: 0 },
-      target: { filePath: 'src/b.ts', line: 10, column: 0 },
-    });
-
-    expect(lineColumnToPosition).toHaveBeenCalledWith(path.resolve('/project', 'src/a.ts'), 5, 0);
-    expect(lineColumnToPosition).toHaveBeenCalledWith(path.resolve('/project', 'src/b.ts'), 10, 0);
-  });
-
-  it('should throw when semantic layer not enabled', () => {
-    const ctx = makeCtx({ semanticLayer: null });
-
-    expect(() => isTypeAssignableToAt(ctx, {
-      source: { filePath: '/project/src/a.ts', line: 5, column: 0 },
-      target: { filePath: '/project/src/b.ts', line: 10, column: 0 },
-    })).toThrow(GildashError);
-  });
-
-  it('should throw with type closed when ctx is closed', () => {
-    const ctx = makeCtx({ closed: true });
-
-    expect(() => isTypeAssignableToAt(ctx, {
-      source: { filePath: '/project/src/a.ts', line: 5, column: 0 },
-      target: { filePath: '/project/src/b.ts', line: 10, column: 0 },
-    })).toThrow(GildashError);
-  });
-
-  it('should catch exception and throw GildashError with cause', () => {
-    const error = new Error('assignable at fail');
-    const layer = makeSemanticLayer({ isTypeAssignableTo: mock(() => { throw error; }) });
-    const ctx = makeCtx({ semanticLayer: layer as any });
-
-    try {
-      isTypeAssignableToAt(ctx, {
-        source: { filePath: '/project/src/a.ts', line: 5, column: 0 },
-        target: { filePath: '/project/src/b.ts', line: 10, column: 0 },
-      });
-      expect.unreachable('should have thrown');
-    } catch (e) {
-      expect(e).toBeInstanceOf(GildashError);
-      expect((e as GildashError).type).toBe('semantic');
-      expect((e as GildashError).cause).toBe(error);
-    }
-  });
-});
-
 // ─── State Transition ───────────────────────────────────────────────
 
 describe('semantic-api state transitions', () => {
@@ -681,5 +352,410 @@ describe('semantic-api state transitions', () => {
     ctx.closed = true;
 
     expect(() => getResolvedType(ctx, 'Foo', '/project/src/a.ts')).toThrow(GildashError);
+  });
+});
+
+// ─── Position-based semantic API ──────────────────────────────────────
+
+describe('getResolvedTypeAtPosition', () => {
+  it('should delegate to collectTypeAt with resolved absolute path', () => {
+    const typeResult = { text: 'number', flags: 0, isUnion: false, isIntersection: false, isGeneric: false };
+    const collectTypeAt = mock(() => typeResult);
+    const layer = makeSemanticLayer({ collectTypeAt });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    const result = getResolvedTypeAtPosition(ctx, '/project/src/a.ts', 100);
+
+    expect(result).toBe(typeResult as any);
+    expect(collectTypeAt).toHaveBeenCalledWith('/project/src/a.ts', 100);
+  });
+
+  it('should resolve relative path via projectRoot', () => {
+    const collectTypeAt = mock(() => null);
+    const layer = makeSemanticLayer({ collectTypeAt });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    getResolvedTypeAtPosition(ctx, 'src/a.ts', 100);
+
+    expect(collectTypeAt).toHaveBeenCalledWith(path.resolve('/project', 'src/a.ts'), 100);
+  });
+
+  it('should throw when closed', () => {
+    const ctx = makeCtx({ closed: true });
+    expect(() => getResolvedTypeAtPosition(ctx, '/a.ts', 0)).toThrow(GildashError);
+  });
+
+  it('should throw when semantic layer is null', () => {
+    const ctx = makeCtx({ semanticLayer: null });
+    expect(() => getResolvedTypeAtPosition(ctx, '/a.ts', 0)).toThrow(GildashError);
+  });
+
+  it('should catch exception and throw GildashError with cause', () => {
+    const error = new Error('type fail');
+    const layer = makeSemanticLayer({ collectTypeAt: mock(() => { throw error; }) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    try {
+      getResolvedTypeAtPosition(ctx, '/a.ts', 0);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('semantic');
+      expect((e as GildashError).cause).toBe(error);
+    }
+  });
+});
+
+describe('getSemanticReferencesAtPosition', () => {
+  it('should delegate to findReferences with absolute path', () => {
+    const refs = [{ filePath: '/b.ts', position: 10, line: 1, column: 0, isDefinition: false, isWrite: false }];
+    const findReferences = mock(() => refs);
+    const layer = makeSemanticLayer({ findReferences });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    const result = getSemanticReferencesAtPosition(ctx, '/project/src/a.ts', 50);
+
+    expect(result).toBe(refs as any);
+    expect(findReferences).toHaveBeenCalledWith('/project/src/a.ts', 50);
+  });
+
+  it('should resolve relative path via projectRoot', () => {
+    const findReferences = mock(() => []);
+    const layer = makeSemanticLayer({ findReferences });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    getSemanticReferencesAtPosition(ctx, 'src/a.ts', 50);
+
+    expect(findReferences).toHaveBeenCalledWith(path.resolve('/project', 'src/a.ts'), 50);
+  });
+
+  it('should throw when closed', () => {
+    const ctx = makeCtx({ closed: true });
+    expect(() => getSemanticReferencesAtPosition(ctx, '/a.ts', 0)).toThrow(GildashError);
+  });
+
+  it('should throw when semantic layer is null', () => {
+    const ctx = makeCtx({ semanticLayer: null });
+    expect(() => getSemanticReferencesAtPosition(ctx, '/a.ts', 0)).toThrow(GildashError);
+  });
+
+  it('should catch exception and throw GildashError with cause', () => {
+    const error = new Error('ref fail');
+    const layer = makeSemanticLayer({ findReferences: mock(() => { throw error; }) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    try {
+      getSemanticReferencesAtPosition(ctx, '/a.ts', 0);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('semantic');
+      expect((e as GildashError).cause).toBe(error);
+    }
+  });
+});
+
+describe('getImplementationsAtPosition', () => {
+  it('should delegate to findImplementations with absolute path', () => {
+    const impls = [{ filePath: '/c.ts', symbolName: 'Bar', position: 20, kind: 'class' as const, isExplicit: true }];
+    const findImplementations = mock(() => impls);
+    const layer = makeSemanticLayer({ findImplementations });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    const result = getImplementationsAtPosition(ctx, '/project/src/a.ts', 30);
+
+    expect(result).toBe(impls as any);
+    expect(findImplementations).toHaveBeenCalledWith('/project/src/a.ts', 30);
+  });
+
+  it('should resolve relative path via projectRoot', () => {
+    const findImplementations = mock(() => []);
+    const layer = makeSemanticLayer({ findImplementations });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    getImplementationsAtPosition(ctx, 'src/a.ts', 30);
+
+    expect(findImplementations).toHaveBeenCalledWith(path.resolve('/project', 'src/a.ts'), 30);
+  });
+
+  it('should throw when closed', () => {
+    const ctx = makeCtx({ closed: true });
+    expect(() => getImplementationsAtPosition(ctx, '/a.ts', 0)).toThrow(GildashError);
+  });
+
+  it('should throw when semantic layer is null', () => {
+    const ctx = makeCtx({ semanticLayer: null });
+    expect(() => getImplementationsAtPosition(ctx, '/a.ts', 0)).toThrow(GildashError);
+  });
+
+  it('should catch exception and throw GildashError with cause', () => {
+    const error = new Error('impl fail');
+    const layer = makeSemanticLayer({ findImplementations: mock(() => { throw error; }) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    try {
+      getImplementationsAtPosition(ctx, '/a.ts', 0);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('semantic');
+      expect((e as GildashError).cause).toBe(error);
+    }
+  });
+});
+
+describe('isTypeAssignableToAtPosition', () => {
+  it('should delegate to isTypeAssignableTo with absolute paths', () => {
+    const isTypeAssignableTo = mock(() => true);
+    const layer = makeSemanticLayer({ isTypeAssignableTo });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    const result = isTypeAssignableToAtPosition(ctx, '/project/src/a.ts', 10, '/project/src/b.ts', 20);
+
+    expect(result).toBe(true);
+    expect(isTypeAssignableTo).toHaveBeenCalledWith('/project/src/a.ts', 10, '/project/src/b.ts', 20);
+  });
+
+  it('should resolve relative paths', () => {
+    const isTypeAssignableTo = mock(() => false);
+    const layer = makeSemanticLayer({ isTypeAssignableTo });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    isTypeAssignableToAtPosition(ctx, 'src/a.ts', 10, 'src/b.ts', 20);
+
+    expect(isTypeAssignableTo).toHaveBeenCalledWith(
+      path.resolve('/project', 'src/a.ts'), 10,
+      path.resolve('/project', 'src/b.ts'), 20,
+    );
+  });
+
+  it('should throw when closed', () => {
+    const ctx = makeCtx({ closed: true });
+    expect(() => isTypeAssignableToAtPosition(ctx, '/a.ts', 0, '/b.ts', 0)).toThrow(GildashError);
+  });
+
+  it('should throw when semantic layer is null', () => {
+    const ctx = makeCtx({ semanticLayer: null });
+    expect(() => isTypeAssignableToAtPosition(ctx, '/a.ts', 0, '/b.ts', 0)).toThrow(GildashError);
+  });
+
+  it('should catch exception and throw GildashError with cause', () => {
+    const error = new Error('assign fail');
+    const layer = makeSemanticLayer({ isTypeAssignableTo: mock(() => { throw error; }) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    try {
+      isTypeAssignableToAtPosition(ctx, '/a.ts', 0, '/b.ts', 0);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('semantic');
+      expect((e as GildashError).cause).toBe(error);
+    }
+  });
+});
+
+// ─── Internal utility exposure ────────────────────────────────────────
+
+describe('lineColumnToPosition', () => {
+  it('should delegate to semanticLayer.lineColumnToPosition with absolute path', () => {
+    const lctp = mock(() => 42);
+    const layer = makeSemanticLayer({ lineColumnToPosition: lctp });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    const result = lineColumnToPosition(ctx, '/project/src/a.ts', 5, 10);
+
+    expect(result).toBe(42);
+    expect(lctp).toHaveBeenCalledWith('/project/src/a.ts', 5, 10);
+  });
+
+  it('should resolve relative path via projectRoot', () => {
+    const lctp = mock(() => 42);
+    const layer = makeSemanticLayer({ lineColumnToPosition: lctp });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    lineColumnToPosition(ctx, 'src/a.ts', 5, 10);
+
+    expect(lctp).toHaveBeenCalledWith(path.resolve('/project', 'src/a.ts'), 5, 10);
+  });
+
+  it('should throw when closed', () => {
+    const ctx = makeCtx({ closed: true });
+    expect(() => lineColumnToPosition(ctx, '/a.ts', 1, 0)).toThrow(GildashError);
+  });
+
+  it('should throw when semantic layer is null', () => {
+    const ctx = makeCtx({ semanticLayer: null });
+    expect(() => lineColumnToPosition(ctx, '/a.ts', 1, 0)).toThrow(GildashError);
+  });
+
+  it('should catch exception and throw GildashError with cause', () => {
+    const error = new Error('lc fail');
+    const layer = makeSemanticLayer({ lineColumnToPosition: mock(() => { throw error; }) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    try {
+      lineColumnToPosition(ctx, '/a.ts', 1, 0);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('semantic');
+      expect((e as GildashError).cause).toBe(error);
+    }
+  });
+});
+
+describe('findNamePosition', () => {
+  it('should delegate to semanticLayer.findNamePosition with absolute path', () => {
+    const fnp = mock(() => 55);
+    const layer = makeSemanticLayer({ findNamePosition: fnp });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    const result = findNamePosition(ctx, '/project/src/a.ts', 40, 'Foo');
+
+    expect(result).toBe(55);
+    expect(fnp).toHaveBeenCalledWith('/project/src/a.ts', 40, 'Foo');
+  });
+
+  it('should resolve relative path via projectRoot', () => {
+    const fnp = mock(() => 55);
+    const layer = makeSemanticLayer({ findNamePosition: fnp });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    findNamePosition(ctx, 'src/a.ts', 40, 'Foo');
+
+    expect(fnp).toHaveBeenCalledWith(path.resolve('/project', 'src/a.ts'), 40, 'Foo');
+  });
+
+  it('should throw when closed', () => {
+    const ctx = makeCtx({ closed: true });
+    expect(() => findNamePosition(ctx, '/a.ts', 0, 'x')).toThrow(GildashError);
+  });
+
+  it('should throw when semantic layer is null', () => {
+    const ctx = makeCtx({ semanticLayer: null });
+    expect(() => findNamePosition(ctx, '/a.ts', 0, 'x')).toThrow(GildashError);
+  });
+
+  it('should catch exception and throw GildashError with cause', () => {
+    const error = new Error('fnp fail');
+    const layer = makeSemanticLayer({ findNamePosition: mock(() => { throw error; }) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    try {
+      findNamePosition(ctx, '/a.ts', 0, 'x');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('semantic');
+      expect((e as GildashError).cause).toBe(error);
+    }
+  });
+});
+
+describe('getSymbolNode', () => {
+  it('should delegate to semanticLayer.getSymbolNode with absolute path', () => {
+    const node = { name: 'Foo', filePath: '/project/src/a.ts', position: 10 };
+    const gsn = mock(() => node);
+    const layer = makeSemanticLayer({ getSymbolNode: gsn });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    const result = getSymbolNode(ctx, '/project/src/a.ts', 10);
+
+    expect(result).toBe(node as any);
+    expect(gsn).toHaveBeenCalledWith('/project/src/a.ts', 10);
+  });
+
+  it('should resolve relative path via projectRoot', () => {
+    const gsn = mock(() => null);
+    const layer = makeSemanticLayer({ getSymbolNode: gsn });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    getSymbolNode(ctx, 'src/a.ts', 10);
+
+    expect(gsn).toHaveBeenCalledWith(path.resolve('/project', 'src/a.ts'), 10);
+  });
+
+  it('should return null when symbol not found', () => {
+    const layer = makeSemanticLayer({ getSymbolNode: mock(() => null) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    expect(getSymbolNode(ctx, '/a.ts', 0)).toBeNull();
+  });
+
+  it('should throw when closed', () => {
+    const ctx = makeCtx({ closed: true });
+    expect(() => getSymbolNode(ctx, '/a.ts', 0)).toThrow(GildashError);
+  });
+
+  it('should throw when semantic layer is null', () => {
+    const ctx = makeCtx({ semanticLayer: null });
+    expect(() => getSymbolNode(ctx, '/a.ts', 0)).toThrow(GildashError);
+  });
+
+  it('should catch exception and throw GildashError with cause', () => {
+    const error = new Error('sym fail');
+    const layer = makeSemanticLayer({ getSymbolNode: mock(() => { throw error; }) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    try {
+      getSymbolNode(ctx, '/a.ts', 0);
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('semantic');
+      expect((e as GildashError).cause).toBe(error);
+    }
+  });
+});
+
+// ─── Diagnostics ──────────────────────────────────────────────────────
+
+describe('getSemanticDiagnostics', () => {
+  it('should delegate to semanticLayer.getDiagnostics with absolute path', () => {
+    const diags = [{ filePath: '/a.ts', line: 1, column: 0, message: 'err', code: 2322, category: 'error' as const }];
+    const gd = mock(() => diags);
+    const layer = makeSemanticLayer({ getDiagnostics: gd });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    const result = getSemanticDiagnostics(ctx, '/project/src/a.ts');
+
+    expect(result).toBe(diags as any);
+    expect(gd).toHaveBeenCalledWith('/project/src/a.ts');
+  });
+
+  it('should resolve relative path', () => {
+    const gd = mock(() => []);
+    const layer = makeSemanticLayer({ getDiagnostics: gd });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    getSemanticDiagnostics(ctx, 'src/a.ts');
+
+    expect(gd).toHaveBeenCalledWith(path.resolve('/project', 'src/a.ts'));
+  });
+
+  it('should throw when closed', () => {
+    const ctx = makeCtx({ closed: true });
+    expect(() => getSemanticDiagnostics(ctx, '/a.ts')).toThrow(GildashError);
+  });
+
+  it('should throw when semantic layer is null', () => {
+    const ctx = makeCtx({ semanticLayer: null });
+    expect(() => getSemanticDiagnostics(ctx, '/a.ts')).toThrow(GildashError);
+  });
+
+  it('should catch exception and throw GildashError with cause', () => {
+    const error = new Error('diag fail');
+    const layer = makeSemanticLayer({ getDiagnostics: mock(() => { throw error; }) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    try {
+      getSemanticDiagnostics(ctx, '/a.ts');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('semantic');
+      expect((e as GildashError).cause).toBe(error);
+    }
   });
 });
