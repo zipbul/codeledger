@@ -175,6 +175,19 @@ export class SemanticLayer {
     );
   }
 
+  /**
+   * Check whether the type at `position` is assignable to a type described
+   * by `targetTypeExpression` (e.g. `'PromiseLike<any>'`, `'Error'`).
+   */
+  isTypeAssignableToType(
+    filePath: string,
+    position: number,
+    targetTypeExpression: string,
+  ): boolean | null {
+    this.#assertNotDisposed();
+    return this.#typeCollector.isAssignableToType(filePath, position, targetTypeExpression);
+  }
+
   // ── Symbol graph ────────────────────────────────────────────────────────
 
   getSymbolNode(filePath: string, position: number): SymbolNode | null {

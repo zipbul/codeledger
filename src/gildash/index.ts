@@ -293,6 +293,10 @@ export class Gildash {
     );
   }
 
+  isTypeAssignableToType(filePath: string, position: number, targetTypeExpression: string): boolean | null {
+    return semanticApi.isTypeAssignableToType(this._ctx, filePath, position, targetTypeExpression);
+  }
+
   lineColumnToPosition(filePath: string, line: number, column: number): number | null {
     return semanticApi.lineColumnToPosition(this._ctx, filePath, line, column);
   }

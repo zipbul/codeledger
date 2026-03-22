@@ -777,6 +777,126 @@ describe("SemanticLayer", () => {
     expect(() => layer.getDiagnostics("/project/src/a.ts")).toThrow();
   });
 
+  // ── collectTypeAt with primitive keywords ──────────────────────────────
+
+  it("should resolve type for primitive keyword position (string)", () => {
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+
+    const filePath = "/project/src/prim.ts";
+    const content = "const x: string = 'hello';";
+    layer.notifyFileChanged(filePath, content);
+
+    const stringPos = content.indexOf("string");
+    const typeResult = layer.collectTypeAt(filePath, stringPos);
+
+    expect(typeResult).not.toBeNull();
+    expect(typeResult!.text).toBe("string");
+    layer.dispose();
+  });
+
+  it("should resolve type for primitive keyword position (number)", () => {
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+
+    const filePath = "/project/src/prim.ts";
+    const content = "const x: number = 42;";
+    layer.notifyFileChanged(filePath, content);
+
+    const numberPos = content.indexOf("number");
+    const typeResult = layer.collectTypeAt(filePath, numberPos);
+
+    expect(typeResult).not.toBeNull();
+    expect(typeResult!.text).toBe("number");
+    layer.dispose();
+  });
+
+  // ── isTypeAssignableToType ────────────────────────────────────────────
+
+  it("should return true when type is assignable to target type expression", () => {
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+
+    const filePath = "/project/src/assign.ts";
+    const content = "const x: string = 'hello';";
+    layer.notifyFileChanged(filePath, content);
+
+    const xPos = pos(content, "x");
+    const assignable = layer.isTypeAssignableToType(filePath, xPos, "string");
+
+    expect(assignable).toBe(true);
+    layer.dispose();
+  });
+
+  it("should return false when type is not assignable to target type expression", () => {
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+
+    const filePath = "/project/src/assign.ts";
+    const content = "const x: number = 42;";
+    layer.notifyFileChanged(filePath, content);
+
+    const xPos = pos(content, "x");
+    const assignable = layer.isTypeAssignableToType(filePath, xPos, "string");
+
+    expect(assignable).toBe(false);
+    layer.dispose();
+  });
+
+  it("should return null for non-existent file in isTypeAssignableToType", () => {
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+
+    const assignable = layer.isTypeAssignableToType("/project/src/missing.ts", 0, "string");
+
+    expect(assignable).toBeNull();
+    layer.dispose();
+  });
+
+  it("should throw when isTypeAssignableToType is called after dispose", () => {
+    const result = SemanticLayer.create(TSCONFIG_PATH, {
+      readConfigFile: (p) => (p === TSCONFIG_PATH ? VALID_TSCONFIG : undefined),
+      resolveNonTrackedFile: (p) =>
+        p.includes("lib.") && p.endsWith(".d.ts") ? "// fake lib\nexport {};\n" : undefined,
+    });
+    expect(isErr(result)).toBe(false);
+    if (isErr(result)) return;
+    const layer = result;
+    layer.dispose();
+
+    expect(() => layer.isTypeAssignableToType("/project/src/a.ts", 0, "string")).toThrow();
+  });
+
   // PRUNE-10 [CO] findNamePosition: skip substring match and find standalone identifier
   it("should skip substring match and find standalone identifier in findNamePosition", () => {
     // Arrange

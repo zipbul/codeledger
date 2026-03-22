@@ -500,6 +500,99 @@ describe('Gildash Semantic integration', () => {
     });
   });
 
+  // ── Group 8b: isTypeAssignableToType ─────────────────────────────────
+
+  describe('isTypeAssignableToType', () => {
+    let g: Gildash;
+    let tmpDir: string;
+
+    beforeAll(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      g = await openGildash(tmpDir, { semantic: true });
+    });
+
+    afterAll(async () => {
+      await g.close();
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should return true when Dog is assignable to Animal interface type expression', () => {
+      // Dog at line 6, col 13 in animals.ts
+      const dogPos = g.lineColumnToPosition('src/animals.ts', 6, 13);
+      expect(dogPos).not.toBeNull();
+      const result = g.isTypeAssignableToType('src/animals.ts', dogPos!, '{ name: string; legs: number }');
+      expect(result).toBe(true);
+    });
+
+    it('should return false when number is not assignable to string type expression', () => {
+      // count (number) at line 18, col 13 in animals.ts
+      const countPos = g.lineColumnToPosition('src/animals.ts', 18, 13);
+      expect(countPos).not.toBeNull();
+      const result = g.isTypeAssignableToType('src/animals.ts', countPos!, 'string');
+      expect(result).toBe(false);
+    });
+  });
+
+  // ── Group 8c: primitive keyword resolve ────────────────────────────
+
+  describe('Primitive keyword resolve', () => {
+    let g: Gildash;
+    let tmpDir: string;
+
+    beforeAll(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      g = await openGildash(tmpDir, { semantic: true });
+    });
+
+    afterAll(async () => {
+      await g.close();
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should resolve type at primitive keyword position (string annotation)', () => {
+      // SERVICE_NAME: string in service.ts — "string" keyword position
+      // "export const SERVICE_NAME: string = ..." → line 11
+      const pos = g.lineColumnToPosition('src/service.ts', 11, 27);
+      expect(pos).not.toBeNull();
+      const result = g.getResolvedTypeAtPosition('src/service.ts', pos!);
+      expect(result).not.toBeNull();
+      expect(result!.text).toBe('string');
+    });
+  });
+
+  // ── Group 8d: absolute path symbol-name API ────────────────────────
+
+  describe('Symbol-name API with absolute path', () => {
+    let g: Gildash;
+    let tmpDir: string;
+
+    beforeAll(async () => {
+      tmpDir = await mkdtemp(join(tmpdir(), 'gildash-sem-'));
+      await createSemanticProject(tmpDir);
+      g = await openGildash(tmpDir, { semantic: true });
+    });
+
+    afterAll(async () => {
+      await g.close();
+      await rm(tmpDir, { recursive: true, force: true });
+    });
+
+    it('should resolve type when absolute path is passed to getResolvedType', () => {
+      const absPath = join(tmpDir, 'src', 'service.ts');
+      const result = g.getResolvedType('SERVICE_NAME', absPath);
+      expect(result).not.toBeNull();
+      expect(result!.text).toBe('string');
+    });
+
+    it('should find references when absolute path is passed to getSemanticReferences', () => {
+      const absPath = join(tmpDir, 'src', 'service.ts');
+      const refs = g.getSemanticReferences('createService', absPath);
+      expect(refs.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
   // ── Group 9: Internal utility exposure ──────────────────────────────
 
   describe('Internal utility exposure', () => {
