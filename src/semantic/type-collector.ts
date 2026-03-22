@@ -104,10 +104,12 @@ export class TypeCollector {
   constructor(private readonly program: TscProgram) {}
 
   /**
-   * `filePath`의 `position` 위치(0-based 문자 오프셋)에 있는 심볼의 타입을 수집한다.
+   * `filePath`의 `position` 위치(0-based 문자 오프셋)에 있는 노드의 타입을 수집한다.
    *
-   * - 파일이 없거나 위치에 식별자가 없으면 `null` 반환
-   * - `TscProgram이` disposed 상태이면 throw (getProgram이 throw)
+   * Identifier와 type keyword (`string`, `number`, `boolean` 등) 위치에서 동작한다.
+   *
+   * - 파일이 없거나 위치에 resolvable 노드가 없으면 `null` 반환
+   * - `TscProgram`이 disposed 상태이면 throw (getProgram이 throw)
    */
   collectAt(filePath: string, position: number): ResolvedType | null {
     // disposed 체크는 getProgram/getChecker가 대신 throw
@@ -124,8 +126,8 @@ export class TypeCollector {
     const node = findNodeAtPosition(sourceFile, position);
     if (!node) return null;
 
-    // 식별자가 아니면 (keyword, 구두점 등) 타입 수집 불가
-    if (!ts.isIdentifier(node)) return null;
+    // 식별자 또는 type keyword (string, number, boolean 등)만 허용
+    if (!ts.isIdentifier(node) && !ts.isTypeNode(node)) return null;
 
     try {
       const type = checker.getTypeAtLocation(node);
@@ -170,6 +172,53 @@ export class TypeCollector {
       return checker.isTypeAssignableTo(sourceType, targetType);
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * `position` 위치의 타입이 `targetTypeExpression` 문자열로 표현된 타입에
+   * assignable한지 검사한다.
+   *
+   * target 타입은 `declare const __probe: {expr};` 형태의 가상 선언을 프로그램에
+   * 주입하여 resolve한다. 호출 후 가상 파일은 제거된다.
+   */
+  isAssignableToType(
+    filePath: string,
+    position: number,
+    targetTypeExpression: string,
+  ): boolean | null {
+    const checker = this.program.getChecker();
+    const tsProgram = this.program.getProgram();
+
+    const srcFile = tsProgram.getSourceFile(filePath);
+    if (!srcFile) return null;
+    const srcNode = findNodeAtPosition(srcFile, position);
+    if (!srcNode || (!ts.isIdentifier(srcNode) && !ts.isTypeNode(srcNode))) return null;
+
+    // Inject a virtual probe file to resolve the target type expression
+    const probeFile = `${filePath}.__gildash_probe__.ts`;
+    const probeContent = `declare const __gildash_probe__: ${targetTypeExpression};`;
+    this.program.notifyFileChanged(probeFile, probeContent);
+
+    try {
+      const sourceType = checker.getTypeAtLocation(srcNode);
+
+      const probeProg = this.program.getProgram();
+      const probeSf = probeProg.getSourceFile(probeFile);
+      if (!probeSf) return null;
+
+      const probeChecker = this.program.getChecker();
+      const probeStmt = probeSf.statements[0];
+      if (!probeStmt || !ts.isVariableStatement(probeStmt)) return null;
+      const probeDecl = probeStmt.declarationList.declarations[0];
+      if (!probeDecl) return null;
+
+      const targetType = probeChecker.getTypeAtLocation(probeDecl.name);
+      return probeChecker.isTypeAssignableTo(sourceType, targetType);
+    } catch {
+      return null;
+    } finally {
+      this.program.removeFile(probeFile);
     }
   }
 

@@ -16,10 +16,14 @@ export function resolveSymbolPosition(
   project?: string,
 ): { sym: SymbolSearchResult; position: number; absPath: string } | null {
   const effectiveProject = project ?? ctx.defaultProject;
+  // DB stores relative paths — normalize absolute paths before searching
+  const searchPath = path.isAbsolute(filePath)
+    ? path.relative(ctx.projectRoot, filePath)
+    : filePath;
   const results = ctx.symbolSearchFn({
     symbolRepo: ctx.symbolRepo,
     project: effectiveProject,
-    query: { text: symbolName, exact: true, filePath, limit: 1 },
+    query: { text: symbolName, exact: true, filePath: searchPath, limit: 1 },
   });
   if (results.length === 0) return null;
   const sym = results[0]!;
@@ -265,6 +269,24 @@ export function isTypeAssignableToAtPosition(
   } catch (e) {
     if (e instanceof GildashError) throw e;
     throw new GildashError('semantic', 'Gildash: isTypeAssignableToAtPosition failed', { cause: e });
+  }
+}
+
+/** Check whether the type at a position is assignable to a type expression string. */
+export function isTypeAssignableToType(
+  ctx: GildashContext,
+  filePath: string,
+  position: number,
+  targetTypeExpression: string,
+): boolean | null {
+  if (ctx.closed) throw new GildashError('closed', 'Gildash: instance is closed');
+  if (!ctx.semanticLayer) throw new GildashError('semantic', 'Gildash: semantic layer is not enabled');
+  try {
+    const absPath = path.isAbsolute(filePath) ? filePath : path.resolve(ctx.projectRoot, filePath);
+    return ctx.semanticLayer.isTypeAssignableToType(absPath, position, targetTypeExpression);
+  } catch (e) {
+    if (e instanceof GildashError) throw e;
+    throw new GildashError('semantic', 'Gildash: isTypeAssignableToType failed', { cause: e });
   }
 }
 

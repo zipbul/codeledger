@@ -103,6 +103,7 @@ export type SemanticLayerLike = Pick<
   | 'findReferences'
   | 'findImplementations'
   | 'isTypeAssignableTo'
+  | 'isTypeAssignableToType'
   | 'getModuleInterface'
   | 'getSymbolNode'
   | 'getDiagnostics'

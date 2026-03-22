@@ -16,6 +16,7 @@ import {
   findNamePosition,
   getSymbolNode,
   getSemanticDiagnostics,
+  isTypeAssignableToType,
 } from './semantic-api';
 
 // ─── Fixtures ───────────────────────────────────────────────────────
@@ -39,6 +40,7 @@ function makeSemanticLayer(overrides?: Record<string, unknown>) {
     getSymbolNode: mock(() => null),
     getDiagnostics: mock(() => []),
     isTypeAssignableTo: mock(() => true),
+    isTypeAssignableToType: mock(() => true),
     notifyFileChanged: mock(() => {}),
     dispose: mock(() => {}),
     isDisposed: false,
@@ -91,7 +93,7 @@ describe('resolveSymbolPosition', () => {
     expect(searchFn).toHaveBeenCalledWith({
       symbolRepo: ctx.symbolRepo,
       project: 'custom-project',
-      query: { text: 'Foo', exact: true, filePath: '/project/src/a.ts', limit: 1 },
+      query: { text: 'Foo', exact: true, filePath: 'src/a.ts', limit: 1 },
     });
   });
 
@@ -140,11 +142,24 @@ describe('resolveSymbolPosition', () => {
     const searchFn = mock(() => [dummySym]);
     const ctx = makeCtx({ symbolSearchFn: searchFn as any });
 
-    resolveSymbolPosition(ctx, 'Bar', '/src/b.ts');
+    resolveSymbolPosition(ctx, 'Bar', 'src/b.ts');
 
     expect(searchFn).toHaveBeenCalledWith(
       expect.objectContaining({
-        query: { text: 'Bar', exact: true, filePath: '/src/b.ts', limit: 1 },
+        query: { text: 'Bar', exact: true, filePath: 'src/b.ts', limit: 1 },
+      }),
+    );
+  });
+
+  it('should convert absolute filePath to relative before DB search', () => {
+    const searchFn = mock(() => [dummySym]);
+    const ctx = makeCtx({ symbolSearchFn: searchFn as any });
+
+    resolveSymbolPosition(ctx, 'Foo', '/project/src/a.ts');
+
+    expect(searchFn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: expect.objectContaining({ filePath: 'src/a.ts' }),
       }),
     );
   });
@@ -751,6 +766,63 @@ describe('getSemanticDiagnostics', () => {
 
     try {
       getSemanticDiagnostics(ctx, '/a.ts');
+      expect.unreachable('should have thrown');
+    } catch (e) {
+      expect(e).toBeInstanceOf(GildashError);
+      expect((e as GildashError).type).toBe('semantic');
+      expect((e as GildashError).cause).toBe(error);
+    }
+  });
+});
+
+// ─── isTypeAssignableToType ───────────────────────────────────────────
+
+describe('isTypeAssignableToType', () => {
+  it('should delegate to semanticLayer.isTypeAssignableToType with absolute path', () => {
+    const iatt = mock(() => true);
+    const layer = makeSemanticLayer({ isTypeAssignableToType: iatt });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    const result = isTypeAssignableToType(ctx, '/project/src/a.ts', 100, 'PromiseLike<any>');
+
+    expect(result).toBe(true);
+    expect(iatt).toHaveBeenCalledWith('/project/src/a.ts', 100, 'PromiseLike<any>');
+  });
+
+  it('should resolve relative path via projectRoot', () => {
+    const iatt = mock(() => false);
+    const layer = makeSemanticLayer({ isTypeAssignableToType: iatt });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    isTypeAssignableToType(ctx, 'src/a.ts', 100, 'Error');
+
+    expect(iatt).toHaveBeenCalledWith(path.resolve('/project', 'src/a.ts'), 100, 'Error');
+  });
+
+  it('should return null when semanticLayer returns null', () => {
+    const layer = makeSemanticLayer({ isTypeAssignableToType: mock(() => null) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    expect(isTypeAssignableToType(ctx, '/a.ts', 0, 'Error')).toBeNull();
+  });
+
+  it('should throw when closed', () => {
+    const ctx = makeCtx({ closed: true });
+    expect(() => isTypeAssignableToType(ctx, '/a.ts', 0, 'Error')).toThrow(GildashError);
+  });
+
+  it('should throw when semantic layer is null', () => {
+    const ctx = makeCtx({ semanticLayer: null });
+    expect(() => isTypeAssignableToType(ctx, '/a.ts', 0, 'Error')).toThrow(GildashError);
+  });
+
+  it('should catch exception and throw GildashError with cause', () => {
+    const error = new Error('type check fail');
+    const layer = makeSemanticLayer({ isTypeAssignableToType: mock(() => { throw error; }) });
+    const ctx = makeCtx({ semanticLayer: layer as any });
+
+    try {
+      isTypeAssignableToType(ctx, '/a.ts', 0, 'Error');
       expect.unreachable('should have thrown');
     } catch (e) {
       expect(e).toBeInstanceOf(GildashError);
